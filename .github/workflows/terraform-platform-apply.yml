@@ -1,0 +1,61 @@
+name: Terraform Platform Apply
+
+# TODO: pin all action references to full commit SHAs before this workflow
+# runs against real infrastructure (PLAN.md §3.3).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/platform/**"
+      - ".github/workflows/terraform-platform-apply.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-platform-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: plan + apply
+    runs-on: ubuntu-latest
+    environment: platform-apply
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::793496711039:role/github_nwarila-platform_talos-cluster_platform_apply
+          role-session-name: gh-platform-apply-${{ github.run_id }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.5
+
+      - name: terraform init
+        working-directory: terraform/platform
+        run: terraform init
+
+      - name: terraform plan
+        working-directory: terraform/platform
+        run: terraform plan -out=tfplan -input=false -no-color
+        # Output is intentionally not echoed to logs in full; sanitized summary below.
+
+      - name: terraform apply
+        working-directory: terraform/platform
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: sanitized summary
+        if: always()
+        working-directory: terraform/platform
+        run: |
+          {
+            echo "## Platform apply summary"
+            echo ""
+            echo "- ref: \`${{ github.sha }}\`"
+            echo "- run: \`${{ github.run_id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

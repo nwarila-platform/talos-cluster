@@ -1,0 +1,143 @@
+name: Terraform Bootstrap
+
+# TODO: pin all action references to full commit SHAs before this workflow
+# runs against real infrastructure (PLAN.md §3.3).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan or apply"
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-bootstrap
+  cancel-in-progress: false
+
+env:
+  PLANS_BUCKET: "793496711039-terraform"
+  PLANS_PREFIX: "nwarila-platform/talos-cluster/plans/bootstrap"
+
+jobs:
+  guard:
+    name: guard ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: ensure refs/heads/main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Bootstrap workflow may only run against refs/heads/main (got ${{ github.ref }})"
+            exit 1
+          fi
+
+  plan:
+    name: bootstrap plan
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: bootstrap-plan
+    outputs:
+      plan_version_id: ${{ steps.upload.outputs.version_id }}
+      plan_key: ${{ steps.upload.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::793496711039:role/github_nwarila-platform_talos-cluster_bootstrap_plan
+          role-session-name: gh-bootstrap-plan-${{ github.run_id }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.5
+
+      - name: terraform init
+        working-directory: terraform/bootstrap
+        run: terraform init
+
+      - name: terraform plan -out=tfplan
+        working-directory: terraform/bootstrap
+        run: terraform plan -out=tfplan -input=false -no-color
+
+      - name: upload plan to private S3 (versioned)
+        id: upload
+        working-directory: terraform/bootstrap
+        run: |
+          KEY="${PLANS_PREFIX}/${{ github.run_id }}-${{ github.sha }}.tfplan"
+          aws s3api put-object \
+            --bucket "$PLANS_BUCKET" \
+            --key "$KEY" \
+            --body tfplan \
+            --server-side-encryption AES256 \
+            --query VersionId --output text > version_id.txt
+          {
+            echo "version_id=$(cat version_id.txt)"
+            echo "key=$KEY"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: sanitized summary
+        if: always()
+        run: |
+          {
+            echo "## Bootstrap plan summary"
+            echo ""
+            echo "- ref: \`${{ github.sha }}\`"
+            echo "- run: \`${{ github.run_id }}\`"
+            echo "- mode: \`${{ inputs.mode }}\`"
+            if [ -f terraform/bootstrap/version_id.txt ]; then
+              echo "- plan version id: stored privately"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: bootstrap apply
+    if: inputs.mode == 'apply'
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: bootstrap
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::793496711039:role/github_nwarila-platform_talos-cluster_bootstrap_apply
+          role-session-name: gh-bootstrap-apply-${{ github.run_id }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.5
+
+      - name: terraform init
+        working-directory: terraform/bootstrap
+        run: terraform init
+
+      - name: download exact plan by version id
+        working-directory: terraform/bootstrap
+        run: |
+          aws s3api get-object \
+            --bucket "$PLANS_BUCKET" \
+            --key "${{ needs.plan.outputs.plan_key }}" \
+            --version-id "${{ needs.plan.outputs.plan_version_id }}" \
+            tfplan
+
+      - name: terraform apply tfplan
+        working-directory: terraform/bootstrap
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: sanitized summary
+        if: always()
+        run: |
+          {
+            echo "## Bootstrap apply summary"
+            echo ""
+            echo "- ref: \`${{ github.sha }}\`"
+            echo "- run: \`${{ github.run_id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
