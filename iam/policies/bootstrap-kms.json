@@ -1,0 +1,117 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateSymmetricEncryptDecryptKeyOnly",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateKey",
+        "kms:CreateAlias"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/talos-cluster:component": "vault-unseal"
+        }
+      }
+    },
+    {
+      "Sid": "EnforceKeySpecAndUsageOnCreate",
+      "Effect": "Deny",
+      "Action": "kms:CreateKey",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "kms:KeySpec": "SYMMETRIC_DEFAULT",
+          "kms:KeyUsage": "ENCRYPT_DECRYPT"
+        }
+      }
+    },
+    {
+      "Sid": "ScopedAliasOperations",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateAlias",
+        "kms:UpdateAlias",
+        "kms:DeleteAlias"
+      ],
+      "Resource": [
+        "arn:aws:kms:*:793496711039:alias/talos-cluster-vault-unseal",
+        "arn:aws:kms:*:793496711039:key/*"
+      ],
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "kms:ResourceAliases": "alias/talos-cluster-vault-unseal"
+        }
+      }
+    },
+    {
+      "Sid": "ManageTaggedVaultUnsealKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:PutKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:EnableKeyRotation",
+        "kms:DisableKeyRotation",
+        "kms:EnableKey",
+        "kms:DisableKey",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion",
+        "kms:ListResourceTags",
+        "kms:ListAliases",
+        "kms:ListKeys"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/talos-cluster:component": "vault-unseal"
+        }
+      }
+    },
+    {
+      "Sid": "ReadOnlyKmsMetadataForList",
+      "Effect": "Allow",
+      "Action": [
+        "kms:ListAliases",
+        "kms:ListKeys"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ScopedTagResource",
+      "Effect": "Allow",
+      "Action": "kms:TagResource",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/talos-cluster:component": "vault-unseal",
+          "aws:RequestTag/talos-cluster:component": "vault-unseal"
+        }
+      }
+    },
+    {
+      "Sid": "DenyTagLaunderingViaUntag",
+      "Effect": "Deny",
+      "Action": "kms:UntagResource",
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringEquals": {
+          "aws:TagKeys": "talos-cluster:component"
+        }
+      }
+    },
+    {
+      "Sid": "DenyTagLaunderingViaTag",
+      "Effect": "Deny",
+      "Action": "kms:TagResource",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "aws:RequestTag/talos-cluster:component": "vault-unseal"
+        }
+      }
+    }
+  ]
+}

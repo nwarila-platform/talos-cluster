@@ -1,0 +1,145 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListBackendBucketScoped",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::793496711039-terraform",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "nwarila-platform/talos-cluster/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadBootstrapState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": "arn:aws:s3:::793496711039-terraform/nwarila-platform/talos-cluster/bootstrap.tfstate"
+    },
+    {
+      "Sid": "ManageBootstrapStateLock",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::793496711039-terraform/nwarila-platform/talos-cluster/bootstrap.tfstate.tflock"
+    },
+    {
+      "Sid": "WriteBootstrapPlanArtifacts",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": "arn:aws:s3:::793496711039-terraform/nwarila-platform/talos-cluster/plans/*"
+    },
+    {
+      "Sid": "DenyUnencryptedPuts",
+      "Effect": "Deny",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::793496711039-terraform/nwarila-platform/talos-cluster/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:x-amz-server-side-encryption": "AES256"
+        }
+      }
+    },
+    {
+      "Sid": "DenyPutsWithoutEncryptionHeader",
+      "Effect": "Deny",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::793496711039-terraform/nwarila-platform/talos-cluster/*",
+      "Condition": {
+        "Null": {
+          "s3:x-amz-server-side-encryption": "true"
+        }
+      }
+    },
+    {
+      "Sid": "ReadKMSMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListAliases",
+        "kms:ListKeys",
+        "kms:ListResourceTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadRuntimeUsersMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetUser",
+        "iam:GetUserPolicy",
+        "iam:ListUserPolicies",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListAccessKeys",
+        "iam:ListUserTags"
+      ],
+      "Resource": [
+        "arn:aws:iam::793496711039:user/talos-cluster-vault-unseal",
+        "arn:aws:iam::793496711039:user/talos-cluster-velero"
+      ]
+    },
+    {
+      "Sid": "ReadVeleroBucketMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketTagging",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketAcl",
+        "s3:GetBucketCORS",
+        "s3:GetBucketLogging",
+        "s3:GetBucketObjectLockConfiguration",
+        "s3:GetBucketOwnershipControls",
+        "s3:GetBucketRequestPayment",
+        "s3:GetBucketWebsite",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetAccelerateConfiguration"
+      ],
+      "Resource": "arn:aws:s3:::793496711039-talos-cluster-velero"
+    },
+    {
+      "Sid": "ReadEventsMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "events:DescribeRule",
+        "events:DescribeEventBus",
+        "events:ListRules",
+        "events:ListTargetsByRule",
+        "events:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadSnsMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "sns:GetTopicAttributes",
+        "sns:GetSubscriptionAttributes",
+        "sns:ListTopics",
+        "sns:ListSubscriptionsByTopic",
+        "sns:ListTagsForResource"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageRuntimeIamUsers",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:GetUser",
+        "iam:TagUser",
+        "iam:UntagUser",
+        "iam:ListUserTags",
+        "iam:PutUserPolicy",
+        "iam:DeleteUserPolicy",
+        "iam:GetUserPolicy",
+        "iam:ListUserPolicies",
+        "iam:ListAttachedUserPolicies",
+        "iam:CreateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:ListAccessKeys"
+      ],
+      "Resource": [
+        "arn:aws:iam::793496711039:user/talos-cluster-vault-unseal",
+        "arn:aws:iam::793496711039:user/talos-cluster-velero"
+      ]
+    },
+    {
+      "Sid": "ListAllUsersForTerraformReads",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListUsers"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyAttachDetachManagedPolicies",
+      "Effect": "Deny",
+      "Action": [
+        "iam:AttachUserPolicy",
+        "iam:DetachUserPolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyTouchingNonRuntimeUsers",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:PutUserPolicy",
+        "iam:DeleteUserPolicy",
+        "iam:CreateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:TagUser",
+        "iam:UntagUser"
+      ],
+      "NotResource": [
+        "arn:aws:iam::793496711039:user/talos-cluster-vault-unseal",
+        "arn:aws:iam::793496711039:user/talos-cluster-velero"
+      ]
+    }
+  ]
+}

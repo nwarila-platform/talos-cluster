@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListPlanArtifactsScoped",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::793496711039-terraform",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "nwarila-platform/talos-cluster/plans/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadPlanArtifactsByVersion",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": "arn:aws:s3:::793496711039-terraform/nwarila-platform/talos-cluster/plans/*"
+    }
+  ]
+}
