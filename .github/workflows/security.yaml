@@ -22,7 +22,9 @@ jobs:
       contents: read
       security-events: write
       actions: read
-    uses: NWarila/terraform-template/.github/workflows/reusable-iac-security.yaml@d9e5d5c0510f649a36ffec2fad1fef510d0c6baf
+    uses: NWarila/terraform-template/.github/workflows/reusable-iac-security.yaml@05a785918ec6af18a80de12b90dcd67cd99461fb
     with:
       zizmor_advisory: true
+      trivy_advisory: true
+      gitleaks_advisory: true
 
