@@ -108,6 +108,7 @@ There are only two trust zones.
 Used on `pull_request`.
 
 It does:
+
 - `terraform fmt -check -recursive`
 - `terraform init -backend=false`
 - `terraform validate`
@@ -115,6 +116,7 @@ It does:
 - optional static Terraform linting (`tflint`) once configured
 
 It does **not**:
+
 - request OIDC tokens
 - assume AWS roles
 - read remote state
@@ -126,10 +128,12 @@ It does **not**:
 #### Zone B: trusted deploy workflows
 
 Used only for:
+
 - `push` to `main`
 - `workflow_dispatch` runs that validate `refs/heads/main`
 
 These workflows may:
+
 - assume AWS roles via OIDC
 - read remote state
 - use GitHub environments
@@ -150,6 +154,7 @@ This plan keeps the bootstrap role split and simplifies the platform side.
 | `talos-cluster-velero` | IAM user | Velero backup/restore at runtime | in-cluster only | created by bootstrap Terraform |
 
 Explicit simplifications:
+
 - no `platform_plan` role
 - no cloud-backed PR plan role
 - no reusable-workflow trust lattice
@@ -167,6 +172,7 @@ Create these environments before merging privileged workflows.
 | `platform-apply` | trusted platform apply | none | 0 | `main` only | used for secret scoping, not human approval |
 
 Notes:
+
 - `Prevent self-review` stays disabled in solo mode.
 - `Allow administrators to bypass` stays disabled everywhere.
 - `platform-apply` exists to scope secrets and the OIDC claim, not to add ceremony to every normal platform merge.
@@ -187,6 +193,7 @@ Create exactly these workflow files.
 Required check for all pull requests.
 
 Expected jobs:
+
 - workflow lint (`actionlint`)
 - Terraform format check
 - `terraform init -backend=false`
@@ -197,6 +204,7 @@ Expected jobs:
 Trusted workflow for routine day-2 operations.
 
 Design:
+
 - trigger only on `push` to `main`
 - optional path filter: `terraform/platform/**`
 - references `platform-apply` environment
@@ -212,6 +220,7 @@ This is the first trusted cloud boundary for platform changes. The PR itself rem
 Manual workflow for bootstrap planning and apply.
 
 Design:
+
 - `workflow_dispatch` only
 - validates `github.ref == 'refs/heads/main'`
 - `plan` job uses `..._bootstrap_plan` and `bootstrap-plan`
@@ -224,6 +233,7 @@ Design:
 Dedicated destroy workflow.
 
 Design:
+
 - `workflow_dispatch` only
 - exact confirmation string required
 - validates `github.ref == 'refs/heads/main'`
@@ -250,17 +260,20 @@ The build plan defines the policy inventory and intent. Exact JSON belongs in `i
 | `talos-cluster-velero-backup` policy | `talos-cluster-velero` user | exact S3 object and bucket access on the Velero bucket |
 
 Important simplification:
+
 - `bootstrap-runtime-iam` manages only the two named IAM **users** and their policies.
 - It does **not** manage IAM roles, wildcard IAM resources, or future IRSA placeholders.
 - IRSA or self-hosted OIDC is a future migration path, not a day-one requirement.
 
 Critical scoping rule for `bootstrap-runtime-iam`:
+
 - Use Terraform `aws_iam_user_policy` (inline policies) for the runtime users, not `aws_iam_user_policy_attachment` (managed policy attachment).
 - The IAM management policy therefore needs `iam:PutUserPolicy`, `iam:DeleteUserPolicy`, `iam:GetUserPolicy`, and `iam:ListUserPolicies` -- but does **not** need `iam:AttachUserPolicy` or `iam:DetachUserPolicy`.
 - This eliminates the privilege escalation vector where a compromised bootstrap role could call `AttachUserPolicy` to attach `arn:aws:iam::aws:policy/AdministratorAccess` to one of the runtime users, then mint fresh access keys via `CreateAccessKey`, achieving full account compromise through the scoped user ARNs.
 - If managed policy attachment is preferred instead, scope `AttachUserPolicy` with an `iam:PolicyArn` condition restricting it to the two exact customer-managed policy ARNs. Never allow unrestricted `AttachUserPolicy` on any user ARN.
 
 Carry-forward requirements from prior audits (apply when writing policy JSON):
+
 - `bootstrap-plan` and `platform-apply` must include dual encryption denies (`StringNotEquals` + `Null` on `s3:x-amz-server-side-encryption`) scoped to the full `nwarila-platform/talos-cluster/*` prefix, not just per-path.
 - `platform-apply` must include an explicit `Deny` on `s3:PutObject` and `s3:DeleteObject` against `bootstrap.tfstate`. IAM default-deny is not sufficient -- an explicit deny survives future policy additions.
 - `bootstrap-kms` must include the `DenyTagLaundering`, `kms:KeySpec`/`kms:KeyUsage` conditions, and exact alias scoping from the earlier KMS audit.
@@ -270,7 +283,9 @@ Carry-forward requirements from prior audits (apply when writing policy JSON):
 Use exact-match trust wherever practical.
 
 #### `bootstrap_plan`
+
 Trust conditions:
+
 - `aud = sts.amazonaws.com`
 - exact repository ID
 - `ref = refs/heads/main`
@@ -280,7 +295,9 @@ Trust conditions:
 `workflow` pinning is not required on this shared read-only plan role.
 
 #### `bootstrap_apply`
+
 Trust conditions:
+
 - `aud = sts.amazonaws.com`
 - exact repository ID
 - `ref = refs/heads/main`
@@ -289,13 +306,17 @@ Trust conditions:
 - exact `sub` for `environment:bootstrap`
 
 #### `bootstrap_destroy`
+
 Trust conditions:
+
 - all bootstrap-apply conditions, but with `environment = bootstrap-destroy`
 - exact `workflow = Terraform Bootstrap Destroy`
 - exact numeric `actor_id` for the operator
 
 #### `platform_apply`
+
 Trust conditions:
+
 - `aud = sts.amazonaws.com`
 - exact repository ID
 - `ref = refs/heads/main`
@@ -308,18 +329,21 @@ Trust conditions:
 This plan restores runtime identities to Terraform ownership, but in a narrower and cleaner form than the earlier draft.
 
 #### `talos-cluster-vault-unseal`
+
 - IAM user created by bootstrap Terraform
 - one customer-managed policy attached
 - permissions limited to `kms:Encrypt`, `kms:Decrypt`, and `kms:DescribeKey` on the exact Vault unseal key ARN
 - access keys stored via the bootstrap secret path and then seeded into Vault / Kubernetes as required
 
 #### `talos-cluster-velero`
+
 - IAM user created by bootstrap Terraform
 - one customer-managed policy attached
 - permissions limited to the exact Velero backup bucket
 - no bucket lifecycle or KMS permissions
 
 Why this is the right middle ground:
+
 - declarative and reproducible
 - tighter than manually managed users
 - materially simpler than pretending IRSA is available on day one
@@ -327,17 +351,20 @@ Why this is the right middle ground:
 ### 2.10 Plan Storage and Logging — APPROVED
 
 #### Bootstrap and destroy
+
 - save binary plans privately in the existing Terraform S3 backend bucket
 - fetch by exact S3 version ID for apply / destroy
 - do not upload plans to GitHub artifacts
 - do not print full plan output to GitHub logs
 
 #### Platform day-2 apply
+
 - do not persist plan artifacts
 - run `plan -out=tfplan` and `apply tfplan` inside the same trusted run
 - write only sanitized summaries to `$GITHUB_STEP_SUMMARY`
 
 This is the cleanest balance:
+
 - exact reviewed plan handoff where there is a real approval boundary
 - no extra artifact machinery where there is not
 
@@ -380,6 +407,7 @@ These controls remain because they defend real failure modes.
 ### 2.12 Approval Chains — APPROVED
 
 #### Normal platform change
+
 1. Open PR
 2. `terraform-static-ci` passes
 3. Resolve review comments
@@ -388,6 +416,7 @@ These controls remain because they defend real failure modes.
 6. Workflow plans and applies within the same run using `..._platform_apply`
 
 #### Bootstrap create/update
+
 1. Open PR
 2. `terraform-static-ci` passes
 3. Merge to `main`
@@ -399,6 +428,7 @@ These controls remain because they defend real failure modes.
 9. `bootstrap-apply` downloads the exact plan and applies with `..._bootstrap_apply`
 
 #### Bootstrap destroy
+
 1. Submit PR that intentionally removes or relaxes `prevent_destroy` only where necessary
 2. `terraform-static-ci` passes
 3. Merge to `main`
@@ -436,6 +466,7 @@ These are intentionally out of scope.
 ### 3.1 Branch Protection — APPROVED
 
 Protect `main` with:
+
 - pull requests required
 - required status checks required
 - required check: `terraform-static-ci`
@@ -446,6 +477,7 @@ Protect `main` with:
 - only `NWarila` may push to matching branches
 
 Solo-operator honesty:
+
 - do **not** require PR approvals until a second reviewer exists
 - do **not** describe CODEOWNERS as a real merge gate yet
 
@@ -460,6 +492,7 @@ Create:
 ```
 
 Purpose:
+
 - documents ownership
 - auto-requests review
 - scales cleanly if collaborators are added later
@@ -481,6 +514,7 @@ Repository settings should reflect the public-repo threat model.
 ### Phase 0 — Repo Foundation
 
 Deliverables:
+
 - Taskfile / Makefile entrypoints
 - devcontainer
 - pre-commit
@@ -492,6 +526,7 @@ Deliverables:
 ### Phase 1 — Terraform Foundation and AWS Controls
 
 Deliverables:
+
 - `terraform/bootstrap` and `terraform/platform` skeletons
 - backend and provider configuration
 - four IAM identities / roles from this plan
@@ -501,6 +536,7 @@ Deliverables:
 - four workflow files from §2.6
 
 Definition of done:
+
 - `terraform-static-ci` passes on PRs
 - manual bootstrap plan succeeds
 - platform apply workflow is wired and trusted to `main`
@@ -508,6 +544,7 @@ Definition of done:
 ### Phase 2 — Talos Configuration
 
 Deliverables:
+
 - `talconfig.yaml`
 - schematic configuration
 - machine patches
@@ -517,6 +554,7 @@ Deliverables:
 ### Phase 3 — Core Platform Services
 
 Deliverables:
+
 - Cilium
 - cert-manager
 - external-dns
@@ -528,6 +566,7 @@ Deliverables:
 ### Phase 4 — GitOps Bootstrap
 
 Deliverables:
+
 - ArgoCD bootstrap
 - AppProjects
 - ApplicationSets for core, platform, and tenant repos
@@ -536,6 +575,7 @@ Deliverables:
 ### Phase 5 — Operations, Recovery, and Security Docs
 
 Deliverables:
+
 - architecture docs
 - bootstrap docs
 - upgrade docs
@@ -547,6 +587,7 @@ Deliverables:
 ### Phase 6 — Extended Platform Repos
 
 Deliverables:
+
 - `platform-monitoring`
 - `platform-backup`
 - `platform-policy`
@@ -589,6 +630,7 @@ This is the shortest path to meaningful progress.
 ### What counts as meaningful progress by end of day
 
 All of the following should be true:
+
 - repository controls are in place
 - Terraform skeleton exists
 - workflows exist
@@ -662,6 +704,7 @@ docs/
 ## 7. Final Decision Summary
 
 The project now uses a smaller and cleaner AWS model:
+
 - keep bootstrap/platform state separation
 - keep a shared read-only bootstrap plan role
 - keep separate bootstrap apply and destroy roles
