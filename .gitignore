@@ -26,6 +26,7 @@
 !/.github/workflows/pr-validation.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/template-sync.yaml
+!/.github/workflows/scorecard.yaml
 !/.github/workflows/codeql.yaml
 
 # Terraform module sources and tests
