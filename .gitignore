@@ -1,0 +1,63 @@
+# Deny-all .gitignore strategy per org ADR-0003.
+# Anything not explicitly allowlisted below is ignored.
+**
+
+# Core repo files
+!.editorconfig
+!.gitattributes
+!.gitignore
+!.markdownlint-cli2.jsonc
+!.pre-commit-config.yaml
+!.terraform-docs.yml
+!.tflint.hcl
+!CHANGELOG.md
+!LICENSE
+!Makefile
+!README.md
+!release-please-config.json
+!.release-please-manifest.json
+
+# GitHub configuration
+!/.github/
+!/.github/CODEOWNERS
+!/.github/PULL_REQUEST_TEMPLATE.md
+!/.github/renovate.json5
+!/.github/workflows/
+!/.github/workflows/pr-validation.yaml
+!/.github/workflows/security.yaml
+!/.github/workflows/template-sync.yaml
+
+# Terraform module sources and tests
+!/terraform/
+!/terraform/locals.tf
+!/terraform/outputs.tf
+!/terraform/resources.tf
+!/terraform/variables.tf
+!/terraform/versions.tf
+!/terraform/tests/
+!/terraform/tests/.gitkeep
+
+# Documentation (Diátaxis)
+!/docs/
+!/docs/README.md
+!/docs/explanation/
+!/docs/explanation/architecture.md
+!/docs/explanation/testing-strategy.md
+!/docs/explanation/threat-model.md
+!/docs/reference/
+!/docs/reference/invariants.md
+!/docs/reference/release-gates.md
+!/docs/reference/terraform.md
+!/docs/how-to/
+!/docs/how-to/develop-this-module.md
+!/docs/decision-records/
+!/docs/decision-records/README.md
+
+# Tools
+!/tools/
+!/tools/check_docs_layout.py
+
+# Policies
+!/policies/
+!/policies/opa/
+!/policies/opa/.gitkeep
