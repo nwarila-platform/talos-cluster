@@ -8,7 +8,7 @@
 
 ## Resource Linkage
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │  GitHub Actions Workflow                                            │
 │  repo: nwarila-platform/talos-cluster  (ID: 1202118418)            │
