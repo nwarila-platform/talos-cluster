@@ -1,8 +1,5 @@
 name: Terraform Bootstrap Destroy
 
-# TODO: pin all action references to full commit SHAs before this workflow
-# runs against real infrastructure (PLAN.md §3.3).
-
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: terraform-bootstrap-destroy
@@ -27,16 +23,19 @@ jobs:
   guard:
     name: guard ref + confirmation
     runs-on: ubuntu-latest
+    env:
+      GITHUB_REF_INPUT: ${{ github.ref }}
+      CONFIRM_INPUT: ${{ inputs.confirm }}
     steps:
       - name: ensure refs/heads/main
         run: |
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            echo "::error::Destroy workflow may only run against refs/heads/main (got ${{ github.ref }})"
+          if [ "$GITHUB_REF_INPUT" != "refs/heads/main" ]; then
+            echo "::error::Destroy workflow may only run against refs/heads/main (got $GITHUB_REF_INPUT)"
             exit 1
           fi
       - name: ensure exact confirmation string
         run: |
-          if [ "${{ inputs.confirm }}" != "DESTROY-talos-cluster-bootstrap" ]; then
+          if [ "$CONFIRM_INPUT" != "DESTROY-talos-cluster-bootstrap" ]; then
             echo "::error::Confirmation string did not match"
             exit 1
           fi
@@ -45,20 +44,28 @@ jobs:
     name: bootstrap destroy plan
     needs: guard
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     environment: bootstrap-plan
+    env:
+      RUN_ID: ${{ github.run_id }}
+      COMMIT_SHA: ${{ github.sha }}
     outputs:
       plan_version_id: ${{ steps.upload.outputs.version_id }}
       plan_key: ${{ steps.upload.outputs.key }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
         with:
           role-to-assume: arn:aws:iam::793496711039:role/github_nwarila-platform_talos-cluster_bootstrap_plan
           role-session-name: gh-bootstrap-destroy-plan-${{ github.run_id }}
           aws-region: us-east-1
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
         with:
           terraform_version: 1.9.5
 
@@ -74,7 +81,7 @@ jobs:
         id: upload
         working-directory: terraform/bootstrap
         run: |
-          KEY="${PLANS_PREFIX}/${{ github.run_id }}-${{ github.sha }}.tfplan"
+          KEY="${PLANS_PREFIX}/${RUN_ID}-${COMMIT_SHA}.tfplan"
           aws s3api put-object \
             --bucket "$PLANS_BUCKET" \
             --key "$KEY" \
@@ -92,8 +99,8 @@ jobs:
           {
             echo "## Bootstrap destroy plan summary"
             echo ""
-            echo "- ref: \`${{ github.sha }}\`"
-            echo "- run: \`${{ github.run_id }}\`"
+            echo "- ref: \`${COMMIT_SHA}\`"
+            echo "- run: \`${RUN_ID}\`"
             echo "- destroy plan stored privately"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -101,17 +108,27 @@ jobs:
     name: bootstrap destroy
     needs: destroy_plan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     environment: bootstrap-destroy
+    env:
+      RUN_ID: ${{ github.run_id }}
+      COMMIT_SHA: ${{ github.sha }}
+      PLAN_KEY: ${{ needs.destroy_plan.outputs.plan_key }}
+      PLAN_VERSION_ID: ${{ needs.destroy_plan.outputs.plan_version_id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
         with:
           role-to-assume: arn:aws:iam::793496711039:role/github_nwarila-platform_talos-cluster_bootstrap_destroy
           role-session-name: gh-bootstrap-destroy-${{ github.run_id }}
           aws-region: us-east-1
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
         with:
           terraform_version: 1.9.5
 
@@ -124,8 +141,8 @@ jobs:
         run: |
           aws s3api get-object \
             --bucket "$PLANS_BUCKET" \
-            --key "${{ needs.destroy_plan.outputs.plan_key }}" \
-            --version-id "${{ needs.destroy_plan.outputs.plan_version_id }}" \
+            --key "$PLAN_KEY" \
+            --version-id "$PLAN_VERSION_ID" \
             tfplan
 
       - name: terraform apply tfplan
@@ -138,6 +155,6 @@ jobs:
           {
             echo "## Bootstrap destroy summary"
             echo ""
-            echo "- ref: \`${{ github.sha }}\`"
-            echo "- run: \`${{ github.run_id }}\`"
+            echo "- ref: \`${COMMIT_SHA}\`"
+            echo "- run: \`${RUN_ID}\`"
           } >> "$GITHUB_STEP_SUMMARY"
