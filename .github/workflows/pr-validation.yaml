@@ -28,6 +28,5 @@ jobs:
       # renovate: datasource=github-releases depName=open-policy-agent/opa extractVersion=^v(?<version>.*)$
       opa_version: "1.10.0"
       template_ref: 1c92039cf4d52711e1a1b058f09d9ad49c969451
-      mode: contract-and-lint
-      lint_advisory: true
+      mode: full
 
