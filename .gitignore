@@ -62,3 +62,8 @@
 !/policies/
 !/policies/opa/
 !/policies/opa/.gitkeep
+
+# Contract files (seeded by seed_consumer.py)
+!/CHANGELOG.md
+!/release-please-config.json
+!/.release-please-manifest.json
