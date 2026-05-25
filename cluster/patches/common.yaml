@@ -3,6 +3,13 @@
 # =============================================================================
 machine:
   features:
+    # Talos-API hardening: rbac requires every talosctl client cert to carry
+    # an os:* role (default issued certs are O=os:admin); apidCheckExtKeyUsage
+    # requires the cert to declare the clientAuth Extended Key Usage. Both are
+    # Sidero's recommended production defaults. Pre-flight: confirmed the
+    # working talosconfig satisfies both before enabling (2026-05-25).
+    rbac: true
+    apidCheckExtKeyUsage: true
     diskQuotaSupport: true
     kubePrism:
       enabled: true
