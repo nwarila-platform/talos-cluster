@@ -33,7 +33,7 @@ jobs:
     runs-on: self-hosted
     environment: production  # Requires manual approval in GitHub settings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install talosctl
         run: |
