@@ -40,6 +40,15 @@ cluster:
             audit-version: latest
             warn: restricted
             warn-version: latest
+          # Cluster-wide PodSecurity exemption list intentionally empty.
+          # Workloads needing privileged scope use per-namespace labels instead
+          # of cluster-level exemptions (better blast-radius control):
+          #   - kube-system: default-exempted by talosctl gen config defaults
+          #     (where Cilium and other system pods run)
+          #   - longhorn-system: namespace carries the label
+          #     pod-security.kubernetes.io/enforce: privileged
+          # Adding a namespace name here is rarely correct; prefer namespace
+          # labels at the workload's install site.
           exemptions:
             namespaces: []
             runtimeClasses: []
