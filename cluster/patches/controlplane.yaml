@@ -1,15 +1,15 @@
 # =============================================================================
 # Control plane patch — applied to all CP nodes
 #
-# Aligned with live cluster machine config as of 2026-05-25. The following
-# hardening additions were declared here but never applied, and have been
-# dropped pending intentional rollout cycles:
-#   - machine.certSANs (Talos API cert SANs)
-#   - cluster.apiServer.certSANs (kube-apiserver cert SANs)
-#   - controllerManager.extraArgs.bind-address: 0.0.0.0
-#   - scheduler.extraArgs.bind-address: 0.0.0.0
-#   - etcd.extraArgs.listen-metrics-urls
-# See diff session of 2026-05-25 in conversation history.
+# NOTE on metrics bind-addresses (controllerManager / scheduler / etcd):
+# Setting bind-address: 0.0.0.0 on these components is the standard way to
+# let an off-host Prometheus scrape them, BUT it also exposes the endpoints
+# to anything with L4 reach to the CP IPs (10.69.112.62-65). This cluster
+# has no Prometheus deployed today, so enabling the binds would mean
+# attack surface without monitoring benefit. Re-introduce these alongside
+# a Prometheus deployment + a Talos kubespan / network-policy / external
+# firewall scoping the metrics ports to known scrapers. Decision recorded
+# 2026-05-25.
 # =============================================================================
 cluster:
   allowSchedulingOnControlPlanes: false
