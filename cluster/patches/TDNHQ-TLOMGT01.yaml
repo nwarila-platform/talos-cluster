@@ -1,0 +1,18 @@
+# =============================================================================
+# TDNHQ-TLOMGT01 — Control Plane Node 1 (Bootstrap Node)
+# IP: 10.69.112.63 | Disk: sda (250GB)
+# =============================================================================
+machine:
+  install:
+    disk: /dev/sda
+  network:
+    interfaces:
+      - deviceSelector:
+          physical: true
+        addresses:
+          - 10.69.112.63/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 10.69.112.1
+        vip:
+          ip: 10.69.112.62

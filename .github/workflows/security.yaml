@@ -1,0 +1,131 @@
+# =============================================================================
+# Security — scheduled audits + PR secret scanning
+# =============================================================================
+name: Security Audit
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Weekly, Monday 06:00 UTC
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  gitleaks:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  config-audit:
+    name: Config Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit Talos config patches
+        run: |
+          echo "==> Auditing configuration patches..."
+          source cluster/config.env
+          FAIL=0
+
+          # 1. No secrets in patches
+          echo "--- Checking for embedded secrets ---"
+          if grep -rn "BEGIN.*PRIVATE KEY\|token:\s*[a-zA-Z0-9/+].\{20,\}\|password:\s*[a-zA-Z0-9].\{8,\}" cluster/patches/; then
+            echo "FAIL: Potential secrets found in config patches"
+            FAIL=1
+          else
+            echo "PASS: No embedded secrets detected"
+          fi
+
+          # 2. VIP consistency — a stale CLUSTER_VIP that doesn't match the
+          # per-CP vip.ip declarations or the kube-apiserver certSANs causes
+          # the floating control-plane address to either not float or to fail
+          # TLS validation. This check must enforce, not just report.
+          echo "--- Checking VIP consistency ---"
+          [ -n "${CLUSTER_VIP:-}" ] || { echo "FAIL: CLUSTER_VIP missing from cluster/config.env"; exit 1; }
+          echo "  Expected VIP: ${CLUSTER_VIP}"
+          VIP_RE="${CLUSTER_VIP//./\\.}"
+
+          if ! grep -q "^CLUSTER_ENDPOINT=\"https://${CLUSTER_VIP}:" cluster/config.env; then
+            echo "FAIL: CLUSTER_ENDPOINT does not target CLUSTER_VIP=${CLUSTER_VIP}"
+            FAIL=1
+          else
+            echo "PASS: CLUSTER_ENDPOINT targets the configured VIP"
+          fi
+
+          MISSING_VIP=()
+          for entry in ${CP_NODES}; do
+            hostname="${entry%%:*}"
+            patch="cluster/patches/${hostname}.yaml"
+            if ! grep -Eq "^[[:space:]]+ip:[[:space:]]+${VIP_RE}[[:space:]]*\$" "${patch}"; then
+              MISSING_VIP+=("${hostname}")
+            fi
+          done
+          if (( ${#MISSING_VIP[@]} > 0 )); then
+            echo "FAIL: CP node patches missing 'ip: ${CLUSTER_VIP}' VIP declaration: ${MISSING_VIP[*]}"
+            FAIL=1
+          else
+            echo "PASS: All CP node patches declare the VIP"
+          fi
+
+          if ! grep -Eq "^[[:space:]]+-[[:space:]]+${VIP_RE}[[:space:]]*\$" cluster/patches/controlplane.yaml; then
+            echo "FAIL: controlplane.yaml certSANs missing VIP ${CLUSTER_VIP}"
+            FAIL=1
+          else
+            echo "PASS: controlplane.yaml certSANs lists the VIP"
+          fi
+
+          # 3. Version pinning check
+          # Enforce strict semver (vMAJOR.MINOR.PATCH with optional pre-release).
+          # The prior `*latest*` substring check passed empty strings, floating
+          # tags like "v1.12", branch names ("main", "stable"), and any alias
+          # that did not literally contain "latest" — defeating the supply-chain
+          # guarantee this audit claims to make.
+          echo "--- Checking version pinning ---"
+          echo "  Talos version:      ${TALOS_VERSION}"
+          echo "  Kubernetes version: ${KUBERNETES_VERSION}"
+          VERSION_RE='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          TALOS_OK=1; K8S_OK=1
+          if ! [[ "${TALOS_VERSION}" =~ $VERSION_RE ]]; then
+            echo "FAIL: TALOS_VERSION='${TALOS_VERSION}' is not a pinned semver (expected vMAJOR.MINOR.PATCH[-pre])"
+            FAIL=1; TALOS_OK=0
+          fi
+          if ! [[ "${KUBERNETES_VERSION}" =~ $VERSION_RE ]]; then
+            echo "FAIL: KUBERNETES_VERSION='${KUBERNETES_VERSION}' is not a pinned semver (expected vMAJOR.MINOR.PATCH[-pre])"
+            FAIL=1; K8S_OK=0
+          fi
+          if (( TALOS_OK == 1 && K8S_OK == 1 )); then
+            echo "PASS: Versions are pinned (semver)"
+          fi
+
+          # 4. All nodes have patches
+          echo "--- Checking node patch coverage ---"
+          for entry in ${CP_NODES} ${WORKER_NODES}; do
+            hostname="${entry%%:*}"
+            if [[ ! -f "cluster/patches/${hostname}.yaml" ]]; then
+              echo "FAIL: Missing patch file for ${hostname}"
+              FAIL=1
+            else
+              echo "PASS: ${hostname} has patch file"
+            fi
+          done
+
+          if [ "${FAIL}" -eq 1 ]; then
+            echo ""
+            echo "==> AUDIT FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "==> AUDIT PASSED"

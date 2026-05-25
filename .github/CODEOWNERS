@@ -1,0 +1,16 @@
+# =============================================================================
+# CODEOWNERS — require review for critical paths
+# =============================================================================
+
+# Default owner for everything
+*                       @HellBomb
+
+# Cluster configuration changes need explicit review
+cluster/                @HellBomb
+cluster/config.env      @HellBomb
+
+# CI/CD pipeline changes
+.github/                @HellBomb
+
+# Automation scripts
+scripts/                @HellBomb

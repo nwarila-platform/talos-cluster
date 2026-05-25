@@ -1,0 +1,117 @@
+# =============================================================================
+# Validate — runs on every PR touching cluster configs, addons, or scripts
+# =============================================================================
+name: Validate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cluster/**"
+      - "addons/**"
+      - "scripts/**"
+      - "Makefile"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: scripts/
+          severity: warning
+
+      - name: YAML Lint
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: "cluster/ addons/"
+          config_data: |
+            extends: default
+            rules:
+              line-length:
+                max: 200
+              truthy:
+                check-keys: false
+              comments:
+                min-spaces-from-content: 1
+
+  validate-configs:
+    name: Validate Configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install talosctl (pinned to cluster TALOS_VERSION)
+        run: |
+          # Pin to the cluster's Talos version (cluster/config.env) instead of
+          # piping the upstream installer to sh, which always fetches the
+          # latest release. CI must validate against the same talosctl version
+          # the cluster runs, and the asset + checksum must be auditable from
+          # the workflow file alone.
+          set -euo pipefail
+          TALOS_VERSION=$(grep '^TALOS_VERSION=' cluster/config.env | cut -d'"' -f2)
+          [ -n "${TALOS_VERSION}" ] || { echo "TALOS_VERSION missing from cluster/config.env"; exit 1; }
+          url="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
+          sums="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/sha256sum.txt"
+          curl --proto '=https' --tlsv1.2 -fsSL -o talosctl "${url}"
+          curl --proto '=https' --tlsv1.2 -fsSL -o sha256sum.txt "${sums}"
+          expected=$(awk '$2=="talosctl-linux-amd64"{print $1}' sha256sum.txt)
+          actual=$(sha256sum talosctl | awk '{print $1}')
+          [ "${expected}" = "${actual}" ] || { echo "talosctl checksum mismatch: expected=${expected} actual=${actual}"; exit 1; }
+          chmod +x talosctl
+          sudo mv talosctl /usr/local/bin/talosctl
+          talosctl version --client --short
+
+      - name: Generate configs (throwaway secrets)
+        run: |
+          mkdir -p .s3/secrets .s3/configs .s3/generated/controlplane .s3/generated/worker
+          talosctl gen secrets -o .s3/secrets/secrets.yaml
+          bash scripts/generate.sh
+
+      - name: Validate control plane configs
+        run: |
+          for f in .s3/generated/controlplane/*.yaml; do
+            echo "Validating ${f}..."
+            talosctl validate --config "${f}" --mode metal
+          done
+
+      - name: Validate worker configs
+        run: |
+          for f in .s3/generated/worker/*.yaml; do
+            echo "Validating ${f}..."
+            talosctl validate --config "${f}" --mode metal
+          done
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for hardcoded secrets in tracked files
+        run: |
+          echo "==> Scanning for secrets in tracked files..."
+          FAIL=0
+
+          if grep -rn "BEGIN.*PRIVATE KEY" --include="*.yaml" --include="*.yml" cluster/ addons/ scripts/; then
+            echo "FAIL: Private keys found in tracked files!"
+            FAIL=1
+          fi
+
+          if grep -rn "token:\s*[a-zA-Z0-9/+].\{20,\}" --include="*.yaml" --include="*.yml" cluster/ addons/; then
+            echo "FAIL: Possible embedded tokens in cluster configs!"
+            FAIL=1
+          fi
+
+          if [ "${FAIL}" -eq 1 ]; then
+            exit 1
+          fi
+
+          echo "==> No secrets detected."

@@ -1,0 +1,18 @@
+# =============================================================================
+# TDNHQ-TLOMGT02 — Control Plane Node 2
+# IP: 10.69.112.64 | Disk: nvme0n1 (250GB)
+# =============================================================================
+machine:
+  install:
+    disk: /dev/nvme0n1
+  network:
+    interfaces:
+      - deviceSelector:
+          physical: true
+        addresses:
+          - 10.69.112.64/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 10.69.112.1
+        vip:
+          ip: 10.69.112.62

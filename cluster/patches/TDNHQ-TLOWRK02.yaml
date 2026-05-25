@@ -1,0 +1,16 @@
+# =============================================================================
+# TDNHQ-TLOWRK02 — Worker Node 2
+# IP: 10.69.112.69 | Disk: sda (500GB)
+# =============================================================================
+machine:
+  install:
+    disk: /dev/sda
+  network:
+    interfaces:
+      - deviceSelector:
+          physical: true
+        addresses:
+          - 10.69.112.69/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 10.69.112.1

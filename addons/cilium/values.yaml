@@ -1,0 +1,38 @@
+# =============================================================================
+# Cilium CNI — Helm values for Talos
+# Chart: cilium/cilium v1.16.6
+# =============================================================================
+ipam:
+  mode: kubernetes
+
+kubeProxyReplacement: true
+
+# Talos mounts cgroup2 at /sys/fs/cgroup
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+# Use KubePrism local proxy for K8s API access
+k8sServiceHost: 127.0.0.1
+k8sServicePort: 7445
+
+# Required capabilities for Talos (immutable OS)
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE

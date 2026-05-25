@@ -1,0 +1,28 @@
+# =============================================================================
+# Common patch — applied to ALL nodes (control plane + workers)
+# =============================================================================
+machine:
+  features:
+    rbac: true
+    apidCheckExtKeyUsage: true
+    diskQuotaSupport: true
+    kubePrism:
+      enabled: true
+      port: 7445
+  time:
+    servers:
+      - time.cloudflare.com
+  network:
+    nameservers:
+      - 1.1.1.1
+      - 8.8.8.8
+  sysctls:
+    net.core.somaxconn: "65535"
+    net.core.netdev_max_backlog: "5000"
+    vm.max_map_count: "262144"
+    fs.inotify.max_user_watches: "1048576"
+    fs.inotify.max_user_instances: "8192"
+  kubelet:
+    extraArgs:
+      rotate-server-certificates: "true"
+  # install disk is set per-node in individual patch files

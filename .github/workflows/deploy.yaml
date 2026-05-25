@@ -1,0 +1,88 @@
+# =============================================================================
+# Deploy — manual trigger for applying configs or upgrading nodes
+#
+# IMPORTANT: This workflow requires a self-hosted runner with network access
+# to the Talos nodes (10.69.112.0/24). GitHub-hosted runners cannot reach
+# private networks. Configure a runner on your management network.
+# =============================================================================
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to perform"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - upgrade
+      target:
+        description: "Target nodes (comma-separated hostnames, or 'all')"
+        required: true
+        default: "all"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy
+    # CHANGE THIS to your self-hosted runner label
+    runs-on: self-hosted
+    environment: production  # Requires manual approval in GitHub settings
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install talosctl
+        run: |
+          TALOS_VERSION=$(grep '^TALOS_VERSION=' cluster/config.env | cut -d'"' -f2)
+          url="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
+          sums="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/sha256sum.txt"
+          curl --proto '=https' --tlsv1.2 -fsSL -o talosctl "${url}"
+          curl --proto '=https' --tlsv1.2 -fsSL -o sha256sum.txt "${sums}"
+          expected=$(awk '$2=="talosctl-linux-amd64"{print $1}' sha256sum.txt)
+          actual=$(sha256sum talosctl | awk '{print $1}')
+          [ "${expected}" = "${actual}" ] || { echo "talosctl checksum mismatch: expected=${expected} actual=${actual}"; exit 1; }
+          chmod +x talosctl
+          sudo mv talosctl /usr/local/bin/talosctl
+          talosctl version --client --short
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Pull secrets from S3
+        run: make s3-pull
+
+      - name: Generate configs
+        run: make generate
+
+      - name: Validate configs
+        run: make validate
+
+      - name: Apply configs
+        if: inputs.action == 'apply'
+        run: |
+          if [ "${{ inputs.target }}" = "all" ]; then
+            make apply
+          else
+            NODES=$(echo "${{ inputs.target }}" | tr ',' ' ')
+            make apply NODES="${NODES}"
+          fi
+
+      - name: Upgrade nodes
+        if: inputs.action == 'upgrade'
+        run: |
+          if [ "${{ inputs.target }}" = "all" ]; then
+            make upgrade
+          else
+            NODES=$(echo "${{ inputs.target }}" | tr ',' ' ')
+            make upgrade NODES="${NODES}"
+          fi
+
+      - name: Health check
+        run: make health
