@@ -1,11 +1,5 @@
 # =============================================================================
 # Common patch — applied to ALL nodes (control plane + workers)
-#
-# This file aligns with the live cluster's machine config as of 2026-05-25.
-# Hardening additions that were declared here but never applied (kubelet
-# rotate-server-certificates, features.rbac, features.apidCheckExtKeyUsage,
-# expanded sysctl set) have been removed pending an intentional rollout
-# cycle. See diff session of 2026-05-25 in conversation history.
 # =============================================================================
 machine:
   features:
@@ -20,8 +14,18 @@ machine:
     nameservers:
       - 10.69.112.1   # site gateway provides DNS (matches live cluster)
   sysctls:
+    # rmem_max + somaxconn are inherited from the original live config.
+    # The remaining four are standard K8s node tunes:
+    #   - netdev_max_backlog: inbound packet queue (default 1000 too low under burst)
+    #   - vm.max_map_count: required minimum for Elasticsearch/Loki + Cilium eBPF
+    #   - fs.inotify.max_user_{watches,instances}: kubelet + log shippers + node-exporter
+    #     exhaust the Linux defaults of 8192/128 within minutes on a busy K8s node
     net.core.rmem_max: "2500000"
     net.core.somaxconn: "65535"
+    net.core.netdev_max_backlog: "5000"
+    vm.max_map_count: "262144"
+    fs.inotify.max_user_watches: "1048576"
+    fs.inotify.max_user_instances: "8192"
   install:
     # The install disk is set per-node (sda vs nvme0n1 in cluster/patches/{cp,w}*.yaml).
     # `wipe: true` is set here because every live node has it; semantically a no-op
