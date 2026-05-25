@@ -47,6 +47,8 @@
 !/addons/cilium/values.yaml
 !/addons/ingress-nginx/
 !/addons/ingress-nginx/values.yaml
+!/addons/kubelet-csr-approver/
+!/addons/kubelet-csr-approver/values.yaml
 !/addons/metrics-server/
 !/addons/metrics-server/values.yaml
 !/addons/poc/
@@ -80,5 +82,6 @@
 !/docs/decision-records/repo/0002-use-short-talos-hostnames.md
 !/docs/decision-records/repo/0003-repo-as-cluster-source-of-truth.md
 !/docs/decision-records/repo/0004-capture-longhorn-volume-config-in-talos.md
+!/docs/decision-records/repo/0005-kubelet-csr-approver.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep

@@ -1,0 +1,44 @@
+# =============================================================================
+# kubelet-csr-approver Helm values
+#
+# Auto-approves Kubernetes CSRs of signer kubernetes.io/kubelet-serving when
+# they come from a kubelet (system:node:<name>) and stay within strict per-
+# node guardrails. Required precondition for re-enabling
+# machine.kubelet.extraArgs.rotate-server-certificates: "true" in
+# cluster/patches/common.yaml.
+#
+# See docs/decision-records/repo/0005-kubelet-csr-approver.md
+# =============================================================================
+
+# Reject any CSR whose requestor is not one of our six known node names.
+# Defense in depth on top of the chart's system:nodes group check.
+providerRegex: '^(cp[1-3]|w[1-3])$'
+
+# Reject any CSR whose SAN IP falls outside the management subnet.
+# Mirrors machine.kubelet.nodeIP.validSubnets in cluster/patches/worker.yaml.
+providerIpPrefixes:
+  - 10.69.112.0/24
+
+# Short hostnames (cp1, w2, …) are not in DNS — the chart's default
+# DNS-resolution check would always fail. The regex + IP prefix above
+# replace that verification.
+bypassDnsResolution: true
+
+# Keep the requestor-vs-CN match (CSR's CN must equal system:node:<requestor>).
+bypassHostnameCheck: false
+
+# Only ever look at CSRs from kubelet-style requestors. Avoids accidental
+# interactions with random other CSR producers in-cluster.
+ignoreNonSystemNode: true
+
+# Two replicas so a controller eviction doesn't pause CSR approval.
+replicas: 2
+
+# Metrics endpoint disabled — no Prometheus in this cluster yet
+# (see commit 2afcd91 for the broader metrics-exposure decision).
+metrics:
+  enable: false
+
+# Chart default puts the pods on CPs (it's a control-plane controller).
+# The default toleration allows it to schedule on CPs despite the
+# control-plane NoSchedule taint. Leave as-is.

@@ -49,6 +49,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0002](repo/0002-use-short-talos-hostnames.md)                 | Use Short Talos Hostnames (`cp1`–`w3`)         | Accepted | 2026-05-25 | Hostnames, patch filenames, and `cluster/config.env` keys use the short forms `cp1`…`w3` that the live cluster has run on for ≥51 days. Asset-style names (`TDNHQ-TLO*`) are retained as cross-reference in `systems`. |
 | [0003](repo/0003-repo-as-cluster-source-of-truth.md)           | Treat Repo as Cluster Source of Truth          | Accepted | 2026-05-25 | This repository is the declarative source of truth for the cluster. Out-of-band changes require a back-fill PR within 7 days. Drift-detection CI is committed as a follow-up. |
 | [0004](repo/0004-capture-longhorn-volume-config-in-talos.md)   | Capture Longhorn Volume Config in Talos        | Accepted | 2026-05-25 | `cluster/patches/volumes.yaml` declares the EPHEMERAL `VolumeConfig` and the Longhorn `UserVolumeConfig`; `scripts/generate.sh` appends them to every per-node config so `make apply` doesn't drop production storage. |
+| [0005](repo/0005-kubelet-csr-approver.md)                      | Use postfinance/kubelet-csr-approver           | Accepted | 2026-05-25 | Deploy postfinance/kubelet-csr-approver Helm chart to auto-approve `kubernetes.io/kubelet-serving` CSRs. Precondition for re-enabling `rotate-server-certificates` in `common.yaml`. Provider regex + IP prefix scope approval to the 6 known nodes / management subnet. |
 
 ## Status Lifecycle
 

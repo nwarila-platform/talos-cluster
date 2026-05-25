@@ -578,6 +578,26 @@ kubectl apply -f https://raw.githubusercontent.com/alex1989hu/kubelet-serving-ce
 
 Each command below installs one addon. Run them in order.
 
+**Kubelet CSR Approver** (auto-approves kubelet serving-cert CSRs so kubelet's `rotate-server-certificates: true` setting works without manual `kubectl certificate approve`):
+
+```bash
+helm repo add postfinance https://postfinance.github.io/kubelet-csr-approver
+helm repo update
+helm install kubelet-csr-approver postfinance/kubelet-csr-approver \
+    --version 1.2.14 \
+    --namespace kube-system \
+    -f addons/kubelet-csr-approver/values.yaml
+```
+
+Verify it landed and the controller acquired the leader lease:
+
+```bash
+kubectl -n kube-system get pods -l app.kubernetes.io/name=kubelet-csr-approver
+kubectl -n kube-system logs -l app.kubernetes.io/name=kubelet-csr-approver --tail 5
+```
+
+You should see `Successfully acquired lease` and `Starting workers`. See [ADR-0005](docs/decision-records/repo/0005-kubelet-csr-approver.md).
+
 **Metrics Server** (enables `kubectl top` to see CPU/memory usage):
 
 ```bash
