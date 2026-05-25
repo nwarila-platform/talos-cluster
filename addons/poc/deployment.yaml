@@ -73,9 +73,9 @@ data:
         <p class="status">Talos Kubernetes Cluster - OPERATIONAL</p>
         <hr style="border-color: #333;">
         <p>Talos OS: v1.12.5</p>
-        <p>Kubernetes: v1.32.2</p>
+        <p>Kubernetes: v1.35.2</p>
         <p>CNI: Cilium v1.16.6</p>
-        <p>Nodes: 2 control-plane + 2 workers</p>
+        <p>Nodes: 3 control-plane + 3 workers</p>
         <p class="info">This is a proof-of-concept deployment confirming the cluster is fully functional.</p>
       </div>
     </body>

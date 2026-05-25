@@ -1,6 +1,6 @@
 # =============================================================================
-# TDNHQ-TLOWRK01 — Worker Node 1
-# IP: 10.69.112.68 | Disk: nvme0n1 (250GB)
+# w3 — Worker Node 3
+# Asset name: TDNHQ-TLOWRK03 | IP: 10.69.112.70 | Disk: nvme0n1
 # =============================================================================
 machine:
   install:
@@ -10,7 +10,7 @@ machine:
       - deviceSelector:
           physical: true
         addresses:
-          - 10.69.112.68/24
+          - 10.69.112.70/24
         routes:
           - network: 0.0.0.0/0
             gateway: 10.69.112.1

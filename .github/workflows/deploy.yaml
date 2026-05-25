@@ -19,7 +19,7 @@ on:
           - apply
           - upgrade
       target:
-        description: "Target nodes (comma-separated hostnames, or 'all')"
+        description: "Target nodes from cluster/config.env (comma-separated hostnames, or 'all')"
         required: true
         default: "all"
 
@@ -34,6 +34,40 @@ jobs:
     environment: production  # Requires manual approval in GitHub settings
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve target nodes
+        id: targets
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          source cluster/config.env
+
+          declare -A VALID=()
+          valid_nodes=()
+          for entry in ${CP_NODES} ${WORKER_NODES}; do
+            hostname="${entry%%:*}"
+            VALID["${hostname}"]=1
+            valid_nodes+=("${hostname}")
+          done
+
+          if [[ "${TARGET}" == "all" ]]; then
+            echo "nodes=" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          IFS=',' read -ra requested_nodes <<< "${TARGET}"
+          nodes=()
+          for raw in "${requested_nodes[@]}"; do
+            hostname="${raw//[[:space:]]/}"
+            if [[ -z "${hostname}" || -z "${VALID[${hostname}]+x}" ]]; then
+              echo "Invalid target '${raw}'. Use 'all' or one of: ${valid_nodes[*]}" >&2
+              exit 1
+            fi
+            nodes+=("${hostname}")
+          done
+
+          echo "nodes=${nodes[*]}" >> "${GITHUB_OUTPUT}"
 
       - name: Install talosctl
         run: |
@@ -66,22 +100,26 @@ jobs:
 
       - name: Apply configs
         if: inputs.action == 'apply'
+        env:
+          NODES: ${{ steps.targets.outputs.nodes }}
         run: |
-          if [ "${{ inputs.target }}" = "all" ]; then
+          if [ -z "${NODES}" ]; then
             make apply
           else
-            NODES=$(echo "${{ inputs.target }}" | tr ',' ' ')
             make apply NODES="${NODES}"
           fi
 
       - name: Upgrade nodes
         if: inputs.action == 'upgrade'
+        env:
+          NODES: ${{ steps.targets.outputs.nodes }}
+        # YES=1 bypasses upgrade.sh's interactive prompt; the GitHub
+        # `environment: production` gate above is the operator approval.
         run: |
-          if [ "${{ inputs.target }}" = "all" ]; then
-            make upgrade
+          if [ -z "${NODES}" ]; then
+            make upgrade YES=1
           else
-            NODES=$(echo "${{ inputs.target }}" | tr ',' ' ')
-            make upgrade NODES="${NODES}"
+            make upgrade NODES="${NODES}" YES=1
           fi
 
       - name: Health check

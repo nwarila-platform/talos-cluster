@@ -3,10 +3,15 @@
 # upgrade.sh — Rolling upgrade of TalosOS on cluster nodes
 #
 # Usage:
-#   ./scripts/upgrade.sh [HOSTNAME ...]
+#   ./scripts/upgrade.sh [--yes] [HOSTNAME ...]
 #
 # If no hostnames are given, upgrades ALL nodes in safe order:
 #   workers first → non-bootstrap CP → bootstrap CP last
+#
+# --yes skips the interactive confirmation prompt. Required when invoked from
+# CI/CD (non-TTY stdin makes `read` fail under `set -e`). The deploy workflow
+# already gates upgrades behind a GitHub `environment: production` manual
+# approval, so the script-level prompt is redundant in that path.
 # =============================================================================
 set -euo pipefail
 
@@ -31,9 +36,22 @@ for entry in ${CP_NODES} ${WORKER_NODES}; do
 done
 
 # ---------------------------------------------------------------------------
+# Parse arguments
+# ---------------------------------------------------------------------------
+ASSUME_YES=0
+TARGETS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --yes) ASSUME_YES=1; shift ;;
+        --)    shift; TARGETS+=("$@"); break ;;
+        -*)    echo "ERROR: unknown flag '$1' (expected --yes or HOSTNAME)" >&2; exit 1 ;;
+        *)     TARGETS+=("$1"); shift ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
 # Determine upgrade order
 # ---------------------------------------------------------------------------
-TARGETS=("$@")
 
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     # Safe order: workers → non-bootstrap CP → bootstrap CP
@@ -82,10 +100,14 @@ echo "  Target version: ${TALOS_VERSION}"
 echo "  Install image:  ${TALOS_INSTALL_IMAGE}"
 echo "  Upgrade order:  ${TARGETS[*]}"
 echo ""
-read -p "  Type 'yes' to proceed: " confirm
-if [[ "${confirm}" != "yes" ]]; then
-    echo "  Aborted."
-    exit 1
+if [[ "${ASSUME_YES}" -eq 1 ]]; then
+    echo "  --yes supplied; skipping interactive confirmation."
+else
+    read -p "  Type 'yes' to proceed: " confirm
+    if [[ "${confirm}" != "yes" ]]; then
+        echo "  Aborted."
+        exit 1
+    fi
 fi
 
 # ---------------------------------------------------------------------------

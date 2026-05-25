@@ -10,6 +10,7 @@ on:
       - "cluster/**"
       - "addons/**"
       - "scripts/**"
+      - ".github/workflows/**"
       - "Makefile"
 
 permissions:
@@ -79,14 +80,14 @@ jobs:
         run: |
           for f in .s3/generated/controlplane/*.yaml; do
             echo "Validating ${f}..."
-            talosctl validate --config "${f}" --mode metal
+            talosctl validate --config "${f}" --mode metal --strict
           done
 
       - name: Validate worker configs
         run: |
           for f in .s3/generated/worker/*.yaml; do
             echo "Validating ${f}..."
-            talosctl validate --config "${f}" --mode metal
+            talosctl validate --config "${f}" --mode metal --strict
           done
 
   secret-scan:

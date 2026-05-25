@@ -20,7 +20,7 @@
 # -- GitHub configuration -----------------------------------------------------
 !/.github/
 !/.github/CODEOWNERS
-!/.github/dependabot.yml
+!/.github/renovate.json5
 !/.github/workflows/
 !/.github/workflows/deploy.yaml
 !/.github/workflows/security.yaml
@@ -30,12 +30,15 @@
 !/cluster/
 !/cluster/config.env
 !/cluster/patches/
-!/cluster/patches/TDNHQ-TLOMGT01.yaml
-!/cluster/patches/TDNHQ-TLOMGT02.yaml
-!/cluster/patches/TDNHQ-TLOWRK01.yaml
-!/cluster/patches/TDNHQ-TLOWRK02.yaml
 !/cluster/patches/common.yaml
 !/cluster/patches/controlplane.yaml
+!/cluster/patches/cp1.yaml
+!/cluster/patches/cp2.yaml
+!/cluster/patches/cp3.yaml
+!/cluster/patches/volumes.yaml
+!/cluster/patches/w1.yaml
+!/cluster/patches/w2.yaml
+!/cluster/patches/w3.yaml
 !/cluster/patches/worker.yaml
 
 # -- Addons: Helm values and Kubernetes manifests -----------------------------
@@ -73,5 +76,9 @@
 !/docs/decision-records/org/0004-use-renovate-for-dependency-updates.md
 !/docs/decision-records/repo/
 !/docs/decision-records/repo/.gitkeep
+!/docs/decision-records/repo/0001-renovate-without-template-lineage.md
+!/docs/decision-records/repo/0002-use-short-talos-hostnames.md
+!/docs/decision-records/repo/0003-repo-as-cluster-source-of-truth.md
+!/docs/decision-records/repo/0004-capture-longhorn-volume-config-in-talos.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep

@@ -49,7 +49,7 @@ Here's what those terms mean in plain language:
 
 - **TalosOS** is the operating system installed on each computer (called a "node") in the cluster. Unlike Windows or a regular Linux install, TalosOS is *immutable* — you cannot SSH into it, you cannot install software on it, and you cannot change files on it. It is managed entirely through an API (a programmatic interface). This makes it extremely secure and consistent. If a node has a problem, you don't debug it — you replace it.
 
-- **A cluster** is a group of computers working together as one. Ours has 4 physical machines (nodes).
+- **A cluster** is a group of computers working together as one. Ours has 6 physical machines (nodes).
 
 This repository is the **single source of truth** for the entire cluster. Every setting, every configuration, every version number lives here. If the cluster were to be destroyed, this repo (plus the secrets stored in S3) is everything you need to rebuild it from scratch.
 
@@ -61,43 +61,30 @@ The cluster has two types of nodes:
 
 ### Control Plane Nodes (the "managers")
 
-These run the Kubernetes brain — the software that decides where containers should run, monitors health, and responds to commands. We have **2 control plane nodes** for high availability. If one goes down, the other keeps the cluster running.
+These run the Kubernetes brain — the software that decides where containers should run, monitors health, and responds to commands. We have **3 control plane nodes** for high availability. If one goes down, the others keep the cluster running.
 
 They share a **Virtual IP (VIP)** — a single IP address (10.69.112.62) that always points to whichever control plane node is currently active. This means tools and applications always connect to the same address, even if the active node changes.
 
 ### Worker Nodes (the "doers")
 
-These run your actual applications. When you deploy a container, it gets placed on a worker node. We have **2 worker nodes**.
+These run your actual applications. When you deploy a container, it gets placed on a worker node. We have **3 worker nodes**.
 
 ### The Flow
 
 ```
 You (on your computer)
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│  VIP: 10.69.112.62                                          │
-│  (This address always reaches the active control plane)     │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-          ┌──────────────┼──────────────┐
-          │                             │
-   ┌──────┴──────┐              ┌───────┴─────┐
-   │ TLOMGT01    │              │ TLOMGT02    │
-   │ 10.69.112.63│              │ 10.69.112.64│
-   │ Control     │              │ Control     │
-   │ Plane       │              │ Plane       │
-   │ (Bootstrap) │              │             │
-   └─────────────┘              └─────────────┘
-          │                             │
-          │    "Run these containers"   │
-          ▼                             ▼
-   ┌─────────────┐              ┌─────────────┐
-   │ TLOWRK01    │              │ TLOWRK02    │
-   │ 10.69.112.68│              │ 10.69.112.69│
-   │ Worker      │              │ Worker      │
-   │ (runs apps) │              │ (runs apps) │
-   └─────────────┘              └─────────────┘
+  |
+  v
+VIP 10.69.112.62
+  |
+  +-- cp1 / TDNHQ-TLOMGT01 / 10.69.112.63 (bootstrap control plane)
+  +-- cp2 / TDNHQ-TLOMGT02 / 10.69.112.64 (control plane)
+  +-- cp3 / TDNHQ-TLOMGT03 / 10.69.112.65 (control plane)
+
+Kubernetes schedules application pods onto:
+  +-- w1 / TDNHQ-TLOWRK01 / 10.69.112.68 (worker)
+  +-- w2 / TDNHQ-TLOWRK02 / 10.69.112.69 (worker)
+  +-- w3 / TDNHQ-TLOWRK03 / 10.69.112.70 (worker)
 ```
 
 When you run a command like `kubectl apply -f my-app.yaml`, here's what happens:
@@ -114,24 +101,29 @@ When you run a command like `kubectl apply -f my-app.yaml`, here's what happens:
 
 ### Node Inventory
 
-| Hostname | Role | IP Address | Install Disk | NIC |
-|----------|------|------------|-------------|-----|
-| TDNHQ-TLOMGT01 | Control Plane (Bootstrap) | 10.69.112.63 | /dev/sda (250 GB) | eno1 |
-| TDNHQ-TLOMGT02 | Control Plane | 10.69.112.64 | /dev/nvme0n1 (250 GB) | eno1 |
-| TDNHQ-TLOWRK01 | Worker | 10.69.112.68 | /dev/nvme0n1 (250 GB) | eno1 |
-| TDNHQ-TLOWRK02 | Worker | 10.69.112.69 | /dev/sda (500 GB) | eno1 |
+| Hostname | Asset Name | Role | IP Address | Install Disk | NIC |
+|----------|------------|------|------------|-------------|-----|
+| cp1 | TDNHQ-TLOMGT01 | Control Plane (Bootstrap) | 10.69.112.63 | /dev/nvme0n1 | eno1 |
+| cp2 | TDNHQ-TLOMGT02 | Control Plane | 10.69.112.64 | /dev/nvme0n1 | eno1 |
+| cp3 | TDNHQ-TLOMGT03 | Control Plane | 10.69.112.65 | /dev/nvme0n1 | eno1 |
+| w1  | TDNHQ-TLOWRK01 | Worker | 10.69.112.68 | /dev/nvme0n1 | eno1 |
+| w2  | TDNHQ-TLOWRK02 | Worker | 10.69.112.69 | /dev/nvme0n1 | eno1 |
+| w3  | TDNHQ-TLOWRK03 | Worker | 10.69.112.70 | /dev/nvme0n1 | eno1 |
 
-**Virtual IP (VIP):** 10.69.112.62 — shared between the two control plane nodes. This is the address you use for all Kubernetes API access.
+**Virtual IP (VIP):** 10.69.112.62 — shared between the three control plane nodes. This is the address you use for all Kubernetes API access.
 
-**"Bootstrap Node"** means TDNHQ-TLOMGT01 was the first node to initialize the cluster. It's not special after that — both control plane nodes are equal. However, during upgrades, the bootstrap node is always upgraded *last* as a safety measure.
+**"Bootstrap Node"** means `cp1` was the first node to initialize the cluster. It's not special after that — all three control plane nodes are equal. However, during upgrades, the bootstrap node is always upgraded *last* as a safety measure.
 
 ### Naming Convention
 
+The cluster uses short Talos hostnames (`cp1`–`cp3`, `w1`–`w3`) matching the live K8s node names. Asset names (`TDNHQ-TLO*`) are retained as a cross-reference to site-level physical-asset inventory. See [docs/decision-records/repo/0002-use-short-talos-hostnames.md](docs/decision-records/repo/0002-use-short-talos-hostnames.md).
+
+Asset-name structure:
 - **TDNHQ** = Site identifier (the physical location)
 - **TLO** = Talos
 - **MGT** = Management (control plane)
 - **WRK** = Worker
-- **01, 02** = Sequence number
+- **01, 02, 03** = Sequence number
 
 ---
 
@@ -142,7 +134,7 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 | Software | Version | What It Does | Why We Need It |
 |----------|---------|-------------|----------------|
 | **TalosOS** | v1.12.5 | The operating system on each node. Secure, immutable, API-managed. | It's the foundation — every node runs this instead of Ubuntu, CentOS, etc. |
-| **Kubernetes** | v1.32.2 | The container orchestration platform. Manages all running applications. | It's the core — this is what makes the cluster a cluster. |
+| **Kubernetes** | v1.35.2 | The container orchestration platform. Manages all running applications. | It's the core — this is what makes the cluster a cluster. |
 | **Cilium** | v1.16.6 | Handles all networking between containers, and replaces the default kube-proxy. | Without a CNI (Container Network Interface), containers on different nodes can't talk to each other. Cilium is the best production choice. |
 | **CoreDNS** | (bundled) | Translates service names to IP addresses inside the cluster. | So containers can find each other by name (e.g., "database") instead of memorizing IP addresses. |
 | **metrics-server** | v0.8.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` to see resource usage, and enables auto-scaling features. |
@@ -169,22 +161,24 @@ TDNHQ-TALCL01/
 │       │                             # These are NOT full configs — they are small
 │       │                             # files that customize the base config.
 │       │
-│       ├── common.yaml               # Settings applied to EVERY node (all 4).
+│       ├── common.yaml               # Settings applied to EVERY node (all 6).
 │       │                             # Contains: DNS servers, NTP time servers,
 │       │                             # kernel settings, kubelet settings.
 │       │
-│       ├── controlplane.yaml         # Settings applied to ONLY the 2 control plane
+│       ├── controlplane.yaml         # Settings applied to ONLY the 3 control plane
 │       │                             # nodes. Contains: Cilium CNI config, API server
 │       │                             # certificate SANs, PodSecurity policy, etcd
 │       │                             # metrics, scheduler/controller-manager settings.
 │       │
-│       ├── worker.yaml               # Settings applied to ONLY the 2 worker nodes.
+│       ├── worker.yaml               # Settings applied to ONLY the 3 worker nodes.
 │       │                             # Contains: kubelet node IP subnet filter.
 │       │
-│       ├── TDNHQ-TLOMGT01.yaml      # Settings for THIS SPECIFIC NODE ONLY.
-│       ├── TDNHQ-TLOMGT02.yaml      # Each file contains: the install disk path,
-│       ├── TDNHQ-TLOWRK01.yaml      # the node's static IP address, default route,
-│       └── TDNHQ-TLOWRK02.yaml      # and (for CP nodes) the VIP address.
+│       ├── cp1.yaml                  # Settings for THIS SPECIFIC NODE ONLY.
+│       ├── cp2.yaml                  # Each file contains: the install disk path,
+│       ├── cp3.yaml                  # the node's static IP address, default route,
+│       ├── w1.yaml                   # and (for CP nodes) the VIP address.
+│       ├── w2.yaml                   # File basename = the node's Talos hostname.
+│       └── w3.yaml
 │
 ├── addons/                           # CLUSTER ADD-ON CONFIGURATIONS
 │   │
@@ -243,12 +237,9 @@ TDNHQ-TALCL01/
 │   │   └── security.yaml             # Runs weekly + on PRs. Scans for secrets with
 │   │                                 # gitleaks, audits config patches, checks version pins.
 │   │
-│   ├── CODEOWNERS                    # Defines who must review changes to specific files.
-│   │                                 # All changes to cluster/, scripts/, .github/ require
-│   │                                 # review from @HellBomb.
-│   │
-│   └── dependabot.yml                # Automatically creates PRs when GitHub Actions
-│                                     # versions have updates available.
+│   └── CODEOWNERS                    # Defines who must review changes to specific files.
+│                                     # All changes to cluster/, scripts/, .github/ require
+│                                     # review from @HellBomb.
 │
 ├── .s3/                              # LOCAL SECRETS MIRROR (GITIGNORED - never committed!)
 │   │                                 # This folder is your local copy of the S3 bucket.
@@ -265,11 +256,13 @@ TDNHQ-TALCL01/
 │   │
 │   └── generated/                    # Final machine configs (contain embedded secrets).
 │       ├── controlplane/
-│       │   ├── TDNHQ-TLOMGT01.yaml
-│       │   └── TDNHQ-TLOMGT02.yaml
+│       │   ├── cp1.yaml
+│       │   ├── cp2.yaml
+│       │   └── cp3.yaml
 │       └── worker/
-│           ├── TDNHQ-TLOWRK01.yaml
-│           └── TDNHQ-TLOWRK02.yaml
+│           ├── w1.yaml
+│           ├── w2.yaml
+│           └── w3.yaml
 │
 ├── Makefile                          # COMMAND ENTRY POINT. Every operation you perform
 │                                     # goes through this file. Run "make help" to see
@@ -409,7 +402,7 @@ This step creates two things:
 
 1. **A secrets bundle** (only on the first run) — contains encryption keys and certificates that prove nodes belong to this cluster. This file is the crown jewels; anyone who has it can control the cluster.
 
-2. **Per-node machine configs** — a complete configuration file for each of the 4 nodes, created by combining the base config with the common, role-specific, and node-specific patches.
+2. **Per-node machine configs** — a complete configuration file for each of the 6 nodes, created by combining the base config with the common, role-specific, and node-specific patches.
 
 ```bash
 make generate
@@ -421,11 +414,13 @@ make generate
 ==> Generating Talos secrets bundle...
 ==> Generating base machine configs...
 ==> Generating per-node control plane configs...
-    TDNHQ-TLOMGT01 (10.69.112.63) → hostname: tdnhq-tlomgt01
-    TDNHQ-TLOMGT02 (10.69.112.64) → hostname: tdnhq-tlomgt02
+    cp1 (10.69.112.63) → hostname: cp1
+    cp2 (10.69.112.64) → hostname: cp2
+    cp3 (10.69.112.65) → hostname: cp3
 ==> Generating per-node worker configs...
-    TDNHQ-TLOWRK01 (10.69.112.68) → hostname: tdnhq-tlowrk01
-    TDNHQ-TLOWRK02 (10.69.112.69) → hostname: tdnhq-tlowrk02
+    w1 (10.69.112.68) → hostname: w1
+    w2 (10.69.112.69) → hostname: w2
+    w3 (10.69.112.70) → hostname: w3
 ==> Generation complete!
 ```
 
@@ -466,7 +461,7 @@ Now send each node its specific configuration. Since the nodes don't have certif
 make apply-insecure
 ```
 
-This sends the generated config files to all 4 nodes. Each node will:
+This sends the generated config files to all 6 nodes. Each node will:
 
 1. Receive its configuration
 2. Write TalosOS to its designated disk
@@ -484,7 +479,7 @@ You should see both client and server version information.
 **IMPORTANT:** After the first apply, the talosconfig file needs endpoints configured:
 
 ```bash
-talosctl config endpoint 10.69.112.63 10.69.112.64 --talosconfig .s3/configs/talosconfig
+talosctl config endpoint 10.69.112.63 10.69.112.64 10.69.112.65 --talosconfig .s3/configs/talosconfig
 ```
 
 ### Step 7: Bootstrap the Cluster
@@ -498,7 +493,7 @@ make bootstrap
 The script will:
 
 1. Ask you to confirm by typing `yes`
-2. Bootstrap etcd on the first control plane node (TDNHQ-TLOMGT01)
+2. Bootstrap etcd on the first control plane node (`cp1`)
 3. Wait for the cluster to become healthy (up to 10 minutes)
 4. Fetch your kubeconfig (the credential used by `kubectl`)
 
@@ -547,7 +542,7 @@ helm install cilium cilium/cilium \
 kubectl get nodes
 ```
 
-All 4 nodes should show `STATUS: Ready`. If they don't after 3 minutes, check the Cilium pods:
+All 6 nodes should show `STATUS: Ready`. If they don't after 3 minutes, check the Cilium pods:
 
 ```bash
 kubectl get pods -n kube-system -l k8s-app=cilium
@@ -636,7 +631,7 @@ Check resource usage:
 kubectl top nodes
 ```
 
-You should see CPU and memory usage for all 4 nodes.
+You should see CPU and memory usage for all 6 nodes.
 
 Run the full health check:
 
@@ -657,9 +652,10 @@ Wait 15 seconds, then test it:
 ```bash
 curl http://10.69.112.68/
 curl http://10.69.112.69/
+curl http://10.69.112.70/
 ```
 
-Both worker nodes should return an HTML page containing "OPERATIONAL". You can also open `http://10.69.112.68` in a web browser.
+All worker nodes should return an HTML page containing "OPERATIONAL". You can also open `http://10.69.112.68` in a web browser.
 
 ### Step 13: Back Up Your Secrets
 
@@ -700,7 +696,7 @@ kubectl top nodes            # CPU/memory usage
    - **All nodes:** `common.yaml`
    - **Control plane only:** `controlplane.yaml`
    - **Workers only:** `worker.yaml`
-   - **One specific node:** `TDNHQ-TLOxxxx.yaml`
+   - **One specific node:** `cp1.yaml` / `cp2.yaml` / … / `w3.yaml`
 
 2. Regenerate and validate:
 
@@ -718,7 +714,7 @@ kubectl top nodes            # CPU/memory usage
    To target a specific node:
 
    ```bash
-   make apply NODES="TDNHQ-TLOMGT01"
+   make apply NODES="cp1"
    ```
 
 Some changes apply without a reboot. Others require a reboot — Talos will tell you in the output.
@@ -737,50 +733,45 @@ Some changes apply without a reboot. Others require a reboot — Talos will tell
 
 The upgrade happens one node at a time in this order (safest to most critical):
 
-1. Worker nodes first (TDNHQ-TLOWRK01, TDNHQ-TLOWRK02)
-2. Non-bootstrap control plane (TDNHQ-TLOMGT02)
-3. Bootstrap control plane (TDNHQ-TLOMGT01) — always last
+1. Worker nodes first (`w1`, `w2`, `w3`)
+2. Non-bootstrap control plane (`cp2`, `cp3`)
+3. Bootstrap control plane (`cp1`) — always last
 
 Each node is rebooted with the new version, and the script waits for it to become healthy before moving to the next one.
 
 To upgrade only specific nodes:
 
 ```bash
-make upgrade NODES="TDNHQ-TLOWRK01"
+make upgrade NODES="w1"
 ```
 
 ### Adding a New Worker Node
 
-1. **Edit `cluster/config.env`** — add the new node to the `WORKER_NODES` line:
+1. **Edit `cluster/config.env`** — add the new node to the `WORKER_NODES` line, using the next short-name ordinal (`w4`, `w5`, …) and recording the asset name in `systems`:
 
    ```bash
-   WORKER_NODES="TDNHQ-TLOWRK01:10.69.112.68 TDNHQ-TLOWRK02:10.69.112.69 TDNHQ-TLOWRK03:10.69.112.70"
+   WORKER_NODES="w1:10.69.112.68 w2:10.69.112.69 w3:10.69.112.70 w4:10.69.112.71"
    ```
 
-2. **Create a patch file** at `cluster/patches/TDNHQ-TLOWRK03.yaml`:
+2. **Create a patch file** at `cluster/patches/w4.yaml` (filename = Talos hostname per [ADR-0002](docs/decision-records/repo/0002-use-short-talos-hostnames.md)):
 
    ```yaml
    machine:
      install:
-       disk: /dev/sda      # Check the actual disk on the new node
+       disk: /dev/nvme0n1  # Confirm against the new node's actual system disk
      network:
        interfaces:
          - deviceSelector:
              physical: true
            addresses:
-             - 10.69.112.70/24
+             - 10.69.112.71/24
            routes:
              - network: 0.0.0.0/0
                gateway: 10.69.112.1
-   ---
-   apiVersion: v1alpha1
-   kind: HostnameConfig
-   $patch: replace
-   hostname: tdnhq-tlowrk03
    ```
 
    > **Finding the disk:** Boot the new node from the Talos ISO and run:
-   > `talosctl get discoveredvolumes --nodes <IP> --insecure`
+   > `talosctl get systemdisk --nodes <IP> --insecure`
 
 3. **Generate and validate:**
 
@@ -794,7 +785,7 @@ make upgrade NODES="TDNHQ-TLOWRK01"
 5. **Apply the config:**
 
    ```bash
-   make apply-insecure NODES="TDNHQ-TLOWRK03"
+   make apply-insecure NODES="w4"
    ```
 
 6. **Approve its certificate** (if the auto-approver hasn't done it yet):
@@ -808,20 +799,18 @@ make upgrade NODES="TDNHQ-TLOWRK01"
 1. Drain the node (safely move all workloads off it):
 
    ```bash
-   kubectl drain tdnhq-tlowrk02 --ignore-daemonsets --delete-emptydir-data
+   kubectl drain w2 --ignore-daemonsets --delete-emptydir-data
    ```
 
 2. Delete the node from Kubernetes:
 
    ```bash
-   kubectl delete node tdnhq-tlowrk02
+   kubectl delete node w2
    ```
 
-3. Remove the node from `WORKER_NODES` in `cluster/config.env`.
+3. Remove the node from `WORKER_NODES` in `cluster/config.env` and delete `cluster/patches/w2.yaml`.
 
-4. Delete the patch file `cluster/patches/TDNHQ-TLOWRK02.yaml`.
-
-5. Power off or repurpose the physical machine.
+4. Power off or repurpose the physical machine.
 
 ### Recovering Secrets on a New Machine
 
@@ -906,7 +895,7 @@ The cluster has multiple layers of security:
 | **ShellCheck** | Lints all shell scripts for common bugs and security issues (like unquoted variables that could cause command injection). |
 | **Private key detection** | Pre-commit hook specifically checks for PEM-encoded private keys in staged files. |
 | **CODEOWNERS** | Changes to cluster configuration, scripts, and CI pipelines require review from designated owners. No one can push unreviewed changes to critical files. |
-| **Dependabot** | Automatically proposes updates when GitHub Actions versions have security patches available. |
+| **Renovate** | Automatically proposes dependency updates under the repository Renovate policy. |
 | **S3 + KMS encryption** | All secrets are encrypted at rest using AWS KMS when stored in S3. |
 | **Kubelet cert auto-approval** | Only kubelet serving certificates are auto-approved — not arbitrary certificate requests. |
 
@@ -976,7 +965,7 @@ kubectl rollout restart daemonset ingress-nginx-controller -n ingress-nginx
 **Fix:**
 
 ```bash
-talosctl config endpoint 10.69.112.63 10.69.112.64 --talosconfig .s3/configs/talosconfig
+talosctl config endpoint 10.69.112.63 10.69.112.64 10.69.112.65 --talosconfig .s3/configs/talosconfig
 ```
 
 ### NTP "kiss of death" or time sync errors

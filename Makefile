@@ -38,14 +38,18 @@ generate: ## Generate machine configs from patches + secrets
 
 validate: ## Validate generated machine configs
 	@echo "==> Validating machine configs..."
-	@failed=0; \
-	for f in .s3/generated/controlplane/*.yaml; do \
+	@shopt -s nullglob; \
+	cp_configs=(.s3/generated/controlplane/*.yaml); \
+	wk_configs=(.s3/generated/worker/*.yaml); \
+	if [ $${#cp_configs[@]} -eq 0 ] || [ $${#wk_configs[@]} -eq 0 ]; then \
+		echo "==> ERROR: No generated configs in .s3/generated/{controlplane,worker}/."; \
+		echo "    Run 'make generate' first."; \
+		exit 1; \
+	fi; \
+	failed=0; \
+	for f in "$${cp_configs[@]}" "$${wk_configs[@]}"; do \
 		echo "    $${f}..."; \
-		talosctl validate --config "$${f}" --mode metal || failed=1; \
-	done; \
-	for f in .s3/generated/worker/*.yaml; do \
-		echo "    $${f}..."; \
-		talosctl validate --config "$${f}" --mode metal || failed=1; \
+		talosctl validate --config "$${f}" --mode metal --strict || failed=1; \
 	done; \
 	if [ "$$failed" -eq 1 ]; then \
 		echo "==> VALIDATION FAILED"; exit 1; \
@@ -54,14 +58,14 @@ validate: ## Validate generated machine configs
 
 # -- Deployment ---------------------------------------------------------------
 
-apply: ## Apply configs to nodes (NODES="HOST1 HOST2" to target specific)
+apply: validate ## Apply configs to nodes (NODES="HOST1 HOST2" to target specific)
 ifdef NODES
 	@bash scripts/apply.sh $(NODES)
 else
 	@bash scripts/apply.sh
 endif
 
-apply-insecure: ## Apply configs in insecure mode (initial provisioning)
+apply-insecure: validate ## Apply configs in insecure mode (initial provisioning)
 ifdef NODES
 	@bash scripts/apply.sh --insecure $(NODES)
 else
@@ -71,12 +75,8 @@ endif
 bootstrap: ## Bootstrap cluster — run ONCE on initial setup
 	@bash scripts/bootstrap.sh
 
-upgrade: ## Rolling Talos upgrade (NODES="HOST1 HOST2" to target specific)
-ifdef NODES
-	@bash scripts/upgrade.sh $(NODES)
-else
-	@bash scripts/upgrade.sh
-endif
+upgrade: ## Rolling Talos upgrade (NODES="HOST1 HOST2" to target; YES=1 to skip confirm)
+	@bash scripts/upgrade.sh $(if $(YES),--yes) $(NODES)
 
 # -- Operations ---------------------------------------------------------------
 

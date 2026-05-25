@@ -10,8 +10,8 @@ only adds Claude-facing quick context for this repository.
 Production TalosOS Kubernetes cluster for the TDNHQ site.
 
 ## Architecture
-- 2x Control Plane nodes (TDNHQ-TLOMGT01/02) with shared VIP at 10.69.112.62
-- 2x Worker nodes (TDNHQ-TLOWRK01/02)
+- 3x Control Plane nodes (`cp1`, `cp2`, `cp3` — asset names TDNHQ-TLOMGT01/02/03) with shared VIP at 10.69.112.62
+- 3x Worker nodes (`w1`, `w2`, `w3` — asset names TDNHQ-TLOWRK01/02/03)
 - Cilium CNI (replaces kube-proxy), ingress-nginx, metrics-server, local-path-provisioner
 - All machine configs managed as code via Talos config patches
 - Secrets stored in AWS S3 (locally mirrored in `.s3/`)
@@ -20,8 +20,9 @@ Production TalosOS Kubernetes cluster for the TDNHQ site.
 - **NEVER commit secrets to git** - `.s3/` is gitignored
 - Version pinning lives in `cluster/config.env` - single source of truth
 - Node-specific configs are Talos strategic merge patches in `cluster/patches/`
-- Hostnames use Talos 1.12+ `HostnameConfig` (set via sed in generate.sh, not machine.network.hostname)
-- Install disks differ per node - set in individual patch files
+- Hostnames use Talos 1.12+ `HostnameConfig` (set via sed in generate.sh, not machine.network.hostname). Short names (`cp1`…`w3`) match the live cluster — see `docs/decision-records/repo/0002-use-short-talos-hostnames.md`.
+- Install disk is `/dev/nvme0n1` on every node; declared per-node so future hardware variation is explicit.
+- This repository is the cluster's declarative source of truth — see `docs/decision-records/repo/0003-repo-as-cluster-source-of-truth.md`. Out-of-band changes require a back-fill PR within 7 days.
 - All automation flows through the Makefile which delegates to `scripts/`
 - CI/CD workflows validate configs on PR, deploy via manual trigger
 - On Windows/Git Bash, use `MSYS_NO_PATHCONV=1` before Helm commands with Unix paths
@@ -46,4 +47,4 @@ make s3-pull        # Pull secrets from AWS S3
 - `scripts/` - Automation scripts sourced by Makefile
 - `.s3/` - Local S3 mirror for secrets (gitignored)
 - `.github/workflows/` - CI/CD pipelines
-- `systems` - Original node IP inventory reference
+- `systems` - Node inventory cross-reference (Talos hostname ↔ asset name ↔ IP)

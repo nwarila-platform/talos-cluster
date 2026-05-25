@@ -1,0 +1,38 @@
+# =============================================================================
+# Volumes patch — appended verbatim to every generated machine config
+#
+# Captures the Talos-level VolumeConfig + UserVolumeConfig declarations the
+# live cluster has on every node. The first caps the ephemeral volume; the
+# second carves out a Longhorn-backing user volume from the system disk.
+#
+# Why this lives here (not just in addons/longhorn Helm values):
+#   - Helm/Longhorn manages PVs at the Kubernetes layer; the underlying
+#     Talos volume must exist before any Longhorn pod can use it.
+#   - Without these declarations, `make apply` would tell every node to
+#     drop its existing Longhorn-backing volume on the next reboot,
+#     destroying storage that production workloads depend on.
+#
+# Applied to every node (including CPs) because the live cluster declares
+# both on every node. CPs do not run Longhorn pods (scheduling disabled),
+# so the user volume there is effectively idle — but the declaration is
+# preserved to keep `talosctl diff` empty.
+#
+# See docs/decision-records/repo/0004-capture-longhorn-volume-config-in-talos.md
+# =============================================================================
+---
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: system_disk
+  maxSize: 25GiB
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: longhorn
+provisioning:
+  diskSelector:
+    match: system_disk
+  maxSize: 240GiB
+  minSize: 50GiB

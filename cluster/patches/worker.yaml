@@ -1,8 +1,22 @@
 # =============================================================================
 # Worker patch — applied to all worker nodes
+#
+# `cluster.*` fields are duplicated from controlplane.yaml because
+# `--config-patch-control-plane` does not propagate to worker output, and
+# the worker's view of the cluster spec must match the CP's view for CNI,
+# kube-proxy, and discovery behaviour to be consistent. Where worker and
+# CP values legitimately differ (e.g., discovery.registries.kubernetes
+# disabled on CP, enabled on workers), this file follows the live state.
 # =============================================================================
-machine:
-  kubelet:
-    nodeIP:
-      validSubnets:
-        - 10.69.112.0/24
+cluster:
+  network:
+    cni:
+      name: none
+  proxy:
+    disabled: true
+  discovery:
+    registries:
+      kubernetes:
+        disabled: false
+      service:
+        disabled: false

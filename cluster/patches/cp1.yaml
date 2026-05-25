@@ -1,0 +1,30 @@
+# =============================================================================
+# cp1 — Control Plane Node 1 (Bootstrap Node)
+# Asset name: TDNHQ-TLOMGT01 | IP: 10.69.112.63 | Disk: nvme0n1
+#
+# Interfaces are declared as TWO entries (both matching the same physical
+# NIC) to match the live cluster's machine config exactly:
+#   1) the first entry carries dhcp:false + vip
+#   2) the second carries addresses + routes
+# Talos merges them against the matched device at apply time. Collapsing
+# them into one entry produces an equivalent runtime state but a non-empty
+# `talosctl diff` against the live config, which defeats the source-of-truth
+# guarantee in ADR-0003.
+# =============================================================================
+machine:
+  install:
+    disk: /dev/nvme0n1
+  network:
+    interfaces:
+      - deviceSelector:
+          physical: true
+        dhcp: false
+        vip:
+          ip: 10.69.112.62
+      - deviceSelector:
+          physical: true
+        addresses:
+          - 10.69.112.63/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 10.69.112.1

@@ -1,11 +1,16 @@
 # =============================================================================
 # Control plane patch — applied to all CP nodes
+#
+# Aligned with live cluster machine config as of 2026-05-25. The following
+# hardening additions were declared here but never applied, and have been
+# dropped pending intentional rollout cycles:
+#   - machine.certSANs (Talos API cert SANs)
+#   - cluster.apiServer.certSANs (kube-apiserver cert SANs)
+#   - controllerManager.extraArgs.bind-address: 0.0.0.0
+#   - scheduler.extraArgs.bind-address: 0.0.0.0
+#   - etcd.extraArgs.listen-metrics-urls
+# See diff session of 2026-05-25 in conversation history.
 # =============================================================================
-machine:
-  certSANs:
-    - 10.69.112.62
-    - 10.69.112.63
-    - 10.69.112.64
 cluster:
   allowSchedulingOnControlPlanes: false
   # Cilium replaces both Flannel and kube-proxy
@@ -14,9 +19,15 @@ cluster:
       name: none
   proxy:
     disabled: true
+  # discovery.registries: both registries enabled to match live state
+  # (the registry "disabled" flags are explicitly false on the live cluster).
+  discovery:
+    registries:
+      kubernetes:
+        disabled: false
+      service:
+        disabled: false
   apiServer:
-    certSANs:
-      - 10.69.112.62
     admissionControl:
       - name: PodSecurity
         configuration:
@@ -30,16 +41,6 @@ cluster:
             warn: restricted
             warn-version: latest
           exemptions:
-            namespaces:
-              - cilium
+            namespaces: []
             runtimeClasses: []
             usernames: []
-  controllerManager:
-    extraArgs:
-      bind-address: "0.0.0.0"
-  scheduler:
-    extraArgs:
-      bind-address: "0.0.0.0"
-  etcd:
-    extraArgs:
-      listen-metrics-urls: http://0.0.0.0:2381
