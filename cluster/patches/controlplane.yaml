@@ -10,6 +10,18 @@
 # a Prometheus deployment + a Talos kubespan / network-policy / external
 # firewall scoping the metrics ports to known scrapers. Decision recorded
 # 2026-05-25.
+#
+# NOTE on certSANs (machine.certSANs and cluster.apiServer.certSANs):
+# Both are intentionally omitted. The defaults `talosctl gen config`
+# emits — node's own IP in the apid cert, controlPlane.endpoint host
+# (10.69.112.62) in the kube-apiserver cert — already cover every
+# hostname / IP that today's talosconfig and kubeconfig actually use.
+# Adding explicit certSANs imposes a cert re-issue + apid/kube-apiserver
+# restart with no functional improvement. Re-add only when introducing
+# a new hostname clients will TLS-validate against (DNS name, external
+# load balancer IP, multi-region failover endpoint). Decision recorded
+# 2026-05-25 after verifying VIP-based kubectl and per-node talosctl
+# both validate cleanly without explicit SANs.
 # =============================================================================
 cluster:
   allowSchedulingOnControlPlanes: false
