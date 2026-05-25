@@ -21,6 +21,19 @@ machine:
   # on 2026-05-25 against w1: csr-hj9h9 went Pending. Setting was reverted.
   # Re-enable in a follow-up cycle that ALSO deploys an auto-approver
   # (e.g. github.com/postfinance/kubelet-csr-approver under addons/).
+  # Public DNS/NTP fallbacks (1.1.1.1, 8.8.8.8, time.cloudflare.com)
+  # intentionally NOT configured. The site gateway (10.69.112.1) is
+  # operator-controlled and has provided DNS+NTP without incident for
+  # 51 days. Adding public fallbacks introduces:
+  #   - lookup latency when the gateway is briefly slow (5-10s timeout
+  #     per failed query before falling back to next nameserver)
+  #   - logged egress at Cloudflare/Google linking this cluster's IP
+  #     to its identity
+  #   - policy-violation noise in any hardened-egress environment that
+  #     blocks 1.1.1.1/8.8.8.8
+  # If the gateway becomes a single point of failure in practice, fix
+  # at the gateway (configure it to forward to multiple upstreams)
+  # rather than push public servers to every node.
   time:
     servers:
       - 10.69.112.1   # site gateway provides NTP (matches live cluster)
