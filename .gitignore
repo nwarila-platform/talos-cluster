@@ -1,45 +1,77 @@
 # =============================================================================
-# Talos Sensitive Files - Stored in S3, NEVER in git
+# Deny-all .gitignore strategy per nwarila-platform/.github ADR-0003.
+# Anything not explicitly allowlisted below is ignored.
+# See: docs/decision-records/org/0003-use-deny-all-gitignore-strategy.md
 # =============================================================================
-.s3/
+**
 
-# Generated machine configs (contain embedded secrets)
-*.generated.yaml
+# Allow the allowlist itself so tracked scope stays auditable.
+!/.gitignore
 
-# Talos admin credentials
-talosconfig
-kubeconfig
-*talosconfig*
-*kubeconfig*
+# -- Top-level repo files -----------------------------------------------------
+!/.editorconfig
+!/.pre-commit-config.yaml
+!/AGENTS.md
+!/CLAUDE.md
+!/Makefile
+!/README.md
+!/systems
 
-# Local assistant/editor state
-.claude/
-.agent-loop/
+# -- GitHub configuration -----------------------------------------------------
+!/.github/
+!/.github/CODEOWNERS
+!/.github/dependabot.yml
+!/.github/workflows/
+!/.github/workflows/deploy.yaml
+!/.github/workflows/security.yaml
+!/.github/workflows/validate.yaml
 
-# =============================================================================
-# Environment & Secrets
-# =============================================================================
-.env
-.env.*
-*.local
-*.local.env
-!*.example.env
+# -- Cluster: Talos machine config patches + version pinning ------------------
+!/cluster/
+!/cluster/config.env
+!/cluster/patches/
+!/cluster/patches/TDNHQ-TLOMGT01.yaml
+!/cluster/patches/TDNHQ-TLOMGT02.yaml
+!/cluster/patches/TDNHQ-TLOWRK01.yaml
+!/cluster/patches/TDNHQ-TLOWRK02.yaml
+!/cluster/patches/common.yaml
+!/cluster/patches/controlplane.yaml
+!/cluster/patches/worker.yaml
 
-# =============================================================================
-# OS & IDE
-# =============================================================================
-.DS_Store
-Thumbs.db
-Desktop.ini
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
+# -- Addons: Helm values and Kubernetes manifests -----------------------------
+!/addons/
+!/addons/cilium/
+!/addons/cilium/values.yaml
+!/addons/ingress-nginx/
+!/addons/ingress-nginx/values.yaml
+!/addons/metrics-server/
+!/addons/metrics-server/values.yaml
+!/addons/poc/
+!/addons/poc/deployment.yaml
+!/addons/poc/namespace.yaml
+!/addons/poc/service.yaml
 
-# =============================================================================
-# Temporary & Build
-# =============================================================================
-*.tmp
-*.bak
-*.log
+# -- Scripts: automation invoked by the Makefile ------------------------------
+!/scripts/
+!/scripts/agent-loop.ps1
+!/scripts/agent-loop.sh
+!/scripts/apply.sh
+!/scripts/bootstrap.sh
+!/scripts/generate.sh
+!/scripts/health.sh
+!/scripts/s3-sync.sh
+!/scripts/upgrade.sh
+
+# -- Docs: org-mirrored ADRs + repo/template ADR skeleton ---------------------
+!/docs/
+!/docs/decision-records/
+!/docs/decision-records/README.md
+!/docs/decision-records/org/
+!/docs/decision-records/org/0001-use-architecture-decision-records.md
+!/docs/decision-records/org/0002-adopt-diataxis-documentation-framework.md
+!/docs/decision-records/org/0003-use-deny-all-gitignore-strategy.md
+!/docs/decision-records/org/0004-use-renovate-for-dependency-updates.md
+!/docs/decision-records/repo/
+!/docs/decision-records/repo/.gitkeep
+!/docs/decision-records/template/
+!/docs/decision-records/template/.gitkeep
