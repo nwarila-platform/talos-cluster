@@ -8,6 +8,16 @@
 # CP values legitimately differ (e.g., discovery.registries.kubernetes
 # disabled on CP, enabled on workers), this file follows the live state.
 # =============================================================================
+machine:
+  kubelet:
+    # Lock the kubelet's node-IP selector to the management subnet so a
+    # future addon adding a secondary interface (Cilium L2 announcements,
+    # MetalLB IP pool, cluster-mesh) cannot flip Node InternalIP and
+    # invalidate every kubeconfig + Service endpoint targeting the node.
+    # Worker-only because CPs don't host stateless pods.
+    nodeIP:
+      validSubnets:
+        - 10.69.112.0/24
 cluster:
   network:
     cni:
