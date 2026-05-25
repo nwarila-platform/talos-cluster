@@ -14,13 +14,15 @@ machine:
     kubePrism:
       enabled: true
       port: 7445
-  # NOTE: kubelet.extraArgs.rotate-server-certificates: "true" intentionally
-  # NOT set here. Enabling it makes kubelet create K8s CSRs for its serving
-  # cert on startup + before expiry; without a kubelet-serving CSR auto-approver
-  # those CSRs sit Pending and metrics-server / kubectl logs break. Verified
-  # on 2026-05-25 against w1: csr-hj9h9 went Pending. Setting was reverted.
-  # Re-enable in a follow-up cycle that ALSO deploys an auto-approver
-  # (e.g. github.com/postfinance/kubelet-csr-approver under addons/).
+  kubelet:
+    extraArgs:
+      # Kubelet creates K8s CSRs for its serving cert on startup and before
+      # expiry instead of self-signing. Required for metrics-server and
+      # kubectl logs/exec/port-forward to validate the cert without
+      # --insecure-tls workarounds. Approval is handled by the
+      # postfinance/kubelet-csr-approver Helm release in kube-system; see
+      # addons/kubelet-csr-approver/values.yaml and ADR-0005.
+      rotate-server-certificates: "true"
   # Public DNS/NTP fallbacks (1.1.1.1, 8.8.8.8, time.cloudflare.com)
   # intentionally NOT configured. The site gateway (10.69.112.1) is
   # operator-controlled and has provided DNS+NTP without incident for
