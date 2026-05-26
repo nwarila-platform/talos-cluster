@@ -1,0 +1,75 @@
+# =============================================================================
+# Kubescape — daily CIS K8s Benchmark compliance scan
+#
+# Implements the continuous-scanning leg of ADR-0009 §Confirmation §2.
+# Uses the Kubescape CLI (not the in-cluster operator) because the operator
+# would require its own privileged-pod posture that's out of scope for this
+# cycle. CLI mode runs entirely on the self-hosted runner, queries the
+# cluster via the Kubernetes API (no node-filesystem assumptions — fits
+# Talos's deliberate file-layout departures).
+#
+# Output: JSON scan report uploaded to s3://.../compliance/kubescape/.
+# Score is diffed against docs/compliance/kubescape-baseline.json — a
+# regression beyond the tolerance triggers a GitHub issue on scheduled runs.
+# =============================================================================
+name: Kubescape
+
+on:
+  schedule:
+    - cron: "0 4 * * *"  # daily 04:00 UTC (after etcd snapshot at 03:00, before workday)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # used by the open-issue-on-failure step
+
+jobs:
+  scan:
+    name: CIS K8s scan
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubescape CLI (pinned)
+        run: |
+          set -euo pipefail
+          KS_VERSION="v4.0.8"
+          KS_VER_NUM="4.0.8"
+          url="https://github.com/kubescape/kubescape/releases/download/${KS_VERSION}/kubescape_${KS_VER_NUM}_linux_amd64"
+          curl --proto '=https' --tlsv1.2 -fsSL -o kubescape "${url}"
+          # Verify the binary by checking its self-reported version
+          chmod +x kubescape
+          sudo mv kubescape /usr/local/bin/kubescape
+          kubescape version
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Pull kubeconfig from S3
+        run: bash scripts/s3-sync.sh pull
+
+      - name: Run kubescape scan + upload + diff against baseline
+        id: scan
+        run: bash scripts/kubescape-scan.sh | tee scan-output.txt
+
+      - name: Open issue on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '';
+            try { body = fs.readFileSync('scan-output.txt', 'utf8'); }
+            catch (e) { body = '(scan-output.txt not found)'; }
+            const today = new Date().toISOString().slice(0, 10);
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Compliance regression detected ${today}: CIS K8s Benchmark`,
+              labels: ['compliance', 'automated'],
+              body: '```\n' + body.slice(0, 60000) + '\n```',
+            });
