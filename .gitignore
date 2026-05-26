@@ -28,6 +28,7 @@
 !/clusters/talos-cluster/apps/
 !/clusters/talos-cluster/apps/kustomization.yaml
 !/clusters/talos-cluster/apps/gateway-api/
+!/clusters/talos-cluster/apps/gateway-api/gatewayclass.yaml
 !/clusters/talos-cluster/apps/gateway-api/kustomization.yaml
 !/clusters/talos-cluster/apps/kubelet-csr-approver/
 !/clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml

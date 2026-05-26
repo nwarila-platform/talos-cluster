@@ -1,0 +1,19 @@
+# =============================================================================
+# Cilium GatewayClass — the resource that tells Cilium's gateway-api
+# controller "you handle Gateway resources that reference 'cilium' as their
+# gatewayClassName."
+#
+# Without this resource (only CRDs installed), Cilium's gateway-api
+# reconciler runs but has no GatewayClass instance to claim. Workloads
+# would have nowhere to point their `spec.gatewayClassName: cilium`.
+#
+# This is a cluster-scoped resource (no namespace). Once Cilium accepts it,
+# its status condition shows Accepted=True with controllerName matching
+# Cilium's controller identity.
+# =============================================================================
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: cilium
+spec:
+  controllerName: io.cilium/gateway-controller
