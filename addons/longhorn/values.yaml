@@ -1,9 +1,8 @@
 # =============================================================================
 # Longhorn Helm values
 #
-# Captures the values applied to the live Longhorn release (chart version
-# 1.11.1, app version 1.11.1) on 2026-05-26. See
-# docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md
+# Chart: longhorn/longhorn v1.11.2 (pinned in cluster/config.env as
+# LONGHORN_VERSION). See docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md
 # for the reasoning behind each non-default.
 #
 # Talos-side coupling: the data path below (/var/mnt/longhorn) is the
