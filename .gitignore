@@ -23,6 +23,7 @@
 !/.github/renovate.json5
 !/.github/workflows/
 !/.github/workflows/deploy.yaml
+!/.github/workflows/drift.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/validate.yaml
 
@@ -62,6 +63,8 @@
 !/scripts/agent-loop.sh
 !/scripts/apply.sh
 !/scripts/bootstrap.sh
+!/scripts/diff-vs-live.py
+!/scripts/drift-check.sh
 !/scripts/generate.sh
 !/scripts/health.sh
 !/scripts/s3-sync.sh
