@@ -87,6 +87,7 @@ echo "    Talosconfig saved."
 # Patch per-node control plane configs
 # ---------------------------------------------------------------------------
 VOLUMES_PATCH="${ROOT_DIR}/cluster/patches/volumes.yaml"
+FIREWALL_PATCH="${ROOT_DIR}/cluster/patches/firewall.yaml"
 
 # Append the multi-doc volumes patch (VolumeConfig + UserVolumeConfig).
 # `talosctl machineconfig patch` only strategically-merges the v1alpha1 main
@@ -98,6 +99,19 @@ append_volumes() {
         exit 1
     fi
     cat "${VOLUMES_PATCH}" >> "${target}"
+}
+
+# Append the multi-doc host ingress firewall patch (NetworkDefaultActionConfig
+# + NetworkRuleConfig documents). Same append-after-strategic-merge pattern as
+# append_volumes; the NetworkRuleConfig kind isn't part of the v1alpha1 main
+# doc so it can't be strategically merged.
+append_firewall() {
+    local target="$1"
+    if [[ ! -f "${FIREWALL_PATCH}" ]]; then
+        echo "ERROR: ${FIREWALL_PATCH} missing" >&2
+        exit 1
+    fi
+    cat "${FIREWALL_PATCH}" >> "${target}"
 }
 
 echo "==> Generating per-node control plane configs..."
@@ -113,6 +127,7 @@ for entry in ${CP_NODES}; do
 
     set_hostname "${S3_DIR}/generated/controlplane/${node_name}.yaml" "${node_hostname}"
     append_volumes "${S3_DIR}/generated/controlplane/${node_name}.yaml"
+    append_firewall "${S3_DIR}/generated/controlplane/${node_name}.yaml"
 done
 
 # ---------------------------------------------------------------------------
@@ -131,6 +146,7 @@ for entry in ${WORKER_NODES}; do
 
     set_hostname "${S3_DIR}/generated/worker/${node_name}.yaml" "${node_hostname}"
     append_volumes "${S3_DIR}/generated/worker/${node_name}.yaml"
+    append_firewall "${S3_DIR}/generated/worker/${node_name}.yaml"
 done
 
 # ---------------------------------------------------------------------------
