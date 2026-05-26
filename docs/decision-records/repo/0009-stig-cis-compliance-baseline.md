@@ -13,7 +13,7 @@
 
 ## TL;DR
 
-Every component this repository configures — Talos machine configs, Kubernetes machinery, Helm-managed addons, in-cluster workloads — is configured to be as compliant as possible with the **DISA Kubernetes Security Technical Implementation Guide (STIG)** as the primary framework, and the **CIS Kubernetes Benchmark v1.10.x** as the secondary framework. Where the two conflict on a specific item, **STIG takes precedence** because it is the stricter superset and the policy framing ("greatest extent possible") is compliance-first. Where Talos's immutable architecture makes an item structurally non-applicable (no shell, no `/etc/passwd`, no SSH, no package manager), the deviation is documented as `N/A — Talos architecture` rather than `failed`. Verification is via [`aquasecurity/kube-bench`](https://github.com/aquasecurity/kube-bench) as a Flux-deployed CronJob (follow-up cycle), supplemented by per-PR manual review of STIG items the scanner doesn't cover (workload-specific STIGs, NGINX hardening, etc.). Accepted deviations from the baseline are recorded explicitly in this ADR and updated as the cluster evolves.
+Every component this repository configures — Talos machine configs, Kubernetes machinery, Helm-managed addons, in-cluster workloads — is configured to be as compliant as possible with the **DISA Kubernetes Security Technical Implementation Guide (STIG)** as the primary framework, and the **CIS Kubernetes Benchmark v1.10.x** as the secondary framework. Where the two conflict on a specific item, **STIG takes precedence** because it is the stricter superset and the policy framing ("greatest extent possible") is compliance-first. Where Talos's immutable architecture makes an item structurally non-applicable (no shell, no `/etc/passwd`, no SSH, no package manager), the deviation is documented as `N/A — Talos architecture` rather than `failed`. Verification is via [`kubescape`](https://kubescape.io/) running as a scheduled GitHub Actions workflow that uploads SARIF to GitHub Code Scanning, supplemented by per-PR manual review of STIG items the scanner doesn't cover (workload-specific STIGs, NGINX hardening, etc.). Accepted deviations from the baseline are recorded explicitly in this ADR and updated as the cluster evolves.
 
 ## Context and Problem Statement
 
@@ -83,13 +83,13 @@ Sidero's [Talos Security](https://www.talos.dev/v1.12/learn-more/talos-linux-sec
 
 - **Good, because** STIG is the strictest published standard and the policy framing demands "greatest extent possible" compliance.
 - **Good, because** any environment that later requires DoD compliance is mostly there already; downgrading-to-CIS-only is straightforward if scope shrinks.
-- **Good, because** kube-bench already supports CIS K8s Benchmark natively; STIG items not in CIS are added as per-PR review items.
+- **Good, because** kubescape supports CIS K8s Benchmark natively and is API-based (compatible with Talos's immutable file layout); STIG items not in CIS are added as per-PR review items.
 - **Bad, because** STIG items not covered by automated tooling (much of the workload layer) require per-PR manual review, which is slower.
 - **Bad, because** some STIG items are FIPS-140 oriented (cryptographic module validation) which is impractical at a homelab scale and requires explicit deviation.
 
 ### Option 2: CIS primary, STIG secondary
 
-- **Good, because** kube-bench is the de-facto standard for K8s compliance scanning; CIS-first plays to the tooling.
+- **Good, because** CIS-first plays to the tooling: most K8s compliance scanners (kubescape, kube-bench, Trivy) ship CIS rule packs out of the box.
 - **Bad, because** "as STIG/CIS compliant as possible" implies STIG ceiling, not floor. Choosing CIS primary leaves the stricter STIG items as optional add-ons.
 
 ### Option 3: Per-item conflict decisions, both equal weight
@@ -106,9 +106,9 @@ Sidero's [Talos Security](https://www.talos.dev/v1.12/learn-more/talos-linux-sec
 Adherence to this ADR is confirmed by the following mechanisms. The wording `MUST`, `SHOULD`, and `MAY` follows [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) conventions.
 
 1. **Per-PR review.** Every PR that adds or modifies a Talos machine config, Helm release, K8s manifest, or in-cluster workload MUST include a brief comment in the commit body OR ADR linking the change to applicable STIG/CIS items it addresses. Pattern: `Addresses STIG V-242391, CIS 5.2.6.` If the change is compliance-neutral, the commit body MUST say so explicitly: `Compliance: neutral (no STIG/CIS item affected).`
-2. **Continuous scanning.** A follow-up ADR / cycle deploys [`aquasecurity/kube-bench`](https://github.com/aquasecurity/kube-bench) as a Flux-managed CronJob. Scan results MUST be uploaded to S3 alongside etcd snapshots ([ADR-0006](0006-etcd-snapshot-automation.md)) and surfaced as GitHub issues on regressions.
-3. **Accepted deviations table.** Items that are deliberately non-compliant MUST be recorded in the table below with the STIG/CIS ID, the chosen value, the rationale, and a review-by date.
-4. **No silent failures.** If kube-bench reports a new `FAIL` after a merge, the PR that caused the regression MUST be revisited within 7 days — either reverted, remediated, or have its deviation added to this ADR's table.
+2. **Continuous scanning.** [`kubescape`](https://kubescape.io/) runs daily via `.github/workflows/kubescape.yaml` against the live cluster (CLI mode, API-based — Talos has no in-cluster Job filesystem to mount). Scan output is SARIF, uploaded to GitHub Code Scanning under category `kubescape-cis`. Per-finding state (`Open`, `Fixed`, `Dismissed`) is tracked by Code Scanning natively; there is intentionally no in-repo baseline file. See [`docs/compliance/README.md`](../../compliance/README.md) for the operator triage flow. The choice of kubescape over `kube-bench` is itself a Talos-fit decision: kube-bench reads node filesystem paths (`/etc/kubernetes/...`, `/var/lib/kubelet/config.yaml`) that Talos's immutable layout doesn't expose; kubescape queries the K8s API.
+3. **Accepted deviations table.** Items that are deliberately non-compliant MUST be recorded in the table below with the STIG/CIS ID, the chosen value, the rationale, and a review-by date. Dismissals in the Code Scanning UI MUST cite the corresponding row in this table.
+4. **No silent failures.** If kubescape reports a new `Open` finding, the PR that caused the regression MUST be revisited within 7 days — either reverted, remediated (next scan auto-marks the finding `Fixed`), or formally dismissed in Code Scanning with a matching deviation row added to this ADR's table.
 5. **Editorial rule.** Adoption or removal of an additional benchmark (e.g., adding NIST 800-190 container security, dropping STIG in favor of CIS-only) is itself a policy decision and MUST be a superseding repo-tier ADR.
 
 ## Accepted deviations (as of ADR landing)
@@ -144,8 +144,8 @@ The following items are deliberately not in compliance with the strict STIG/CIS 
 
 - Every PR carries additional review overhead: the commit body must address STIG/CIS impact.
 - Some operationally-convenient changes will become deferred or rejected on compliance grounds, slowing iteration speed.
-- The kube-bench CronJob adds an in-cluster controller dependency.
-- Manual review of STIG items kube-bench doesn't cover (workload-layer findings) is non-trivial for someone unfamiliar with the framework.
+- The kubescape scan adds a daily GitHub Actions workflow run and the self-hosted runner must reach the cluster API.
+- Manual review of STIG items kubescape doesn't cover (workload-layer findings) is non-trivial for someone unfamiliar with the framework.
 
 ### Neutral
 
@@ -156,7 +156,7 @@ The following items are deliberately not in compliance with the strict STIG/CIS 
 This decision rests on the following assumptions. If any becomes false, this ADR should be revisited:
 
 1. The DISA Kubernetes STIG continues to be updated and remains applicable to Kubernetes ≥ 1.24.
-2. `kube-bench` continues to track current CIS K8s Benchmark revisions (the maintainer cadence has been reliable).
+2. `kubescape` continues to track current CIS K8s Benchmark revisions (the maintainer cadence has been reliable; ARMO is the active maintainer organization).
 3. Talos's deliberate architectural departures from a conventional Linux baseline continue to be documented by Sidero, so deviations can be cited rather than re-justified per-PR.
 4. The operator (single-maintainer) policy stays "as compliant as possible." If this shifts to "fully compliant" (e.g., for a contract), several of the accepted deviations in the table above require resolution before that contract can be claimed.
 
@@ -172,13 +172,11 @@ None (current). If a future ADR adopts a different primary framework (e.g., NIST
 
 The PR that introduces this ADR introduces only the policy. Implementing PRs (in expected order) will:
 
-1. **Deploy `kube-bench` as a Flux HelmRelease + CronJob.** First scan establishes the cluster's baseline against CIS K8s Benchmark.
-2. **Capture the initial scan output** as a versioned artifact in the repo (`docs/compliance/kube-bench-baseline.json`) so regressions can be detected.
-3. **Add a GitHub Actions workflow** that runs after a successful scan + posts a summary issue on any FAIL→PASS or PASS→FAIL transition.
-4. **Per-failing-finding remediation cycles** — each finding becomes a narrow PR with the STIG/CIS reference cited.
-5. **ingress-nginx STIG hardening cycle** — first workload-layer remediation, per operator's prior request.
-6. **Default-deny NetworkPolicy cycle** — addresses the largest single CIS gap (5.3.2).
-7. **Image signature verification cycle** — addresses STIG V-242414.
+1. **Daily kubescape scan workflow.** PR #36 landed the initial CLI-based scan (with S3 storage); follow-up PR refactored to SARIF + GitHub Code Scanning. Status: **completed**.
+2. **Per-failing-finding remediation cycles** — each `Open` finding on the Security tab becomes a narrow PR with the STIG/CIS reference cited, or a `Dismiss` action with a matching deviation row in this ADR's table.
+3. **ingress-nginx STIG hardening cycle** — first workload-layer remediation, per operator's prior request.
+4. **Default-deny NetworkPolicy cycle** — addresses the largest single CIS gap (5.3.2).
+5. **Image signature verification cycle** — addresses STIG V-242414.
 
 ## Related ADRs
 
