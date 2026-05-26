@@ -1,0 +1,7 @@
+# Kustomize index aggregating every app under this cluster.
+# Adding a new addon = add its directory here and Flux picks it up
+# on the next reconciliation.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kubelet-csr-approver

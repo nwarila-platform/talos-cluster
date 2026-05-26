@@ -20,10 +20,17 @@
 # -- Flux: GitOps controllers + cluster-specific bootstrap ---------------------
 !/clusters/
 !/clusters/talos-cluster/
+!/clusters/talos-cluster/kustomization.yaml
 !/clusters/talos-cluster/flux-system/
 !/clusters/talos-cluster/flux-system/gotk-components.yaml
 !/clusters/talos-cluster/flux-system/gotk-sync.yaml
 !/clusters/talos-cluster/flux-system/kustomization.yaml
+!/clusters/talos-cluster/apps/
+!/clusters/talos-cluster/apps/kustomization.yaml
+!/clusters/talos-cluster/apps/kubelet-csr-approver/
+!/clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml
+!/clusters/talos-cluster/apps/kubelet-csr-approver/helmrepository.yaml
+!/clusters/talos-cluster/apps/kubelet-csr-approver/kustomization.yaml
 
 # -- GitHub configuration -----------------------------------------------------
 !/.github/
