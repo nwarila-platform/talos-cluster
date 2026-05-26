@@ -1,0 +1,19 @@
+# Namespace `default` — restricted PSS enforce.
+#
+# `default` is the universal namespace any naive `kubectl run` lands in.
+# Hardening it to restricted shuts down the "I forgot to specify a
+# namespace and accidentally ran a privileged pod" footgun. Empty of
+# workloads at the time this label was applied, so no existing pod is
+# affected. Future workloads must use a non-privileged securityContext
+# or move to a less-restricted namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: default
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest

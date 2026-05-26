@@ -1,0 +1,16 @@
+# Namespace `kube-node-lease` — restricted PSS enforce.
+#
+# kube-node-lease holds Lease objects used by kubelet for the node
+# heartbeat optimization. No pods run here in normal operation;
+# applying restricted is hygiene.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-node-lease
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
