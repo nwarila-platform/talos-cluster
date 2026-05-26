@@ -166,6 +166,39 @@ The PR that introduces this ADR also introduces:
 
 The deploy key `flux-bootstrap` (ID 152623809) was added to the repository via `gh repo deploy-key add` on 2026-05-26 with read+write access.
 
+### Out-of-band cleanup (2026-05-26)
+
+The cluster previously had an ArgoCD installation (chart `argo-cd-9.4.17`,
+namespace `argocd`, 8 pods + 3 CRDs + 2 ClusterRoles + 1 ApplicationSet
++ 3 AppProjects + 1 Application) running in parallel with Flux. The
+ArgoCD-managed `deploy-whoami` workload's source repo had been deleted
+upstream, so ArgoCD had been failing to sync since 2026-05-15.
+
+Per this ADR's selection of Flux as the single GitOps engine, the
+ArgoCD installation was removed cluster-side on 2026-05-26:
+
+1. Removed `deploy-whoami` Application's resources-finalizer (while
+   argocd-application-controller was still alive to clean it).
+2. Deleted the `tenant-apps` ApplicationSet, `deploy-whoami` Application,
+   all 3 AppProjects.
+3. `helm uninstall argocd -n argocd` (removed Deployments, RBAC, leftover
+   helm-managed resources). CRDs were retained by Helm's resource-policy
+   annotation and deleted explicitly afterwards.
+4. Deleted the 3 ArgoCD CRDs (`applications.argoproj.io`,
+   `applicationsets.argoproj.io`, `appprojects.argoproj.io`).
+5. Deleted the `argocd` namespace.
+6. Deleted the orphaned `deploy-whoami` namespace (orphan workload with
+   no upstream source).
+
+Rollback path: fresh etcd snapshot taken before cleanup at
+`s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/2026-05-26/snapshot-222614Z.db`.
+
+Post-cleanup state: 7 namespaces (cilium-secrets, default, flux-system,
+kube-node-lease, kube-public, kube-system, longhorn-system), 67 Running
+pods (down from 77). Kubescape SARIF findings dropped from 222 to 179
+(43-finding reduction, ~19%) since the ArgoCD pods carried multiple
+restricted-PSS violations.
+
 ## Related ADRs
 
 - [ADR-0003 (repo)](0003-repo-as-cluster-source-of-truth.md) — establishes the source-of-truth invariant Flux now continuously enforces.
