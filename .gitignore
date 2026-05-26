@@ -91,6 +91,7 @@
 !/scripts/etcd-snapshot.sh
 !/scripts/generate.sh
 !/scripts/kubescape-scan.sh
+!/scripts/kubescape-json-to-sarif.py
 !/scripts/health.sh
 !/scripts/s3-sync.sh
 !/scripts/upgrade.sh
