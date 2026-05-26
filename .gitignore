@@ -24,6 +24,7 @@
 !/.github/workflows/
 !/.github/workflows/deploy.yaml
 !/.github/workflows/drift.yaml
+!/.github/workflows/etcd-snapshot.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/validate.yaml
 
@@ -65,6 +66,7 @@
 !/scripts/bootstrap.sh
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
+!/scripts/etcd-snapshot.sh
 !/scripts/generate.sh
 !/scripts/health.sh
 !/scripts/s3-sync.sh
@@ -86,5 +88,6 @@
 !/docs/decision-records/repo/0003-repo-as-cluster-source-of-truth.md
 !/docs/decision-records/repo/0004-capture-longhorn-volume-config-in-talos.md
 !/docs/decision-records/repo/0005-kubelet-csr-approver.md
+!/docs/decision-records/repo/0006-etcd-snapshot-automation.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep

@@ -50,6 +50,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0003](repo/0003-repo-as-cluster-source-of-truth.md)           | Treat Repo as Cluster Source of Truth          | Accepted | 2026-05-25 | This repository is the declarative source of truth for the cluster. Out-of-band changes require a back-fill PR within 7 days. Drift-detection CI is committed as a follow-up. |
 | [0004](repo/0004-capture-longhorn-volume-config-in-talos.md)   | Capture Longhorn Volume Config in Talos        | Accepted | 2026-05-25 | `cluster/patches/volumes.yaml` declares the EPHEMERAL `VolumeConfig` and the Longhorn `UserVolumeConfig`; `scripts/generate.sh` appends them to every per-node config so `make apply` doesn't drop production storage. |
 | [0005](repo/0005-kubelet-csr-approver.md)                      | Use postfinance/kubelet-csr-approver           | Accepted | 2026-05-25 | Deploy postfinance/kubelet-csr-approver Helm chart to auto-approve `kubernetes.io/kubelet-serving` CSRs. Precondition for re-enabling `rotate-server-certificates` in `common.yaml`. Provider regex + IP prefix scope approval to the 6 known nodes / management subnet. |
+| [0006](repo/0006-etcd-snapshot-automation.md)                  | Daily etcd Snapshots to S3 for Cluster Recovery | Accepted | 2026-05-26 | Daily `talosctl etcd snapshot` via GitHub Actions, uploaded KMS-encrypted to `s3://.../etcd-snapshots/`. Combined with `secrets/secrets.yaml` this is the cluster-recovery primitive. Restore-drill is a follow-up ADR. |
 
 ## Status Lifecycle
 

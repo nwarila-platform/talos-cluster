@@ -842,6 +842,87 @@ make s3-pull
 
 This downloads all secrets from the AWS S3 bucket. You then have full access to manage the cluster.
 
+### Disaster Recovery — Restoring etcd from a Snapshot
+
+The `etcd Snapshot` workflow (`.github/workflows/etcd-snapshot.yaml`) uploads a
+daily snapshot to S3. If the cluster's etcd quorum is lost (two CPs broken
+simultaneously, etcd corruption that propagates, etc.), restore via the
+following sequence. See [ADR-0006](docs/decision-records/repo/0006-etcd-snapshot-automation.md) for the
+decision context.
+
+#### 1. Find the snapshot you want to restore from
+
+```bash
+aws s3 ls s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/ --recursive | tail
+```
+
+Pick the most recent snapshot whose timestamp pre-dates the incident.
+
+#### 2. Pull the snapshot locally
+
+```bash
+mkdir -p .s3/restore
+aws s3 cp \
+  s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/YYYY-MM-DD/snapshot-HHMMSSZ.db \
+  .s3/restore/snapshot.db
+```
+
+#### 3. Wipe the CP nodes (Talos requires a clean state for `--recover-from`)
+
+```bash
+# For EACH control-plane node — applies in safe order (cp1 last as bootstrap)
+talosctl reset --talosconfig .s3/configs/talosconfig --nodes 10.69.112.64 --graceful=false --reboot
+talosctl reset --talosconfig .s3/configs/talosconfig --nodes 10.69.112.65 --graceful=false --reboot
+talosctl reset --talosconfig .s3/configs/talosconfig --nodes 10.69.112.63 --graceful=false --reboot
+```
+
+> **WARNING:** This wipes the system disks on the CP nodes. Only run if the
+> cluster is already unrecoverable. If you're testing recovery, do it on a
+> sacrificial cluster, not production.
+
+#### 4. Reapply machine configs to the wiped CPs
+
+```bash
+make apply-insecure NODES="cp1 cp2 cp3"
+```
+
+#### 5. Bootstrap a CP with the snapshot
+
+```bash
+talosctl bootstrap \
+  --talosconfig .s3/configs/talosconfig \
+  --nodes 10.69.112.63 \
+  --recover-from .s3/restore/snapshot.db
+```
+
+#### 6. Wait for the cluster to come back
+
+```bash
+make health
+kubectl get nodes
+```
+
+The worker nodes' kubelets will re-attach to the recovered control plane on
+their next health check. Workloads referenced in the snapshot (Deployments,
+DaemonSets, StatefulSets, Helm releases tracked via Helm 3 Secrets) come back
+as etcd is repopulated.
+
+#### 7. Re-run drift detection to confirm repo and recovered state match
+
+```bash
+bash scripts/drift-check.sh
+```
+
+Any drift the workflow surfaces is something the snapshot didn't carry — for
+example, a Talos machine-config change that was made between the snapshot and
+the incident. Decide whether to reapply via `make apply` (preferred) or to
+accept the recovered state and back-port to the repo.
+
+> **Note:** Restore from snapshot has not yet been drilled against this
+> cluster. A follow-up cycle will run the drill against a sacrificial cluster
+> and document the result as ADR-0007. Until then, the snapshots are a
+> recovery primitive whose viability is **not formally verified**.
+
 ### Deploying Your Own Application
 
 1. Create a YAML file describing your application (a Deployment, Service, and optionally an Ingress).
