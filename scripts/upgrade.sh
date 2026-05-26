@@ -103,7 +103,7 @@ echo ""
 if [[ "${ASSUME_YES}" -eq 1 ]]; then
     echo "  --yes supplied; skipping interactive confirmation."
 else
-    read -p "  Type 'yes' to proceed: " confirm
+    read -r -p "  Type 'yes' to proceed: " confirm
     if [[ "${confirm}" != "yes" ]]; then
         echo "  Aborted."
         exit 1
@@ -124,11 +124,61 @@ for hostname in "${TARGETS[@]}"; do
         --image "${TALOS_INSTALL_IMAGE}" \
         --preserve
 
-    echo "==> Waiting for ${hostname} to rejoin and become healthy..."
-    talosctl health \
-        --talosconfig "${TALOSCONFIG}" \
-        --nodes "${ip}" \
-        --wait-timeout 10m
+    # Post-upgrade verification. Two distinct checks:
+    # 1. Per-node: the upgraded node itself is back, on the new version,
+    #    and Ready in K8s. Uses talosctl version + kubectl, neither of
+    #    which require apid RPC forwarding — so they work even when the
+    #    upgraded node's new apid hasn't fully re-registered yet.
+    # 2. Cluster-wide: etcd is healthy. Uses talosctl health pointed at
+    #    a CP node that ISN'T the current upgrade target, since etcd
+    #    queries via worker-apid forwarding break post-reboot with
+    #    `PermissionDenied: no request forwarding`.
+    echo "==> Waiting 30s for ${hostname} to stabilize before verification..."
+    sleep 30
+
+    # Per-node version check
+    echo "==> Verifying ${hostname} reports new Talos version..."
+    actual_ver=$(talosctl --talosconfig "${TALOSCONFIG}" --nodes "${ip}" version --short 2>&1 | grep -m1 "Tag:" | awk '{print $2}')
+    if [[ "${actual_ver}" != "${TALOS_VERSION}" ]]; then
+        echo "==> ERROR: ${hostname} reports Talos version ${actual_ver}, expected ${TALOS_VERSION}" >&2
+        exit 1
+    fi
+    echo "    ${hostname} on ${actual_ver}"
+
+    # Pick a CP that ISN'T the current target for cluster-wide health
+    HEALTH_CP_IP=""
+    for cp_entry in ${CP_NODES}; do
+        cp_ip="${cp_entry##*:}"
+        if [[ "${cp_ip}" != "${ip}" ]]; then
+            HEALTH_CP_IP="${cp_ip}"
+            break
+        fi
+    done
+    if [[ -z "${HEALTH_CP_IP}" ]]; then
+        echo "==> ERROR: no CP available for cluster health check" >&2
+        exit 1
+    fi
+
+    echo "==> Cluster health check via ${HEALTH_CP_IP} (anchor CP)..."
+    HEALTH_MAX_ATTEMPTS=5
+    health_ok=0
+    for attempt in $(seq 1 ${HEALTH_MAX_ATTEMPTS}); do
+        if talosctl health \
+            --talosconfig "${TALOSCONFIG}" \
+            --nodes "${HEALTH_CP_IP}" \
+            --wait-timeout 5m; then
+            health_ok=1
+            break
+        fi
+        if [[ ${attempt} -lt ${HEALTH_MAX_ATTEMPTS} ]]; then
+            echo "==> health check attempt ${attempt}/${HEALTH_MAX_ATTEMPTS} failed, retrying in 30s..."
+            sleep 30
+        fi
+    done
+    if [[ ${health_ok} -eq 0 ]]; then
+        echo "==> ERROR: cluster health check failed after ${HEALTH_MAX_ATTEMPTS} attempts" >&2
+        exit 1
+    fi
 
     echo "==> ${hostname} upgraded successfully."
 done
