@@ -17,6 +17,14 @@
 !/README.md
 !/systems
 
+# -- Flux: GitOps controllers + cluster-specific bootstrap ---------------------
+!/clusters/
+!/clusters/talos-cluster/
+!/clusters/talos-cluster/flux-system/
+!/clusters/talos-cluster/flux-system/gotk-components.yaml
+!/clusters/talos-cluster/flux-system/gotk-sync.yaml
+!/clusters/talos-cluster/flux-system/kustomization.yaml
+
 # -- GitHub configuration -----------------------------------------------------
 !/.github/
 !/.github/CODEOWNERS
