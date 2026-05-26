@@ -1,6 +1,6 @@
 # =============================================================================
 # Cilium CNI — Helm values for Talos
-# Chart: cilium/cilium v1.16.6
+# Chart: cilium/cilium v1.19.4 (pinned in cluster/config.env)
 # =============================================================================
 ipam:
   mode: kubernetes
