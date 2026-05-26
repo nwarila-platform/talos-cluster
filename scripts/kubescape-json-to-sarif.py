@@ -71,24 +71,36 @@ def resource_to_location(resource_id: str) -> dict:
     # Kubescape resource IDs look like:
     #   /<ns>/<Kind>/<name>
     #   /<ns>/<Kind>/<name>/<apiVersion>//<Kind>/<name>
-    # SARIF wants a usable URI; we synthesize a stable one from the raw ID.
-    safe_uri = resource_id.lstrip("/").replace(" ", "_")
-    if not safe_uri:
-        safe_uri = "cluster-scope"
-    # The first three slash-segments are the primary object: <ns>/<Kind>/<name>
-    parts = resource_id.strip("/").split("/", 3)
-    primary_kind = parts[1] if len(parts) > 1 else ""
-    primary_name = parts[2] if len(parts) > 2 else ""
-    primary_ns = parts[0] if len(parts) > 0 else ""
+    # GitHub Code Scanning rejects custom URI schemes (e.g. "kubernetes://")
+    # when the checkout URI is file://. Use a relative path inside a
+    # synthetic "cluster-resources/" subtree instead — this passes the
+    # URI-scheme-matches-checkout check and tells reviewers the finding
+    # is on a live K8s resource, not a file in the repo. logicalLocations
+    # carries the structured K8s identity for the Security-tab display.
+    # Resource IDs vary in shape: kubescape uses both <ns>/<Kind>/<name>
+    # and <apiVersion>/<ns>/<Kind>/<name>, plus // separators when one
+    # finding spans multiple resources. We don't parse the structure;
+    # we use the resource_id verbatim as the logical-location identifier
+    # and synthesize a relative path for the SARIF artifact URI.
+    parts = [seg.replace(" ", "_") or "_" for seg in resource_id.strip("/").split("/")]
+    if not parts:
+        parts = ["cluster-scope"]
+    uri = "cluster-resources/" + "/".join(parts)
+    # name = last non-empty segment, for the Security-tab summary line.
+    display_name = next((p for p in reversed(parts) if p and p != "_"), "unknown")
     return {
         "physicalLocation": {
-            "artifactLocation": {"uri": f"kubernetes://{safe_uri}"},
+            "artifactLocation": {"uri": uri},
+            # Code Scanning needs a region for some finding-types; use a
+            # synthetic line 1:1 marker since K8s resources have no source
+            # line. This is the standard SARIF idiom for non-file artifacts.
+            "region": {"startLine": 1, "startColumn": 1, "endLine": 1, "endColumn": 1},
         },
         "logicalLocations": [
             {
-                "name": primary_name or "unknown",
+                "name": display_name,
                 "kind": "kubernetesResource",
-                "fullyQualifiedName": f"{primary_ns}/{primary_kind}/{primary_name}".strip("/"),
+                "fullyQualifiedName": resource_id.lstrip("/"),
             }
         ],
     }
