@@ -1,0 +1,20 @@
+# =============================================================================
+# Gateway API CRDs — installs the standard channel from kubernetes-sigs.
+#
+# Cilium 1.19.4 has `gatewayAPI.enabled: true` and registers a `cilium`
+# GatewayClass once these CRDs are present. Until installed, Cilium operator
+# logs "Required GatewayAPI resources are not found" every reconcile loop.
+#
+# Version pinned to v1.4.1 per Cilium 1.19's documented compatibility
+# (https://docs.cilium.io/en/v1.19/network/servicemesh/gateway-api/gateway-api/).
+# Bump in lockstep with Cilium minor upgrades that ship newer Gateway API
+# compatibility.
+#
+# Standard channel is sufficient — Cilium needs GatewayClass, Gateway,
+# HTTPRoute, GRPCRoute, ReferenceGrant (all v1 stable). Experimental channel
+# adds TLSRoute (v1alpha2) which we don't need.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/kubernetes-sigs/gateway-api/config/crd/standard?ref=v1.4.1
