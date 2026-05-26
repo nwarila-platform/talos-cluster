@@ -31,6 +31,10 @@
 !/clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml
 !/clusters/talos-cluster/apps/kubelet-csr-approver/helmrepository.yaml
 !/clusters/talos-cluster/apps/kubelet-csr-approver/kustomization.yaml
+!/clusters/talos-cluster/apps/metrics-server/
+!/clusters/talos-cluster/apps/metrics-server/helmrelease.yaml
+!/clusters/talos-cluster/apps/metrics-server/helmrepository.yaml
+!/clusters/talos-cluster/apps/metrics-server/kustomization.yaml
 
 # -- GitHub configuration -----------------------------------------------------
 !/.github/

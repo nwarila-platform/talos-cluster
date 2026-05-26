@@ -1,0 +1,43 @@
+# HelmRelease — metrics-server first-time install via Flux.
+#
+# Note: this is NOT a take-over of an existing release. The README's
+# Step 10 documented installing metrics-server manually, but it was
+# never actually executed against the cluster (verified 2026-05-26:
+# `helm list -n kube-system` shows no metrics-server release;
+# `kubectl top nodes` returns "Metrics API not available"). This
+# HelmRelease is the first time metrics-server lands on the cluster.
+#
+# Values mirror addons/metrics-server/values.yaml for the initial deploy
+# (Sub-cycle A). A follow-up cycle (Sub-cycle B) removes
+# --kubelet-insecure-tls now that kubelet serving certs are cluster-CA
+# signed via ADR-0005 + the kubelet-csr-approver release.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: metrics-server
+  namespace: kube-system
+spec:
+  interval: 10m
+  releaseName: metrics-server
+  chart:
+    spec:
+      chart: metrics-server
+      version: 3.13.0
+      sourceRef:
+        kind: HelmRepository
+        name: metrics-server
+        namespace: flux-system
+      interval: 1h
+  values:
+    args:
+      # TLS validation against kubelet's serving cert is bypassed for
+      # this initial deploy. Sub-cycle B removes this argument once
+      # certificate validation is confirmed working against the cluster
+      # CA. Tracked: deferral comment in addons/metrics-server/values.yaml.
+      - --kubelet-insecure-tls
+  upgrade:
+    remediation:
+      remediateLastFailure: false
+    cleanupOnFail: true
+  test:
+    enable: false
