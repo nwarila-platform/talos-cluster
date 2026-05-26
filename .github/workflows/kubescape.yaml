@@ -2,15 +2,14 @@
 # Kubescape — daily CIS K8s Benchmark compliance scan
 #
 # Implements the continuous-scanning leg of ADR-0009 §Confirmation §2.
-# Uses the Kubescape CLI (not the in-cluster operator) because the operator
-# would require its own privileged-pod posture that's out of scope for this
-# cycle. CLI mode runs entirely on the self-hosted runner, queries the
-# cluster via the Kubernetes API (no node-filesystem assumptions — fits
-# Talos's deliberate file-layout departures).
+# CLI mode (not the in-cluster operator) — queries the cluster via the
+# Kubernetes API (no node-filesystem assumptions, fits Talos's deliberate
+# file-layout departures).
 #
-# Output: JSON scan report uploaded to s3://.../compliance/kubescape/.
-# Score is diffed against docs/compliance/kubescape-baseline.json — a
-# regression beyond the tolerance triggers a GitHub issue on scheduled runs.
+# Output: SARIF uploaded to GitHub Code Scanning under category
+# "kubescape-cis". Findings appear on the repo's Security tab; per-finding
+# state (Open / Fixed / Dismissed) is tracked by Code Scanning, not by an
+# in-repo baseline file.
 # =============================================================================
 name: Kubescape
 
@@ -21,7 +20,7 @@ on:
 
 permissions:
   contents: read
-  issues: write   # used by the open-issue-on-failure step
+  security-events: write   # required by github/codeql-action/upload-sarif
 
 jobs:
   scan:
@@ -38,12 +37,11 @@ jobs:
           KS_VER_NUM="4.0.8"
           url="https://github.com/kubescape/kubescape/releases/download/${KS_VERSION}/kubescape_${KS_VER_NUM}_linux_amd64"
           curl --proto '=https' --tlsv1.2 -fsSL -o kubescape "${url}"
-          # Verify the binary by checking its self-reported version
           chmod +x kubescape
           sudo mv kubescape /usr/local/bin/kubescape
           kubescape version
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (kubeconfig pull only)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -52,24 +50,21 @@ jobs:
       - name: Pull kubeconfig from S3
         run: bash scripts/s3-sync.sh pull
 
-      - name: Run kubescape scan + upload + diff against baseline
+      - name: Run kubescape scan (emit SARIF)
         id: scan
-        run: bash scripts/kubescape-scan.sh | tee scan-output.txt
+        # continue-on-error so the upload-sarif step still runs even if the
+        # script exits non-zero — the SARIF itself is the signal we want.
+        continue-on-error: true
+        run: bash scripts/kubescape-scan.sh
 
-      - name: Open issue on scheduled failure
-        if: failure() && github.event_name == 'schedule'
-        uses: actions/github-script@v7
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          script: |
-            const fs = require('fs');
-            let body = '';
-            try { body = fs.readFileSync('scan-output.txt', 'utf8'); }
-            catch (e) { body = '(scan-output.txt not found)'; }
-            const today = new Date().toISOString().slice(0, 10);
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Compliance regression detected ${today}: CIS K8s Benchmark`,
-              labels: ['compliance', 'automated'],
-              body: '```\n' + body.slice(0, 60000) + '\n```',
-            });
+          sarif_file: kubescape.sarif
+          category: kubescape-cis
+
+      - name: Fail workflow if scan step errored
+        if: steps.scan.outcome != 'success'
+        run: |
+          echo "kubescape-scan.sh exited non-zero; SARIF (if any) was uploaded above."
+          exit 1

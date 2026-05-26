@@ -1,18 +1,15 @@
 # Compliance scanning
 
-This directory holds the cluster's compliance posture artifacts: the current
-baseline scan, deviations, and remediation notes. The scanning framework
-itself is defined in [ADR-0009](../decision-records/repo/0009-stig-cis-compliance-baseline.md).
+This directory holds the cluster's compliance posture artifacts and operator
+runbook. The scanning framework itself is defined in
+[ADR-0009](../decision-records/repo/0009-stig-cis-compliance-baseline.md).
 
 ## What's scanned
 
 [Kubescape](https://kubescape.io/) runs daily via `.github/workflows/kubescape.yaml`
 and scans this cluster against the **CIS Kubernetes Benchmark v1.10.0**. Each
-scan produces a JSON report containing:
-
-- An overall **compliance score** (0–100, higher is better).
-- Per-control results (`passed`, `failed`, `skipped`) for ~129 CIS controls.
-- Per-resource details — which Kubernetes objects fail which controls.
+scan emits a SARIF report covering ~129 CIS controls and per-resource details
+— which Kubernetes objects fail which controls.
 
 Why Kubescape and not [kube-bench](https://github.com/aquasecurity/kube-bench):
 kube-bench reads node filesystem paths (`/etc/kubernetes/...`,
@@ -21,50 +18,57 @@ file layout doesn't expose. Kubescape queries the Kubernetes API instead,
 which is the right shape for Talos. See [ADR-0009](../decision-records/repo/0009-stig-cis-compliance-baseline.md)
 for the full reasoning.
 
-## Where scans live
+## Where findings live
 
-| Location | Contents | Retention |
+| Location | What it holds | Why there |
 |---|---|---|
-| `s3://793496711039-terraform/nwarila-platform/talos-cluster/compliance/kubescape/YYYY-MM-DD/scan-HHMMSSZ.json` | Every scheduled scan, KMS-encrypted | S3 bucket lifecycle (currently unbounded; lifecycle rule recommended in ADR-0006 §Consequences) |
-| `docs/compliance/kubescape-baseline.json` (this directory, when present) | The accepted baseline; regression checks diff against it | Updated only via PR after operator triage of a new scan |
+| GitHub `Security` → `Code scanning` (category `kubescape-cis`) | Every finding, per-resource, with `Open` / `Fixed` / `Dismissed` state | Native security-artifact surface; auditor-readable; state survives across runs without an in-repo baseline file. |
+| Workflow run logs | Step output, SARIF parse confirmation, kubescape CLI version | Debugging the scan pipeline itself, not for finding triage. |
+
+There is intentionally no `kubescape-baseline.json` checked into this repo.
+GitHub Code Scanning maintains per-finding state natively (fingerprinted by
+rule + location), which is the right place for it. Adding an in-repo
+baseline file would duplicate that state and create a PR-update ritual for
+no operational benefit.
 
 ## How regression detection works
 
-`scripts/kubescape-scan.sh`:
-1. Runs `kubescape scan framework cis-v1.10.0` against the live cluster.
-2. Uploads the JSON to S3.
-3. Compares the scan's `summaryDetails.score` against the score in
-   `docs/compliance/kubescape-baseline.json`.
-4. Exits 1 if the scan score is more than 1.0 point below the baseline
-   (the configured tolerance, set in the script).
+GitHub Code Scanning tracks each finding's state automatically:
 
-The workflow opens a GitHub issue labelled `compliance,automated` when a
-scheduled run exits 1. Manual `workflow_dispatch` runs that fail still
-exit 1 but don't open issues (the operator is already watching the run).
+- **Open** — finding is currently failing in the most recent scan.
+- **Fixed** — finding was failing previously, is no longer reported. Code
+  Scanning detects this when the rule+location fingerprint disappears from
+  the SARIF upload.
+- **Dismissed** — operator explicitly marked the finding as `Won't fix`,
+  `Used in tests`, or `False positive`. Dismissed findings stay suppressed
+  on subsequent scans unless re-opened.
+
+A new failing CIS control surfaces as a new `Open` alert on the Security
+tab. The repo's notification settings (configurable per-watcher in GitHub
+UI) decide whether that triggers an email or in-app notification.
+
+The workflow itself fails only when the scan pipeline breaks (kubescape CLI
+missing, kubeconfig missing, SARIF malformed) — *not* on individual findings.
+Findings are the data; the workflow's job is to keep the data flowing.
 
 ## How to triage a new failure
 
-1. Read the new scan JSON from S3 (the issue body links to the run output).
-2. Identify the new failing control (compare against the baseline).
-3. Decide: **remediate** or **add a deviation**.
+1. Open `Security` → `Code scanning` on the GitHub repo. Filter by tool
+   `Kubescape` (or click the `kubescape-cis` category).
+2. Open the new `Open` alert. The alert body shows: the CIS control ID, the
+   Kubernetes object that failed it, and Kubescape's remediation text.
+3. Decide: **remediate** or **dismiss**.
    - **Remediate**: open a narrow PR fixing the configuration. Commit body
      cites the CIS item ID per [ADR-0009](../decision-records/repo/0009-stig-cis-compliance-baseline.md) §Confirmation §1.
-   - **Add a deviation**: update the deviations table in ADR-0009 with the
-     control ID, the configured value, the rationale, and a review-by date.
-4. After remediation (or deviation acceptance), update
-   `docs/compliance/kubescape-baseline.json` to the new state. The next
-   scheduled run compares against this updated baseline.
+     Next scheduled scan will auto-mark the alert as `Fixed`.
+   - **Dismiss**: in the Code Scanning UI, set the alert to `Dismiss alert`
+     with reason `Won't fix` and a one-line note pointing at the accepted
+     deviation in ADR-0009. Then update the deviations table in ADR-0009
+     with the control ID, the configured value, the rationale, and a
+     review-by date.
 
-## How the baseline gets updated
-
-The baseline file lives in git, protected by the same Ruleset as the rest
-of `main`. Updates require a PR with:
-- The new scan JSON (copied from S3) as the file contents.
-- A commit body explaining why the baseline changed (which controls
-  moved, why, citing the remediation PR or the deviation ADR update).
-
-Updates are **never automated**. The workflow doesn't commit back to the
-repo. Operator review is the gate.
+No baseline file to update. No PR required to "accept" the new state —
+Code Scanning is the system of record.
 
 ## Running a scan locally
 
@@ -78,11 +82,19 @@ repo. Operator review is the gate.
 bash scripts/kubescape-scan.sh
 ```
 
-The local run uploads to S3 just like the scheduled workflow does. To run
-a scan that does NOT upload (e.g., for ad-hoc exploration), set
-`S3_BUCKET=""` in the environment to short-circuit the upload — but the
-script doesn't currently support this; running with broken AWS creds will
-fail at the upload step.
+The script writes `kubescape.sarif` in the repo root (gitignored by the
+deny-all rule). Local runs do not upload to GitHub Code Scanning — only the
+CI workflow does, because uploads require the `GITHUB_TOKEN` with
+`security-events: write` that GitHub Actions provides.
+
+To preview the SARIF locally, use any SARIF viewer
+(e.g., [microsoft/sarif-vscode-extension](https://marketplace.visualstudio.com/items?itemName=MS-SarifVSCode.sarif-viewer))
+or jq:
+
+```bash
+jq '.runs[0].results | length' kubescape.sarif       # total results
+jq '.runs[0].results[] | .ruleId' kubescape.sarif    # rule IDs
+```
 
 ## What this scanner does NOT cover
 
@@ -107,3 +119,4 @@ fail at the upload step.
 - [ADR-0009](../decision-records/repo/0009-stig-cis-compliance-baseline.md) — establishes the compliance framework, conflict resolution, and accepted-deviations table.
 - [scripts/kubescape-scan.sh](../../scripts/kubescape-scan.sh) — the scan orchestrator.
 - [.github/workflows/kubescape.yaml](../../.github/workflows/kubescape.yaml) — the scheduled scan workflow.
+- [GitHub Code Scanning docs](https://docs.github.com/en/code-security/code-scanning/managing-code-scanning-alerts/about-code-scanning-alerts) — alert states, dismissal workflow, notification settings.
