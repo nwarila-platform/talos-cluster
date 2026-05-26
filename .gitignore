@@ -44,6 +44,7 @@
 !/.github/workflows/deploy.yaml
 !/.github/workflows/drift.yaml
 !/.github/workflows/etcd-snapshot.yaml
+!/.github/workflows/kubescape.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/validate.yaml
 
@@ -89,12 +90,16 @@
 !/scripts/drift-check.sh
 !/scripts/etcd-snapshot.sh
 !/scripts/generate.sh
+!/scripts/kubescape-scan.sh
 !/scripts/health.sh
 !/scripts/s3-sync.sh
 !/scripts/upgrade.sh
 
 # -- Docs: org-mirrored ADRs + repo/template ADR skeleton ---------------------
 !/docs/
+!/docs/compliance/
+!/docs/compliance/README.md
+!/docs/compliance/kubescape-baseline.json
 !/docs/decision-records/
 !/docs/decision-records/README.md
 !/docs/decision-records/org/
