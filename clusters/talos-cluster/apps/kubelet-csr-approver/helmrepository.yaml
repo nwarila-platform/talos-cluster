@@ -1,0 +1,11 @@
+# HelmRepository — postfinance chart index for kubelet-csr-approver.
+# Polled every 1h by source-controller; the chart is cached locally as an
+# OCI artifact and re-rendered by helm-controller on every HelmRelease reconcile.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: postfinance
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://postfinance.github.io/kubelet-csr-approver

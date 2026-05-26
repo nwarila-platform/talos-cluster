@@ -79,11 +79,24 @@ jobs:
             echo "PASS: All CP node patches declare the VIP"
           fi
 
-          if ! grep -Eq "^[[:space:]]+-[[:space:]]+${VIP_RE}[[:space:]]*\$" cluster/patches/controlplane.yaml; then
-            echo "FAIL: controlplane.yaml certSANs missing VIP ${CLUSTER_VIP}"
+          # controlplane.yaml carries two certSANs lists that BOTH must
+          # include the VIP:
+          #   - machine.certSANs           (Talos API server cert; talosctl)
+          #   - cluster.apiServer.certSANs (kube-apiserver cert; kubectl,
+          #                                 kubelet, in-cluster clients)
+          # A single grep match passes when only one list contains the VIP,
+          # leaving the other silently broken until production TLS fails.
+          # Require both items by counting matches: the file has exactly
+          # these two certSANs lists, so a count < 2 means at least one
+          # list dropped the VIP. (A deliberately duplicated VIP inside one
+          # list could mask a missing entry in the other, but such a diff
+          # would be visible in PR review.)
+          sans_with_vip=$(grep -Ec "^[[:space:]]+-[[:space:]]+${VIP_RE}[[:space:]]*\$" cluster/patches/controlplane.yaml || true)
+          if (( sans_with_vip < 2 )); then
+            echo "FAIL: controlplane.yaml expects VIP ${CLUSTER_VIP} in BOTH machine.certSANs and cluster.apiServer.certSANs (found ${sans_with_vip})"
             FAIL=1
           else
-            echo "PASS: controlplane.yaml certSANs lists the VIP"
+            echo "PASS: controlplane.yaml certSANs lists contain the VIP (${sans_with_vip} occurrences)"
           fi
 
           # 3. Version pinning check
@@ -120,6 +133,38 @@ jobs:
               echo "PASS: ${hostname} has patch file"
             fi
           done
+
+          # 5. Per-node IP consistency between cluster/config.env and the
+          # patch's machine.network.interfaces[0].addresses entry. apply.sh
+          # targets the config.env IP with `talosctl apply-config --nodes`,
+          # so if the patch declares a different address, the node reboots
+          # onto an IP that is not in the inventory and goes silently
+          # unreachable. talosctl validate cannot catch this: both values
+          # are syntactically valid IPs in isolation.
+          echo "--- Checking per-node IP consistency ---"
+          IP_MISMATCH=()
+          for entry in ${CP_NODES} ${WORKER_NODES}; do
+            hostname="${entry%%:*}"
+            expected_ip="${entry##*:}"
+            patch="cluster/patches/${hostname}.yaml"
+            # Match only bare list items of the form `- <ip>/<cidr>` (the
+            # addresses: list). Excludes `- network: 0.0.0.0/0` (route key)
+            # and `vip.ip: <ip>` (no CIDR), so the VIP is not picked up.
+            patch_ip=$(grep -Eo "^[[:space:]]+-[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+[[:space:]]*\$" "${patch}" \
+              | grep -Eo "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1)
+            if [[ "${patch_ip}" != "${expected_ip}" ]]; then
+              IP_MISMATCH+=("${hostname} (config.env=${expected_ip}, patch=${patch_ip:-<missing>})")
+            fi
+          done
+          if (( ${#IP_MISMATCH[@]} > 0 )); then
+            echo "FAIL: Per-node IPs in cluster/patches/ drift from cluster/config.env:"
+            for m in "${IP_MISMATCH[@]}"; do
+              echo "  ${m}"
+            done
+            FAIL=1
+          else
+            echo "PASS: Per-node IPs match cluster/config.env"
+          fi
 
           if [ "${FAIL}" -eq 1 ]; then
             echo ""

@@ -1,11 +1,28 @@
 # =============================================================================
 # Control plane patch — applied to all CP nodes
+#
+# NOTE on metrics bind-addresses (controllerManager / scheduler / etcd):
+# Setting bind-address: 0.0.0.0 on these components is the standard way to
+# let an off-host Prometheus scrape them, BUT it also exposes the endpoints
+# to anything with L4 reach to the CP IPs (10.69.112.62-65). This cluster
+# has no Prometheus deployed today, so enabling the binds would mean
+# attack surface without monitoring benefit. Re-introduce these alongside
+# a Prometheus deployment + a Talos kubespan / network-policy / external
+# firewall scoping the metrics ports to known scrapers. Decision recorded
+# 2026-05-25.
+#
+# NOTE on certSANs (machine.certSANs and cluster.apiServer.certSANs):
+# Both are intentionally omitted. The defaults `talosctl gen config`
+# emits — node's own IP in the apid cert, controlPlane.endpoint host
+# (10.69.112.62) in the kube-apiserver cert — already cover every
+# hostname / IP that today's talosconfig and kubeconfig actually use.
+# Adding explicit certSANs imposes a cert re-issue + apid/kube-apiserver
+# restart with no functional improvement. Re-add only when introducing
+# a new hostname clients will TLS-validate against (DNS name, external
+# load balancer IP, multi-region failover endpoint). Decision recorded
+# 2026-05-25 after verifying VIP-based kubectl and per-node talosctl
+# both validate cleanly without explicit SANs.
 # =============================================================================
-machine:
-  certSANs:
-    - 10.69.112.62
-    - 10.69.112.63
-    - 10.69.112.64
 cluster:
   allowSchedulingOnControlPlanes: false
   # Cilium replaces both Flannel and kube-proxy
@@ -14,9 +31,15 @@ cluster:
       name: none
   proxy:
     disabled: true
+  # discovery.registries: both registries enabled to match live state
+  # (the registry "disabled" flags are explicitly false on the live cluster).
+  discovery:
+    registries:
+      kubernetes:
+        disabled: false
+      service:
+        disabled: false
   apiServer:
-    certSANs:
-      - 10.69.112.62
     admissionControl:
       - name: PodSecurity
         configuration:
@@ -29,17 +52,16 @@ cluster:
             audit-version: latest
             warn: restricted
             warn-version: latest
+          # Cluster-wide PodSecurity exemption list intentionally empty.
+          # Workloads needing privileged scope use per-namespace labels instead
+          # of cluster-level exemptions (better blast-radius control):
+          #   - kube-system: default-exempted by talosctl gen config defaults
+          #     (where Cilium and other system pods run)
+          #   - longhorn-system: namespace carries the label
+          #     pod-security.kubernetes.io/enforce: privileged
+          # Adding a namespace name here is rarely correct; prefer namespace
+          # labels at the workload's install site.
           exemptions:
-            namespaces:
-              - cilium
+            namespaces: []
             runtimeClasses: []
             usernames: []
-  controllerManager:
-    extraArgs:
-      bind-address: "0.0.0.0"
-  scheduler:
-    extraArgs:
-      bind-address: "0.0.0.0"
-  etcd:
-    extraArgs:
-      listen-metrics-urls: http://0.0.0.0:2381

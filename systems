@@ -1,12 +1,17 @@
-Managemnt Virtual IP (VIP)
+Management Virtual IP (VIP)
 10.69.112.62
 
 
-Management:
-TDNHQ-TLOMGT01 - 10.69.112.63
-TDNHQ-TLOMGT02 - 10.69.112.64
+Management (Talos hostname / asset name / IP):
+cp1  TDNHQ-TLOMGT01  10.69.112.63   (bootstrap)
+cp2  TDNHQ-TLOMGT02  10.69.112.64
+cp3  TDNHQ-TLOMGT03  10.69.112.65
 
 
-Workers:
-TDNHQ-TLOWRK01 - 10.69.112.68
-TDNHQ-TLOWRK02 - 10.69.112.69
+Workers (Talos hostname / asset name / IP):
+w1   TDNHQ-TLOWRK01  10.69.112.68
+w2   TDNHQ-TLOWRK02  10.69.112.69
+w3   TDNHQ-TLOWRK03  10.69.112.70
+
+
+Hostname convention: see docs/decision-records/repo/0002-use-short-talos-hostnames.md

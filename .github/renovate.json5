@@ -1,0 +1,29 @@
+// =============================================================================
+// Renovate baseline for talos-cluster (TDNHQ-TALCL01).
+//
+// This repository does not extend a type-template because no Talos-cluster
+// type-template exists in the portfolio yet. The deviation is sanctioned by
+// docs/decision-records/repo/0001-renovate-without-template-lineage.md.
+// See docs/decision-records/org/0004-use-renovate-for-dependency-updates.md
+// for the org Renovate policy this baseline mirrors.
+// =============================================================================
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    ":dependencyDashboard",
+  ],
+  schedule: ["before 6am on monday"],
+  semanticCommits: "enabled",
+  prConcurrentLimit: 5,
+  minimumReleaseAge: "7 days",
+  internalChecksFilter: "strict",
+  packageRules: [
+    {
+      matchManagers: ["github-actions"],
+      semanticCommitType: "ci",
+      semanticCommitScope: "deps",
+      pinDigests: true,
+    },
+  ],
+}

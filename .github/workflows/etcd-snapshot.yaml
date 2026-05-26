@@ -1,0 +1,73 @@
+# =============================================================================
+# etcd Snapshot — captures a Talos etcd snapshot and uploads it to S3 daily.
+#
+# Implements the scheduled-snapshot leg of ADR-0006. The actual snapshot
+# logic lives in scripts/etcd-snapshot.sh. This workflow only handles
+# scheduling, tool installation, and AWS credential plumbing.
+#
+# Requires a self-hosted runner with cluster VIP reachability (same
+# posture as Deploy and Drift Detection).
+# =============================================================================
+name: etcd Snapshot
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 03:00 UTC — off-peak for this cluster
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # only used by the open-issue-on-failure step
+
+jobs:
+  snapshot:
+    name: Capture + upload
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install talosctl (pinned to cluster TALOS_VERSION)
+        run: |
+          set -euo pipefail
+          TALOS_VERSION=$(grep '^TALOS_VERSION=' cluster/config.env | cut -d'"' -f2)
+          [ -n "${TALOS_VERSION}" ] || { echo "TALOS_VERSION missing"; exit 1; }
+          url="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
+          sums="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/sha256sum.txt"
+          curl --proto '=https' --tlsv1.2 -fsSL -o talosctl "${url}"
+          curl --proto '=https' --tlsv1.2 -fsSL -o sha256sum.txt "${sums}"
+          expected=$(awk '$2=="talosctl-linux-amd64"{print $1}' sha256sum.txt)
+          actual=$(sha256sum talosctl | awk '{print $1}')
+          [ "${expected}" = "${actual}" ] || { echo "talosctl checksum mismatch"; exit 1; }
+          chmod +x talosctl
+          sudo mv talosctl /usr/local/bin/talosctl
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Pull secrets from S3 (talosconfig)
+        run: bash scripts/s3-sync.sh pull
+
+      - name: Take + upload etcd snapshot
+        run: bash scripts/etcd-snapshot.sh | tee snapshot-output.txt
+
+      - name: Open issue on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '';
+            try { body = fs.readFileSync('snapshot-output.txt', 'utf8'); }
+            catch (e) { body = '(snapshot-output.txt not found)'; }
+            const today = new Date().toISOString().slice(0, 10);
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `etcd snapshot failed ${today}`,
+              labels: ['etcd-snapshot', 'automated'],
+              body: '```\n' + body.slice(0, 60000) + '\n```',
+            });

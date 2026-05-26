@@ -5,7 +5,8 @@
 # Usage:
 #   ./scripts/apply.sh [--insecure] [HOSTNAME ...]
 #
-# If no hostnames are given, applies to ALL nodes.
+# If no hostnames are given, applies to ALL nodes in conservative order:
+# workers first, then non-bootstrap control planes, then bootstrap last.
 # Use --insecure for initial provisioning before PKI is established.
 # =============================================================================
 set -euo pipefail
@@ -17,6 +18,7 @@ source "${ROOT_DIR}/cluster/config.env"
 
 S3_DIR="${ROOT_DIR}/${LOCAL_S3_DIR}"
 TALOSCONFIG="${S3_DIR}/configs/talosconfig"
+BOOTSTRAP_HOSTNAME="${BOOTSTRAP_NODE%%:*}"
 INSECURE=""
 TARGETS=()
 
@@ -47,9 +49,17 @@ for entry in ${WORKER_NODES}; do
     NODE_ROLE["${h}"]="worker"
 done
 
-# Default: all nodes
+# Default: all nodes in a deterministic, control-plane-safe order.
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
-    TARGETS=("${!NODE_IP[@]}")
+    for entry in ${WORKER_NODES}; do
+        TARGETS+=("${entry%%:*}")
+    done
+    for entry in ${CP_NODES}; do
+        h="${entry%%:*}"
+        [[ "${h}" == "${BOOTSTRAP_HOSTNAME}" ]] && continue
+        TARGETS+=("${h}")
+    done
+    TARGETS+=("${BOOTSTRAP_HOSTNAME}")
 fi
 
 # ---------------------------------------------------------------------------

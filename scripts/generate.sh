@@ -86,6 +86,20 @@ echo "    Talosconfig saved."
 # ---------------------------------------------------------------------------
 # Patch per-node control plane configs
 # ---------------------------------------------------------------------------
+VOLUMES_PATCH="${ROOT_DIR}/cluster/patches/volumes.yaml"
+
+# Append the multi-doc volumes patch (VolumeConfig + UserVolumeConfig).
+# `talosctl machineconfig patch` only strategically-merges the v1alpha1 main
+# doc; new top-level kinds like VolumeConfig must be appended after.
+append_volumes() {
+    local target="$1"
+    if [[ ! -f "${VOLUMES_PATCH}" ]]; then
+        echo "ERROR: ${VOLUMES_PATCH} missing" >&2
+        exit 1
+    fi
+    cat "${VOLUMES_PATCH}" >> "${target}"
+}
+
 echo "==> Generating per-node control plane configs..."
 for entry in ${CP_NODES}; do
     node_name="${entry%%:*}"
@@ -98,6 +112,7 @@ for entry in ${CP_NODES}; do
         --output "${S3_DIR}/generated/controlplane/${node_name}.yaml"
 
     set_hostname "${S3_DIR}/generated/controlplane/${node_name}.yaml" "${node_hostname}"
+    append_volumes "${S3_DIR}/generated/controlplane/${node_name}.yaml"
 done
 
 # ---------------------------------------------------------------------------
@@ -115,6 +130,7 @@ for entry in ${WORKER_NODES}; do
         --output "${S3_DIR}/generated/worker/${node_name}.yaml"
 
     set_hostname "${S3_DIR}/generated/worker/${node_name}.yaml" "${node_hostname}"
+    append_volumes "${S3_DIR}/generated/worker/${node_name}.yaml"
 done
 
 # ---------------------------------------------------------------------------

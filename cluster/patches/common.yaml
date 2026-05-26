@@ -3,26 +3,61 @@
 # =============================================================================
 machine:
   features:
+    # Talos-API hardening: rbac requires every talosctl client cert to carry
+    # an os:* role (default issued certs are O=os:admin); apidCheckExtKeyUsage
+    # requires the cert to declare the clientAuth Extended Key Usage. Both are
+    # Sidero's recommended production defaults. Pre-flight: confirmed the
+    # working talosconfig satisfies both before enabling (2026-05-25).
     rbac: true
     apidCheckExtKeyUsage: true
     diskQuotaSupport: true
     kubePrism:
       enabled: true
       port: 7445
+  kubelet:
+    extraArgs:
+      # Kubelet creates K8s CSRs for its serving cert on startup and before
+      # expiry instead of self-signing. Required for metrics-server and
+      # kubectl logs/exec/port-forward to validate the cert without
+      # --insecure-tls workarounds. Approval is handled by the
+      # postfinance/kubelet-csr-approver Helm release in kube-system; see
+      # addons/kubelet-csr-approver/values.yaml and ADR-0005.
+      rotate-server-certificates: "true"
+  # Public DNS/NTP fallbacks (1.1.1.1, 8.8.8.8, time.cloudflare.com)
+  # intentionally NOT configured. The site gateway (10.69.112.1) is
+  # operator-controlled and has provided DNS+NTP without incident for
+  # 51 days. Adding public fallbacks introduces:
+  #   - lookup latency when the gateway is briefly slow (5-10s timeout
+  #     per failed query before falling back to next nameserver)
+  #   - logged egress at Cloudflare/Google linking this cluster's IP
+  #     to its identity
+  #   - policy-violation noise in any hardened-egress environment that
+  #     blocks 1.1.1.1/8.8.8.8
+  # If the gateway becomes a single point of failure in practice, fix
+  # at the gateway (configure it to forward to multiple upstreams)
+  # rather than push public servers to every node.
   time:
     servers:
-      - time.cloudflare.com
+      - 10.69.112.1   # site gateway provides NTP (matches live cluster)
   network:
     nameservers:
-      - 1.1.1.1
-      - 8.8.8.8
+      - 10.69.112.1   # site gateway provides DNS (matches live cluster)
   sysctls:
+    # rmem_max + somaxconn are inherited from the original live config.
+    # The remaining four are standard K8s node tunes:
+    #   - netdev_max_backlog: inbound packet queue (default 1000 too low under burst)
+    #   - vm.max_map_count: required minimum for Elasticsearch/Loki + Cilium eBPF
+    #   - fs.inotify.max_user_{watches,instances}: kubelet + log shippers + node-exporter
+    #     exhaust the Linux defaults of 8192/128 within minutes on a busy K8s node
+    net.core.rmem_max: "2500000"
     net.core.somaxconn: "65535"
     net.core.netdev_max_backlog: "5000"
     vm.max_map_count: "262144"
     fs.inotify.max_user_watches: "1048576"
     fs.inotify.max_user_instances: "8192"
-  kubelet:
-    extraArgs:
-      rotate-server-certificates: "true"
-  # install disk is set per-node in individual patch files
+  install:
+    # The install disk is set per-node (sda vs nvme0n1 in cluster/patches/{cp,w}*.yaml).
+    # `wipe: true` is set here because every live node has it; semantically a no-op
+    # on a running node (Talos only honours wipe at install time), but the field
+    # value must match for `talosctl diff` to be empty.
+    wipe: true
