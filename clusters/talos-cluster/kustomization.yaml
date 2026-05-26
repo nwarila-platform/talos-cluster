@@ -7,3 +7,30 @@ kind: Kustomization
 resources:
   - flux-system
   - apps
+# Strategic merge patches that apply AFTER both sub-trees are built. Used
+# for cross-tree edits (e.g., labeling resources declared in one sub-tree
+# from policy that lives in another). Per-resource hardening that doesn't
+# cross sub-trees should live in its own sub-directory under apps/.
+patches:
+  # PSS restricted enforce on the flux-system namespace. The namespace
+  # itself is declared in flux-system/gotk-components.yaml (Flux's own
+  # bootstrap manifest), so a separate Namespace resource in apps/ would
+  # collide. Patching at the top level merges the labels onto Flux's
+  # declaration. All 4 Flux controllers were verified restricted-compliant
+  # on 2026-05-26 (allowPrivilegeEscalation: false, runAsNonRoot: true,
+  # capabilities.drop: [ALL], seccompProfile: RuntimeDefault).
+  - target:
+      kind: Namespace
+      name: flux-system
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: flux-system
+        labels:
+          pod-security.kubernetes.io/enforce: restricted
+          pod-security.kubernetes.io/enforce-version: latest
+          pod-security.kubernetes.io/audit: restricted
+          pod-security.kubernetes.io/audit-version: latest
+          pod-security.kubernetes.io/warn: restricted
+          pod-security.kubernetes.io/warn-version: latest
