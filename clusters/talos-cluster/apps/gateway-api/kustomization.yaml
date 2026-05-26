@@ -1,20 +1,28 @@
 # =============================================================================
-# Gateway API CRDs — installs the standard channel from kubernetes-sigs.
+# Gateway API CRDs — standard channel from kubernetes-sigs, referenced as a
+# single release-asset URL.
 #
 # Cilium 1.19.4 has `gatewayAPI.enabled: true` and registers a `cilium`
 # GatewayClass once these CRDs are present. Until installed, Cilium operator
 # logs "Required GatewayAPI resources are not found" every reconcile loop.
 #
-# Version pinned to v1.4.1 per Cilium 1.19's documented compatibility
-# (https://docs.cilium.io/en/v1.19/network/servicemesh/gateway-api/gateway-api/).
-# Bump in lockstep with Cilium minor upgrades that ship newer Gateway API
-# compatibility.
+# Version: Gateway API v1.4.1 (standard channel) per Cilium 1.19's documented
+# compatibility (https://docs.cilium.io/en/v1.19/network/servicemesh/gateway-api/).
 #
-# Standard channel is sufficient — Cilium needs GatewayClass, Gateway,
-# HTTPRoute, GRPCRoute, ReferenceGrant (all v1 stable). Experimental channel
-# adds TLSRoute (v1alpha2) which we don't need.
+# Why a single-file URL (not directory-as-base, not vendored):
+#   - kubernetes-sigs/gateway-api `config/crd/standard/` has no kustomization.yaml,
+#     so Flux can't consume it as a kustomize remote git base.
+#   - standard-install.yaml is a single 681 KB file; vendoring tripped
+#     pre-commit's check-added-large-files hook (500 KB threshold) and would
+#     also add ~12K lines of upstream YAML churn to the repo on every bump.
+#   - A single-file HTTPS release-asset URL works as a standard kustomize
+#     resource and is version-pinned in the URL itself.
+#
+# Bump procedure: edit the URL below to a newer release tag. Cilium minor
+# upgrades may require a matching bump (see Cilium release notes for
+# "supported Gateway API version").
 # =============================================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - https://github.com/kubernetes-sigs/gateway-api/config/crd/standard?ref=v1.4.1
+  - https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
