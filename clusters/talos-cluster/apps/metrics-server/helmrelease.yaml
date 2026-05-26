@@ -1,16 +1,17 @@
-# HelmRelease — metrics-server first-time install via Flux.
+# HelmRelease — metrics-server with cluster-CA-validated kubelet TLS.
 #
-# Note: this is NOT a take-over of an existing release. The README's
-# Step 10 documented installing metrics-server manually, but it was
-# never actually executed against the cluster (verified 2026-05-26:
-# `helm list -n kube-system` shows no metrics-server release;
-# `kubectl top nodes` returns "Metrics API not available"). This
-# HelmRelease is the first time metrics-server lands on the cluster.
+# Initial install was Sub-cycle A (commit 00ba686) which deployed with
+# --kubelet-insecure-tls. This Sub-cycle B drops the flag because:
 #
-# Values mirror addons/metrics-server/values.yaml for the initial deploy
-# (Sub-cycle A). A follow-up cycle (Sub-cycle B) removes
-# --kubelet-insecure-tls now that kubelet serving certs are cluster-CA
-# signed via ADR-0005 + the kubelet-csr-approver release.
+#   - kubelet now creates serving CSRs (ADR-0005's
+#     rotate-server-certificates) signed by the cluster CA
+#   - postfinance/kubelet-csr-approver auto-approves them
+#   - every node's kubelet serving cert validates against the cluster CA
+#   - metrics-server's default behavior (which validates) works
+#
+# If reverting: re-add `--kubelet-insecure-tls` to the args list. The
+# release will remain healthy because kubelet's self-signed fallback
+# is still trusted by --kubelet-insecure-tls semantics.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -28,13 +29,8 @@ spec:
         name: metrics-server
         namespace: flux-system
       interval: 1h
-  values:
-    args:
-      # TLS validation against kubelet's serving cert is bypassed for
-      # this initial deploy. Sub-cycle B removes this argument once
-      # certificate validation is confirmed working against the cluster
-      # CA. Tracked: deferral comment in addons/metrics-server/values.yaml.
-      - --kubelet-insecure-tls
+  # values: intentionally omitted. metrics-server uses its chart defaults,
+  # which validate the kubelet serving cert against the cluster CA.
   upgrade:
     remediation:
       remediateLastFailure: false
