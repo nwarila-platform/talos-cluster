@@ -1,0 +1,17 @@
+# Namespace `kube-public` — restricted PSS enforce.
+#
+# kube-public is the K8s-provided world-readable namespace for cluster-info.
+# In practice it holds only the cluster-info ConfigMap (used by kubeadm
+# bootstrap; Talos uses it similarly). No pods are scheduled here in
+# normal operation, so applying restricted is hygiene.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-public
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest

@@ -1,0 +1,20 @@
+# =============================================================================
+# Namespace hardening — Flux-managed labels (and future NetworkPolicies) for
+# namespaces that should run under stricter security defaults than the
+# cluster-wide baseline.
+#
+# Cluster-wide PodSecurity defaults (controlplane.yaml):
+#   enforce: baseline, audit/warn: restricted
+#
+# Each Namespace resource below adds restricted-enforce labels via
+# server-side merge with the existing K8s-managed namespace. Flux
+# kustomize-controller uses SSA by default in v2.x, so the merge is
+# non-destructive — only the labels we declare are added/updated; K8s
+# manages all other namespace fields.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - default.yaml
+  - kube-public.yaml
+  - kube-node-lease.yaml

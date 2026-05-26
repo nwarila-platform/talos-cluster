@@ -7,3 +7,4 @@ resources:
   - gateway-api
   - kubelet-csr-approver
   - metrics-server
+  - namespace-hardening

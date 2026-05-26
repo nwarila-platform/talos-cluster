@@ -38,6 +38,11 @@
 !/clusters/talos-cluster/apps/metrics-server/helmrelease.yaml
 !/clusters/talos-cluster/apps/metrics-server/helmrepository.yaml
 !/clusters/talos-cluster/apps/metrics-server/kustomization.yaml
+!/clusters/talos-cluster/apps/namespace-hardening/
+!/clusters/talos-cluster/apps/namespace-hardening/default.yaml
+!/clusters/talos-cluster/apps/namespace-hardening/kube-node-lease.yaml
+!/clusters/talos-cluster/apps/namespace-hardening/kube-public.yaml
+!/clusters/talos-cluster/apps/namespace-hardening/kustomization.yaml
 
 # -- GitHub configuration -----------------------------------------------------
 !/.github/
