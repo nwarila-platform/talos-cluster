@@ -635,6 +635,32 @@ kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisione
 kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 ```
 
+**Longhorn** (distributed block storage with replication; provides the cluster's default `StorageClass`):
+
+```bash
+helm repo add longhorn https://charts.longhorn.io
+helm repo update
+
+# Create the namespace with the privileged PodSecurity label — Longhorn
+# instance-manager + engine pods require privileged mode (hostPath, raw
+# block-device access). See the longhorn-system namespace label in the
+# live cluster.
+kubectl create namespace longhorn-system
+kubectl label namespace longhorn-system \
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged
+
+helm install longhorn longhorn/longhorn \
+    --version 1.11.1 \
+    --namespace longhorn-system \
+    -f addons/longhorn/values.yaml
+```
+
+The `values.yaml` makes `longhorn` the cluster's default `StorageClass` and sets `defaultDataPath: /var/mnt/longhorn` so Longhorn writes to the Talos `UserVolumeConfig` declared in `cluster/patches/volumes.yaml` (50–240 GiB carved out of every node's system disk). See [ADR-0007](docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md) for the rationale behind each non-default value.
+
+> **Note on the local-path-provisioner step above:** The live cluster does NOT have local-path-provisioner installed; Longhorn is the only StorageClass. The local-path step is a vestige from earlier setup and should be considered optional. Removing it from this runbook is a follow-up.
+
 ### Step 11: Verify Everything Works
 
 Check that all pods are running:

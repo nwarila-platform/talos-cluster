@@ -51,6 +51,8 @@
 !/addons/ingress-nginx/values.yaml
 !/addons/kubelet-csr-approver/
 !/addons/kubelet-csr-approver/values.yaml
+!/addons/longhorn/
+!/addons/longhorn/values.yaml
 !/addons/metrics-server/
 !/addons/metrics-server/values.yaml
 !/addons/poc/
@@ -89,5 +91,6 @@
 !/docs/decision-records/repo/0004-capture-longhorn-volume-config-in-talos.md
 !/docs/decision-records/repo/0005-kubelet-csr-approver.md
 !/docs/decision-records/repo/0006-etcd-snapshot-automation.md
+!/docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep

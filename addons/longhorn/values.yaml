@@ -1,0 +1,67 @@
+# =============================================================================
+# Longhorn Helm values
+#
+# Captures the values applied to the live Longhorn release (chart version
+# 1.11.1, app version 1.11.1) on 2026-05-26. See
+# docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md
+# for the reasoning behind each non-default.
+#
+# Talos-side coupling: the data path below (/var/mnt/longhorn) is the
+# Talos auto-mount of the `longhorn` UserVolumeConfig declared in
+# cluster/patches/volumes.yaml — see ADR-0004.
+# =============================================================================
+
+defaultSettings:
+  # Mount path of the Talos UserVolumeConfig `longhorn` (auto-mounted by
+  # Talos at /var/mnt/<volume-name>). This is the one setting that hard-
+  # couples Helm-side Longhorn to Talos-side storage; changing it without
+  # also changing the UserVolumeConfig name in cluster/patches/volumes.yaml
+  # leaves Longhorn writing to the system disk's overlay instead of the
+  # dedicated 50-240 GiB volume.
+  defaultDataPath: /var/mnt/longhorn
+
+  # 2-way replication is the small-cluster sweet spot for 6 nodes with
+  # 3 worker storage targets: tolerates one node loss, doesn't over-fan
+  # writes. Chart default is 3. The defaultClassReplicaCount below pins
+  # the same number for the StorageClass.
+  defaultReplicaCount: 2
+
+  # Force-delete pods stranded on a downed node so the StatefulSet/
+  # Deployment can recreate them elsewhere. Without this, a node failure
+  # leaves PVC-bound pods Pending indefinitely behind a Terminating
+  # placeholder, blocking failover.
+  nodeDownPodDeletionPolicy: delete-both-statefulset-and-deployment-pod
+
+  # Permit replica placement when a node has ≥10% free space (chart
+  # default 25%). The Talos UserVolumeConfig caps the longhorn volume at
+  # 240 GiB; 25% free of that is 60 GiB held in reserve, which is more
+  # conservative than this cluster's workloads warrant.
+  storageMinimalAvailablePercentage: 10
+
+  # One engine upgrade in flight per node, ever. Lets `helm upgrade`
+  # do a rolling engine rollout without flapping multiple nodes at once.
+  # Chart default is 0 (disabled).
+  concurrentAutomaticEngineUpgradePerNodeLimit: 1
+
+# Tolerate the control-plane NoSchedule taint on every Longhorn component
+# that needs to run on every node. This is what lets cp1/cp2/cp3 also
+# contribute Longhorn storage. Without these tolerations Longhorn would
+# only run on workers and lose 3 storage targets.
+longhornManager:
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+longhornDriver:
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+persistence:
+  # `longhorn` becomes the cluster's default StorageClass. PVCs without
+  # an explicit storageClassName get a Longhorn-backed volume.
+  defaultClass: true
+  # Matches defaultReplicaCount above so the default SC and the global
+  # default don't disagree.
+  defaultClassReplicaCount: 2
