@@ -112,5 +112,6 @@
 !/docs/decision-records/repo/0006-etcd-snapshot-automation.md
 !/docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md
 !/docs/decision-records/repo/0008-gitops-via-flux.md
+!/docs/decision-records/repo/0009-stig-cis-compliance-baseline.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep
