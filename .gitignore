@@ -27,6 +27,8 @@
 !/clusters/talos-cluster/flux-system/kustomization.yaml
 !/clusters/talos-cluster/apps/
 !/clusters/talos-cluster/apps/kustomization.yaml
+!/clusters/talos-cluster/apps/gateway-api/
+!/clusters/talos-cluster/apps/gateway-api/kustomization.yaml
 !/clusters/talos-cluster/apps/kubelet-csr-approver/
 !/clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml
 !/clusters/talos-cluster/apps/kubelet-csr-approver/helmrepository.yaml
@@ -67,18 +69,12 @@
 !/addons/
 !/addons/cilium/
 !/addons/cilium/values.yaml
-!/addons/ingress-nginx/
-!/addons/ingress-nginx/values.yaml
 !/addons/kubelet-csr-approver/
 !/addons/kubelet-csr-approver/values.yaml
 !/addons/longhorn/
 !/addons/longhorn/values.yaml
 !/addons/metrics-server/
 !/addons/metrics-server/values.yaml
-!/addons/poc/
-!/addons/poc/deployment.yaml
-!/addons/poc/namespace.yaml
-!/addons/poc/service.yaml
 
 # -- Scripts: automation invoked by the Makefile ------------------------------
 !/scripts/
