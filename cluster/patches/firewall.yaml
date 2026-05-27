@@ -1,20 +1,156 @@
 # =============================================================================
-# Talos host ingress firewall — TEMPORARILY DISABLED during recovery.
+# Talos host ingress firewall - default-block + minimal allow list.
 #
-# Original config caused cluster lockout (operator workstation at 10.69.12.0/24
-# was not in the 10.69.112.0/24 allow rules). After recovery, this file will
-# be rewritten with operator subnet included in all allow rules.
+# Multi-doc YAML. `talosctl machineconfig patch` only strategically merges the
+# v1alpha1 main doc; these top-level kinds (NetworkDefaultActionConfig,
+# NetworkRuleConfig) are appended after by scripts/generate.sh, same pattern
+# as cluster/patches/volumes.yaml (see ADR-0004).
 #
-# Talos host firewall behavior observed 2026-05-27:
-# - NetworkRuleConfig with ingress[].subnet acts as a PER-PORT ALLOWLIST,
-#   not just an "allow this in addition to default" rule. Even when
-#   NetworkDefaultActionConfig is `accept`, ports covered by a
-#   NetworkRuleConfig become restricted to the listed subnets.
-# - To fully disable the firewall, ALL NetworkRuleConfig documents must
-#   be removed AND NetworkDefaultActionConfig must be accept (or absent).
+# Default: block all ingress from external interfaces. Loopback is naturally
+# allowed by the kernel; established/related connections are stateful-OK.
 #
-# Recovery state: this file intentionally contains NO firewall documents.
-# generate.sh still appends it via append_firewall() but it produces zero
-# active rules. Talos nftables ingress chain will be in default-accept
-# state (no chains at all, equivalent to pre-Step-4 baseline).
+# Source subnets:
+#   10.69.12.0/24   - routed operator workstation subnet
+#   10.69.112.0/24  - cluster node subnet
+#   10.244.0.0/16   - Cilium pod CIDR (cluster-pool IPAM)
+#
+# Critical Talos firewall semantics confirmed during the 2026-05-27 recovery:
+# NetworkRuleConfig is a per-port allowlist. Every port covered by a rule is
+# reachable ONLY from that rule's ingress[] subnets, regardless of the default
+# action. Keep 10.69.12.0/24 in every rule so routed operator-side management
+# remains reachable after a node is firewalled.
+#
+# Rollout safety gate: after applying to the first node, test TCP from the
+# operator workstation to that node's apid port (for w1: 10.69.112.68:50000)
+# before applying to any other node.
 # =============================================================================
+
+---
+apiVersion: v1alpha1
+kind: NetworkDefaultActionConfig
+ingress: block
+
+---
+# apid - talosctl management API. Operator workstations run talosctl against
+# this port; cluster nodes use it for in-cluster discovery.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-apid
+portSelector:
+  ports:
+    - 50000
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+
+---
+# kube-apiserver - listens only on control-plane nodes. Pods reach apiserver
+# via Cilium service translation (10.96.0.1:443 -> 10.69.112.6X:6443);
+# source IP after translation is the pod IP (10.244.0.0/16).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-kube-apiserver
+portSelector:
+  ports:
+    - 6443
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+  - subnet: 10.244.0.0/16
+
+---
+# kubelet - kube-apiserver scrapes status/logs/exec from CP node IPs, and
+# metrics-server pod scrapes /metrics/resource from pod IPs.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-kubelet
+portSelector:
+  ports:
+    - 10250
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+  - subnet: 10.244.0.0/16
+
+---
+# etcd - client (apiserver -> etcd) on 2379, peer (CP-to-CP) on 2380.
+# Listens only on control-plane nodes; rule is harmless on workers.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-etcd
+portSelector:
+  ports:
+    - 2379
+    - 2380
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+
+---
+# Cilium agent health checks - cilium-agent peers use 4240. Source can be the
+# node IP (hostNetwork) or a pod IP for related Cilium components.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-cilium-health
+portSelector:
+  ports:
+    - 4240
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+  - subnet: 10.244.0.0/16
+
+---
+# Cilium VXLAN tunnel - pod-to-pod cross-node traffic is encapsulated in VXLAN
+# with source node IPs. Cilium currently binds 8472/udp (Linux kernel default),
+# not only the IANA-standard 4789/udp. Verified live on 2026-05-26 with
+# `ss -tulpn` inside a cilium-agent pod.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-cilium-vxlan
+portSelector:
+  ports:
+    - 4789
+    - 8472
+  protocol: udp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+
+---
+# Hubble Peer (gRPC) - Hubble Relay pod queries each cilium-agent's Peer
+# service on 4244 to aggregate flow logs across the cluster.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-hubble-peer
+portSelector:
+  ports:
+    - 4244
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+  - subnet: 10.244.0.0/16
+
+---
+# Longhorn iSCSI - cross-node volume replication. Currently zero PVs, but
+# allowed defensively so the first PVC does not get a surprise.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-longhorn-iscsi
+portSelector:
+  ports:
+    - 3260
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+
+# Note: ICMP allow rules were not added because Talos NetworkRuleConfig schema
+# requires portSelector.ports even for ICMP. Pod-to-pod ICMP via Cilium overlay
+# is unaffected by this host ingress firewall.
