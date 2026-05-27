@@ -25,3 +25,16 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
+  # SOPS decryption — uses the age private key stored in the `sops-age`
+  # Secret in `flux-system` namespace (created out-of-band via
+  # `kubectl create secret generic sops-age --from-file=age.agekey=...`,
+  # back-filled in the PR that introduced this section).
+  #
+  # Activates for every file in this Kustomization's tree (.yaml/.yml/.json
+  # per .sops.yaml at repo root). No actual encrypted content exists yet;
+  # this enables the capability ahead of first use (likely tenant
+  # onboarding via the deploy-* flow).
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

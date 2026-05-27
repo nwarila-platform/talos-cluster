@@ -7,6 +7,7 @@
 
 # Allow the allowlist itself so tracked scope stays auditable.
 !/.gitignore
+!/.sops.yaml
 
 # -- Top-level repo files -----------------------------------------------------
 !/.editorconfig
