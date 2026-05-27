@@ -1,0 +1,22 @@
+# Child Flux Kustomization for Kyverno ClusterPolicies.
+#
+# Depends on the parent kyverno Kustomization so the engine HelmRelease is
+# Ready (CRDs registered, webhooks live) before any ClusterPolicy is applied.
+# Audit-mode policies do not block admission, but applying them before CRDs
+# exist would surface as a transient kustomize-controller reconcile error.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kyverno-policies
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/kyverno/policies
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: kyverno
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

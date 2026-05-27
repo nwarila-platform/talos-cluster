@@ -185,9 +185,15 @@ None (current).
 
 ## Implementing PRs
 
-- Step 8a: Install Kyverno policy engine via Flux.
-- Step 8b (follow-up): Add audit-mode image signature/SBOM verification policy.
-- Step 8c (follow-up): Promote verified image families from audit to enforce.
+- Step 8a: Install Kyverno policy engine via Flux (PR #59, hotfix PR #60).
+- Step 8b: Add audit-mode keyless cosign verification ClusterPolicy covering
+  Flux (`ghcr.io/fluxcd/*`), Cilium (`quay.io/cilium/*`), and Kyverno
+  (`reg.kyverno.io/kyverno/*`). Audit-only, no admission impact. Wired through
+  a sibling Flux Kustomization `kyverno-policies` with `dependsOn: [kyverno]`
+  so policies apply only after the engine HelmRelease is Ready.
+- Step 8c (follow-up): Promote verified image families from audit to enforce
+  once PolicyReports show consistent `pass` across all matched images and any
+  unsignable exceptions are documented.
 
 ## Compliance Notes
 
