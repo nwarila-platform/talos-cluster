@@ -25,7 +25,9 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: postfinance
-        namespace: flux-system
+        # namespace omitted: defaults to this HelmRelease's namespace
+        # (kube-system), where the HelmRepository now lives. Required for
+        # --no-cross-namespace-refs=true compatibility.
       interval: 1h
   # Inline values mirror addons/kubelet-csr-approver/values.yaml. Keeping
   # them inline (vs valuesFrom: ConfigMap) trades one file for explicitness

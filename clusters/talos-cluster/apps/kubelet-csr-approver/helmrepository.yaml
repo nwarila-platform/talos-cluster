@@ -5,7 +5,11 @@ apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: postfinance
-  namespace: flux-system
+  # Live with the HelmRelease in kube-system rather than flux-system so the
+  # cross-namespace ref goes away. This is the canonical Flux multi-tenancy
+  # pattern — sources colocate with the consumers that reference them.
+  # Required for --no-cross-namespace-refs=true to be safe to enable.
+  namespace: kube-system
 spec:
   interval: 1h
   url: https://postfinance.github.io/kubelet-csr-approver

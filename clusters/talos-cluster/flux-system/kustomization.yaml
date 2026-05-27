@@ -3,3 +3,24 @@ kind: Kustomization
 resources:
   - gotk-components.yaml
   - gotk-sync.yaml
+# Multi-tenancy hardening per https://fluxcd.io/flux/installation/configuration/multitenancy/
+# Adds `--no-cross-namespace-refs=true` to the 3 controllers that consume
+# sourceRef references (source-controller doesn't reference other resources;
+# it's the producer of GitRepository/HelmRepository artifacts).
+#
+# Effect: a Kustomization or HelmRelease in namespace A can no longer
+# reference a GitRepository/HelmRepository/Bucket in namespace B. Each
+# tenant's sources must live in the tenant's own namespace.
+#
+# Pre-requisite (handled in same PR): the kubelet-csr-approver and
+# metrics-server HelmReleases (in kube-system) previously referenced
+# their HelmRepositories in flux-system. Those HelmRepositories were
+# moved into kube-system so the refs become same-namespace.
+patches:
+  - target:
+      kind: Deployment
+      name: (kustomize-controller|helm-controller|notification-controller)
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --no-cross-namespace-refs=true

@@ -4,7 +4,9 @@ apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: metrics-server
-  namespace: flux-system
+  # Colocated with the HelmRelease in kube-system so the cross-namespace
+  # ref goes away; required for --no-cross-namespace-refs=true compatibility.
+  namespace: kube-system
 spec:
   interval: 1h
   url: https://kubernetes-sigs.github.io/metrics-server/
