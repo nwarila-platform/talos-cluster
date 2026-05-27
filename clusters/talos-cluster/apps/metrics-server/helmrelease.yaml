@@ -27,7 +27,8 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: metrics-server
-        namespace: flux-system
+        # namespace omitted: defaults to this HelmRelease's namespace
+        # (kube-system). Required for --no-cross-namespace-refs=true.
       interval: 1h
   # values: intentionally omitted. metrics-server uses its chart defaults,
   # which validate the kubelet serving cert against the cluster CA.
