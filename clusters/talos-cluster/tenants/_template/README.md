@@ -40,21 +40,26 @@ These are not in the base template because they're workload-specific:
 - **Egress to Longhorn data plane** (for PVC consumers, this is typically
   abstracted by the volume mount and doesn't need an explicit NetworkPolicy).
 
-## How tenants get this applied (future)
+## How tenants get this applied
 
-Step 6 of the platform roadmap (tenant onboarding GitHub Action) will:
-1. Detect new `deploy-*` repos in the `nwarila-platform` org
-2. Copy this template directory into `clusters/talos-cluster/tenants/<repo>/`
-3. Substitute `__TENANT_NAMESPACE__` → `deploy-<repo-name>`
-4. Open a PR to add the per-tenant directory to Flux's tracked sources
-5. After merge, Flux applies the template, creating the hardened envelope
+Run the **Tenant Onboarding** GitHub Actions workflow with:
 
-Until that automation is in place, tenants are onboarded manually by:
-1. `cp -r clusters/talos-cluster/tenants/_template clusters/talos-cluster/tenants/deploy-myapp`
-2. `sed -i 's/__TENANT_NAMESPACE__/deploy-myapp/g' clusters/talos-cluster/tenants/deploy-myapp/*.yaml.tmpl`
-3. `rename .yaml.tmpl .yaml clusters/talos-cluster/tenants/deploy-myapp/*.yaml.tmpl` (or equivalent)
-4. Add a `kustomization.yaml` listing the resources
-5. Add the new tenant directory to `clusters/talos-cluster/apps/` (or wherever Flux tracks it)
+- `repository`: the tenant repository name, which must match `deploy-*`
+  (for example `deploy-myapp`)
+- `include_gateway_ingress`: whether to include the Gateway API ingress allow
+  NetworkPolicy
+
+The workflow:
+
+1. Copies this template into `clusters/talos-cluster/tenants/<repository>/`
+2. Substitutes `__TENANT_NAMESPACE__` with the repository name
+3. Writes a per-tenant `kustomization.yaml`
+4. Adds the tenant directory to `clusters/talos-cluster/tenants/kustomization.yaml`
+5. Adds explicit `.gitignore` allowlist entries for the generated files
+6. Validates `kubectl kustomize clusters/talos-cluster`
+7. Opens a PR
+
+After the PR merges, Flux applies the hardened envelope.
 
 ## Pre-flight checks for tenant workloads
 

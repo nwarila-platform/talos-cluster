@@ -1,12 +1,13 @@
 # Top-level Kustomize index for the talos-cluster reconciliation.
 # Flux's clusters/talos-cluster Kustomization (in flux-system/gotk-sync.yaml)
-# applies this file. It aggregates flux-system (the controllers themselves)
-# and apps/ (every workload managed via Flux).
+# applies this file. It aggregates flux-system (the controllers themselves),
+# apps/ (cluster services), and tenants/ (per-tenant security envelopes).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - flux-system
   - apps
+  - tenants
 # Strategic merge patches that apply AFTER both sub-trees are built. Used
 # for cross-tree edits (e.g., labeling resources declared in one sub-tree
 # from policy that lives in another). Per-resource hardening that doesn't

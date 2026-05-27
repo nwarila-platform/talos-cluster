@@ -1,0 +1,107 @@
+# =============================================================================
+# Tenant Onboarding - open a PR for a hardened deploy-* tenant envelope
+# =============================================================================
+name: Tenant Onboarding
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Tenant repository name, e.g. deploy-myapp"
+        required: true
+        type: string
+      include_gateway_ingress:
+        description: "Include Gateway API ingress NetworkPolicy"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: tenant-onboarding-${{ inputs.repository }}
+  cancel-in-progress: false
+
+jobs:
+  open-pr:
+    name: Open tenant PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Generate tenant envelope
+        env:
+          TENANT: ${{ inputs.repository }}
+          INCLUDE_GATEWAY: ${{ inputs.include_gateway_ingress }}
+        run: bash scripts/onboard-tenant.sh "${TENANT}" "${INCLUDE_GATEWAY}"
+
+      - name: Install kubectl
+        run: |
+          set -euo pipefail
+          KUBERNETES_VERSION=$(grep '^KUBERNETES_VERSION=' cluster/config.env | cut -d'"' -f2)
+          [ -n "${KUBERNETES_VERSION}" ] || { echo "KUBERNETES_VERSION missing from cluster/config.env"; exit 1; }
+          url="https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
+          sums="${url}.sha256"
+          curl --proto '=https' --tlsv1.2 -fsSL -o kubectl "${url}"
+          curl --proto '=https' --tlsv1.2 -fsSL -o kubectl.sha256 "${sums}"
+          expected="$(cat kubectl.sha256)"
+          actual="$(sha256sum kubectl | awk '{print $1}')"
+          [ "${expected}" = "${actual}" ] || { echo "kubectl checksum mismatch: expected=${expected} actual=${actual}"; exit 1; }
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client=true
+
+      - name: Validate rendered Kustomize tree
+        run: kubectl kustomize clusters/talos-cluster >/dev/null
+
+      - name: Commit and open PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TENANT: ${{ inputs.repository }}
+          INCLUDE_GATEWAY: ${{ inputs.include_gateway_ingress }}
+        run: |
+          set -euo pipefail
+          git switch -c "tenant-onboarding/${TENANT}-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .gitignore clusters/talos-cluster/kustomization.yaml clusters/talos-cluster/tenants
+
+          if git diff --cached --quiet; then
+            echo "No tenant onboarding changes were generated." >&2
+            exit 1
+          fi
+
+          git commit -m "feat(tenant): onboard ${TENANT}" \
+            -m "Create the hardened namespace envelope for ${TENANT} from clusters/talos-cluster/tenants/_template. Include Gateway ingress policy: ${INCLUDE_GATEWAY}." \
+            -m "Verification: kubectl kustomize clusters/talos-cluster."
+          git push --set-upstream origin "tenant-onboarding/${TENANT}-${GITHUB_RUN_ID}"
+
+          cat > pr-body.md <<EOF
+          ## Summary
+
+          Creates the hardened tenant namespace envelope for \`${TENANT}\`.
+
+          ## Generated resources
+
+          - Namespace with Pod Security Standards \`restricted\` labels
+          - Default-deny ingress/egress NetworkPolicy
+          - DNS egress NetworkPolicy
+          - Gateway ingress NetworkPolicy included: \`${INCLUDE_GATEWAY}\`
+
+          ## Verification
+
+          - \`kubectl kustomize clusters/talos-cluster\`
+
+          After merge, Flux will reconcile the tenant envelope through
+          \`clusters/talos-cluster/tenants/kustomization.yaml\`.
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "tenant-onboarding/${TENANT}-${GITHUB_RUN_ID}" \
+            --title "feat(tenant): onboard ${TENANT}" \
+            --body-file pr-body.md

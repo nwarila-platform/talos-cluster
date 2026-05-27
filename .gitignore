@@ -53,6 +53,7 @@
 !/clusters/talos-cluster/apps/namespace-hardening/kube-public.yaml
 !/clusters/talos-cluster/apps/namespace-hardening/kustomization.yaml
 !/clusters/talos-cluster/tenants/
+!/clusters/talos-cluster/tenants/kustomization.yaml
 !/clusters/talos-cluster/tenants/_template/
 !/clusters/talos-cluster/tenants/_template/README.md
 !/clusters/talos-cluster/tenants/_template/namespace.yaml.tmpl
@@ -69,6 +70,7 @@
 !/.github/workflows/drift.yaml
 !/.github/workflows/etcd-snapshot.yaml
 !/.github/workflows/kubescape.yaml
+!/.github/workflows/onboard-tenant.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/validate.yaml
 
@@ -114,6 +116,7 @@
 !/scripts/kubescape-scan.sh
 !/scripts/kubescape-json-to-sarif.py
 !/scripts/health.sh
+!/scripts/onboard-tenant.sh
 !/scripts/s3-sync.sh
 !/scripts/upgrade.sh
 
