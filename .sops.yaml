@@ -1,0 +1,34 @@
+# =============================================================================
+# SOPS encryption rules for the talos-cluster repository.
+#
+# Applies to: every .yaml / .yml / .json file in the repo.
+# Encrypts:   the `data` and `stringData` fields only (the sensitive parts
+#             of Kubernetes Secrets). Metadata, kind, apiVersion stay
+#             plaintext so Flux can introspect the resource without
+#             decryption.
+#
+# Recipient:  the age public key below. Operators encrypt with this key
+#             (no private key needed for encryption). Flux + age private
+#             key (stored as Secret `sops-age` in `flux-system` namespace)
+#             decrypt at reconcile time.
+#
+# Operator workflow:
+#   1. Author a Secret YAML (with data: or stringData: in plaintext)
+#   2. `sops -e -i path/to/secret.yaml` (encrypts in-place)
+#   3. Commit the encrypted file; PR + merge as usual
+#   4. Flux's kustomize-controller decrypts during reconcile (via the
+#      cluster Secret sops-age)
+#
+# Decryption locally (for editing existing encrypted files):
+#   - export SOPS_AGE_KEY_FILE=.s3/secrets/age.agekey
+#   - `sops path/to/encrypted-secret.yaml` opens the file decrypted in $EDITOR
+#
+# Key rotation: SOPS supports adding multiple recipients to encrypted
+# files. To rotate, add a new public key here, then `sops updatekeys`
+# on each encrypted file, then remove the old key after all files are
+# re-encrypted.
+# =============================================================================
+creation_rules:
+  - path_regex: \.(yaml|yml|json)$
+    encrypted_regex: '^(data|stringData)$'
+    age: age15q49wp6ljn007uqrxvpzyes20tumx4e6xej6ksfvfaehvfmmrd4szfaf66
