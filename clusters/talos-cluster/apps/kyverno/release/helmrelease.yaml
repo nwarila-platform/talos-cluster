@@ -1,0 +1,41 @@
+# HelmRelease - Kyverno policy engine.
+#
+# This installs the policy/admission engine only. Image verification policies
+# are intentionally a follow-up change after the CRDs and controllers are live.
+# See docs/decision-records/repo/0010-adopt-kyverno-policy-engine.md.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kyverno
+  namespace: kyverno
+spec:
+  interval: 10m
+  releaseName: kyverno
+  chart:
+    spec:
+      chart: kyverno
+      version: 3.8.1
+      sourceRef:
+        kind: HelmRepository
+        name: kyverno
+      interval: 1h
+  install:
+    crds: Create
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      remediateLastFailure: false
+    cleanupOnFail: true
+  values:
+    admissionController:
+      replicas: 3
+    backgroundController:
+      replicas: 2
+    cleanupController:
+      replicas: 2
+    reportsController:
+      replicas: 2
+    networkPolicy:
+      enabled: true
+  test:
+    enable: false
