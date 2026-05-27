@@ -1,0 +1,11 @@
+# HelmRepository - official Kyverno chart index.
+# Polled by source-controller and colocated with the HelmRelease so
+# --no-cross-namespace-refs=true remains safe.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: kyverno
+  namespace: kyverno
+spec:
+  interval: 1h
+  url: https://kyverno.github.io/kyverno/

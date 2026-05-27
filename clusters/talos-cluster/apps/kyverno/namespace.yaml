@@ -1,0 +1,16 @@
+# Dedicated namespace for Kyverno's admission and policy controllers.
+#
+# Upstream documents Kyverno as compatible with the restricted Pod Security
+# Standard, so keep the namespace at the same posture used for other
+# non-privileged cluster services.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kyverno
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest

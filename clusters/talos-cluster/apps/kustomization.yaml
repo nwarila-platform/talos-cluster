@@ -6,5 +6,6 @@ kind: Kustomization
 resources:
   - gateway-api
   - kubelet-csr-approver
+  - kyverno
   - metrics-server
   - namespace-hardening
