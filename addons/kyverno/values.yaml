@@ -9,11 +9,17 @@
 # =============================================================================
 admissionController:
   replicas: 3
+  networkPolicy:
+    enabled: true
 backgroundController:
   replicas: 2
+  networkPolicy:
+    enabled: true
 cleanupController:
   replicas: 2
+  networkPolicy:
+    enabled: true
 reportsController:
   replicas: 2
-networkPolicy:
-  enabled: true
+  networkPolicy:
+    enabled: true
