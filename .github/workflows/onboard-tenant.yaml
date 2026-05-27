@@ -13,15 +13,18 @@ on:
       include_gateway_ingress:
         description: "Include Gateway API ingress NetworkPolicy"
         required: true
-        default: true
-        type: boolean
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 permissions:
   contents: write
   pull-requests: write
 
 concurrency:
-  group: tenant-onboarding-${{ inputs.repository }}
+  group: tenant-onboarding-${{ github.event.inputs.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -35,8 +38,8 @@ jobs:
 
       - name: Generate tenant envelope
         env:
-          TENANT: ${{ inputs.repository }}
-          INCLUDE_GATEWAY: ${{ inputs.include_gateway_ingress }}
+          TENANT: ${{ github.event.inputs.repository }}
+          INCLUDE_GATEWAY: ${{ github.event.inputs.include_gateway_ingress }}
         run: bash scripts/onboard-tenant.sh "${TENANT}" "${INCLUDE_GATEWAY}"
 
       - name: Install kubectl
@@ -60,9 +63,9 @@ jobs:
 
       - name: Commit and open PR
         env:
-          GH_TOKEN: ${{ github.token }}
-          TENANT: ${{ inputs.repository }}
-          INCLUDE_GATEWAY: ${{ inputs.include_gateway_ingress }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TENANT: ${{ github.event.inputs.repository }}
+          INCLUDE_GATEWAY: ${{ github.event.inputs.include_gateway_ingress }}
         run: |
           set -euo pipefail
           git switch -c "tenant-onboarding/${TENANT}-${GITHUB_RUN_ID}"
