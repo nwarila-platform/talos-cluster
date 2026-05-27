@@ -23,10 +23,6 @@ permissions:
   contents: write
   pull-requests: write
 
-concurrency:
-  group: tenant-onboarding-${{ github.event.inputs.repository }}
-  cancel-in-progress: false
-
 jobs:
   open-pr:
     name: Open tenant PR
