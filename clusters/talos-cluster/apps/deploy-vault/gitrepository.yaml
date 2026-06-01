@@ -3,6 +3,8 @@ kind: GitRepository
 metadata:
   name: deploy-vault
   namespace: deploy-vault
+  labels:
+    nwarila.io/deploy-repo: "true"
 spec:
   interval: 5m
   ref:

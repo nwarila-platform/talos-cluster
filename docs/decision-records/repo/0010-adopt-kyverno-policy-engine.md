@@ -187,10 +187,12 @@ None (current).
 
 - Step 8a: Install Kyverno policy engine via Flux (PR #59, hotfix PR #60).
 - Step 8b: Add audit-mode keyless cosign verification ClusterPolicy covering
-  Flux (`ghcr.io/fluxcd/*`), Cilium (`quay.io/cilium/*`), and Kyverno
-  (`reg.kyverno.io/kyverno/*`). Audit-only, no admission impact. Wired through
-  a sibling Flux Kustomization `kyverno-policies` with `dependsOn: [kyverno]`
-  so policies apply only after the engine HelmRelease is Ready.
+  Flux (`ghcr.io/fluxcd/*`), Cilium (`quay.io/cilium/*`), Kyverno
+  (`reg.kyverno.io/kyverno/*`), and nwarila-platform GHCR images
+  (`ghcr.io/nwarila-platform/*`, using `ghcr-pull` registry credentials for
+  private packages). Audit-only, no admission impact. Wired through a sibling
+  Flux Kustomization `kyverno-policies` with `dependsOn: [kyverno]` so policies
+  apply only after the engine HelmRelease is Ready.
 - Step 8c (follow-up): Promote verified image families from audit to enforce
   once PolicyReports show consistent `pass` across all matched images and any
   unsignable exceptions are documented.

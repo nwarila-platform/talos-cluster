@@ -55,6 +55,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0008](repo/0008-gitops-via-flux.md)                           | GitOps via Flux for Cluster-Level Reconciliation | Accepted | 2026-05-26 | Flux v2.8.8 reconciles `clusters/talos-cluster/` from this repo. SSH deploy-key auth. First migration: `kubelet-csr-approver` HelmRelease. Subsequent cycles migrate metrics-server, ingress-nginx, Longhorn, Cilium. Image Automation is a separate future cycle. |
 | [0009](repo/0009-stig-cis-compliance-baseline.md)              | STIG / CIS Benchmark as the Compliance Baseline | Accepted | 2026-05-26 | DISA Kubernetes STIG (primary) + CIS Kubernetes Benchmark v1.10.x (secondary). STIG wins conflicts. Every future PR carries STIG/CIS impact assessment. kube-bench deployment is the next follow-up cycle. Accepted deviations tracked inline. |
 | [0010](repo/0010-adopt-kyverno-policy-engine.md)               | Adopt Kyverno as the Cluster Policy Engine      | Accepted | 2026-05-27 | Install Kyverno via Flux as the policy engine for image signature verification, SBOM/attestation checks, and future tenant guardrails. |
+| [0011](repo/0011-auto-discover-deploy-repositories.md)         | Auto-Discover Deploy Repositories by Convention | Accepted | 2026-06-01 | Generate tenant-scoped Flux wiring for `deploy-*` repositories that expose the standard Talos overlay, so app repos own future workload/image changes. |
 
 ## Status Lifecycle
 

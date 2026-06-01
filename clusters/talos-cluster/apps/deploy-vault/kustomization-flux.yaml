@@ -3,17 +3,16 @@ kind: Kustomization
 metadata:
   name: deploy-vault
   namespace: deploy-vault
+  labels:
+    nwarila.io/deploy-repo: "true"
 spec:
   interval: 10m
   path: ./kubernetes/overlays/talos-cluster
   prune: true
   wait: true
   timeout: 10m
+  targetNamespace: deploy-vault
+  serviceAccountName: deploy-reconciler
   sourceRef:
     kind: GitRepository
     name: deploy-vault
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: StatefulSet
-      name: vault
-      namespace: deploy-vault
