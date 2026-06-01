@@ -101,9 +101,6 @@ spec:
           failureAction: Audit
           mutateDigest: false
           required: true
-          imageRegistryCredentials:
-            secrets:
-              - ghcr-pull
           attestors:
             - entries:
                 - keyless:
