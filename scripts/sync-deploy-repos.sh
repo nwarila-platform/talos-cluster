@@ -185,6 +185,10 @@ rules:
       - ingresses
       - networkpolicies
     verbs: ["*"]
+  - apiGroups: ["cilium.io"]
+    resources:
+      - ciliumnetworkpolicies
+    verbs: ["*"]
   - apiGroups: ["policy"]
     resources:
       - poddisruptionbudgets
