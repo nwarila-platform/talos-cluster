@@ -92,24 +92,23 @@ jobs:
             echo "PASS: All CP node patches declare the VIP"
           fi
 
-          # controlplane.yaml carries two certSANs lists that BOTH must
+          # If controlplane.yaml declares certSANs explicitly, both lists must
           # include the VIP:
           #   - machine.certSANs           (Talos API server cert; talosctl)
           #   - cluster.apiServer.certSANs (kube-apiserver cert; kubectl,
           #                                 kubelet, in-cluster clients)
-          # A single grep match passes when only one list contains the VIP,
-          # leaving the other silently broken until production TLS fails.
-          # Require both items by counting matches: the file has exactly
-          # these two certSANs lists, so a count < 2 means at least one
-          # list dropped the VIP. (A deliberately duplicated VIP inside one
-          # list could mask a missing entry in the other, but such a diff
-          # would be visible in PR review.)
-          sans_with_vip=$(grep -Ec "^[[:space:]]+-[[:space:]]+${VIP_RE}[[:space:]]*\$" cluster/patches/controlplane.yaml || true)
-          if (( sans_with_vip < 2 )); then
-            echo "FAIL: controlplane.yaml expects VIP ${CLUSTER_VIP} in BOTH machine.certSANs and cluster.apiServer.certSANs (found ${sans_with_vip})"
-            FAIL=1
+          # If certSANs are intentionally omitted, Talos defaults carry the
+          # endpoint SANs; do not require explicit SANs just to satisfy CI.
+          if grep -q "certSANs:" cluster/patches/controlplane.yaml; then
+            sans_with_vip=$(grep -Ec "^[[:space:]]+-[[:space:]]+${VIP_RE}[[:space:]]*\$" cluster/patches/controlplane.yaml || true)
+            if (( sans_with_vip < 2 )); then
+              echo "FAIL: explicit controlplane.yaml certSANs must include VIP ${CLUSTER_VIP} in BOTH machine.certSANs and cluster.apiServer.certSANs (found ${sans_with_vip})"
+              FAIL=1
+            else
+              echo "PASS: explicit controlplane.yaml certSANs lists contain the VIP (${sans_with_vip} occurrences)"
+            fi
           else
-            echo "PASS: controlplane.yaml certSANs lists contain the VIP (${sans_with_vip} occurrences)"
+            echo "PASS: controlplane.yaml omits certSANs; Talos defaults cover the configured endpoint"
           fi
 
           # 3. Version pinning check
