@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: deploy-vault
+  namespace: deploy-vault
+spec:
+  interval: 5m
+  ref:
+    branch: main
+  url: https://github.com/nwarila-platform/deploy-vault.git

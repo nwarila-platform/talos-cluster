@@ -28,6 +28,10 @@
 !/clusters/talos-cluster/flux-system/kustomization.yaml
 !/clusters/talos-cluster/apps/
 !/clusters/talos-cluster/apps/kustomization.yaml
+!/clusters/talos-cluster/apps/deploy-vault/
+!/clusters/talos-cluster/apps/deploy-vault/gitrepository.yaml
+!/clusters/talos-cluster/apps/deploy-vault/kustomization-flux.yaml
+!/clusters/talos-cluster/apps/deploy-vault/kustomization.yaml
 !/clusters/talos-cluster/apps/gateway-api/
 !/clusters/talos-cluster/apps/gateway-api/gatewayclass.yaml
 !/clusters/talos-cluster/apps/gateway-api/kustomization.yaml
@@ -145,3 +149,10 @@
 !/docs/decision-records/repo/0010-adopt-kyverno-policy-engine.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep
+
+# -- Tenant: deploy-vault --------------------------------------------------------
+!/clusters/talos-cluster/tenants/deploy-vault/
+!/clusters/talos-cluster/tenants/deploy-vault/kustomization.yaml
+!/clusters/talos-cluster/tenants/deploy-vault/namespace.yaml
+!/clusters/talos-cluster/tenants/deploy-vault/networkpolicy-default-deny.yaml
+!/clusters/talos-cluster/tenants/deploy-vault/networkpolicy-allow-dns.yaml

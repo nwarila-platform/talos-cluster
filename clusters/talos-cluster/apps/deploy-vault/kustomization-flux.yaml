@@ -1,0 +1,19 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: deploy-vault
+  namespace: deploy-vault
+spec:
+  interval: 10m
+  path: ./kubernetes/overlays/talos-cluster
+  prune: true
+  wait: true
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: deploy-vault
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: vault
+      namespace: deploy-vault
