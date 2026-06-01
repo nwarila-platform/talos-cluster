@@ -1,0 +1,29 @@
+# Tenant namespace template — substitute deploy-vault with the
+# actual `deploy-<name>` value before applying.
+#
+# Pod Security Standards: restricted enforce/audit/warn.
+# - allowPrivilegeEscalation: false (required)
+# - runAsNonRoot: true (required)
+# - capabilities.drop: [ALL] (required)
+# - seccompProfile.type: RuntimeDefault or Localhost (required)
+# - no hostNetwork/hostPID/hostIPC, no hostPath
+#
+# Tenants who need elevated privileges should request a per-namespace
+# exemption via PR to ADR-0009's accepted-deviations table, not via
+# pod-spec workarounds.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: deploy-vault
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    # Marks this namespace as a tenant — distinguishes from system
+    # namespaces (kube-system, longhorn-system, flux-system, etc.).
+    # Future cluster-wide policies (e.g., CiliumClusterwideNetworkPolicy)
+    # can use this label to target tenants only.
+    nwarila.io/tenant: "true"

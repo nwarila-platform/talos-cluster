@@ -127,7 +127,7 @@ The following items are deliberately not in compliance with the strict STIG/CIS 
 | Public DNS / NTP fallbacks | CIS 5.7.x indirect | not applied (commit `44fd296`) | Gateway provides DNS+NTP without incident for 51 days. Adding public fallbacks adds egress logging and lookup latency. Operator-controlled gateway is preferable. | commit `44fd296` | If gateway becomes unreliable |
 | `rotate-server-certificates` was previously deferred | CIS 4.2.12, STIG V-242410 | **enabled** (commit `6ba7586`) | Resolved — kubelet now creates CSRs auto-approved by `postfinance/kubelet-csr-approver` ([ADR-0005](0005-kubelet-csr-approver.md)). | commits `6c9a594`, `6ba7586` | Resolved |
 | Default-deny `NetworkPolicy` | CIS 5.3.2, STIG V-242425 | not configured | Not addressed yet. Requires per-workload egress audit; planned for a future cycle. | (none yet) | 2026-08-26 |
-| Image signature verification (cosign / sigstore) | STIG V-242414 | policy engine in progress; image verification policy pending | ADR-0010 adopts Kyverno as the policy engine. Signature/SBOM verification remains pending until audit-mode policies and attestor rules land. | [ADR-0010](0010-adopt-kyverno-policy-engine.md) | 2026-08-26 |
+| Image signature verification (cosign / sigstore) | STIG V-242414 | audit-mode policy landing; enforcement pending | ADR-0010 adopts Kyverno as the policy engine and Step 8b lands audit-mode keyless cosign verification for Flux, Cilium, Kyverno, and nwarila-platform GHCR images. Enforcement and SBOM/attestation policy promotion remain pending until PolicyReports prove the baseline. | [ADR-0010](0010-adopt-kyverno-policy-engine.md) | Step 8c |
 | Pod-level `securityContext` audit | CIS 5.2.x | partial (PodSecurity admission enforces `baseline`) | Workloads inherit chart defaults. Per-addon audit happens during each migration cycle to Flux. The kubelet-csr-approver and metrics-server HelmReleases use chart-default `securityContext`s which are aligned with the `restricted` PSS profile already. | per-addon HelmReleases | Ongoing per addon |
 
 ## Consequences
@@ -176,7 +176,7 @@ The PR that introduces this ADR introduces only the policy. Implementing PRs (in
 2. **Per-failing-finding remediation cycles** — each `Open` finding on the Security tab becomes a narrow PR with the STIG/CIS reference cited, or a `Dismiss` action with a matching deviation row in this ADR's table.
 3. **ingress-nginx STIG hardening cycle** — first workload-layer remediation, per operator's prior request.
 4. **Default-deny NetworkPolicy cycle** — addresses the largest single CIS gap (5.3.2).
-5. **Image signature verification cycle** — Step 8a adopts Kyverno as the policy engine ([ADR-0010](0010-adopt-kyverno-policy-engine.md)); follow-up PRs add audit-mode then enforce-mode image signature/SBOM policies for STIG V-242414.
+5. **Image signature verification cycle** — Step 8a adopts Kyverno as the policy engine ([ADR-0010](0010-adopt-kyverno-policy-engine.md)); Step 8b lands audit-mode keyless cosign verification; follow-up PRs promote proven image families to enforce mode and add SBOM/attestation policies for STIG V-242414.
 
 ## Related ADRs
 

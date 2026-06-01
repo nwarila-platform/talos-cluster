@@ -1,0 +1,94 @@
+# =============================================================================
+# Sync Deploy Repositories
+#
+# Discovers nwarila-platform/deploy-* repositories that expose the standard
+# Talos overlay and opens a PR with tenant-scoped Flux wiring.
+# =============================================================================
+name: Sync Deploy Repositories
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync deploy-* repos
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.DEPLOY_REPO_DISCOVERY_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Generate deploy repo manifests
+        run: bash scripts/sync-deploy-repos.sh
+
+      - name: Install kubectl
+        run: |
+          set -euo pipefail
+          KUBERNETES_VERSION=$(grep '^KUBERNETES_VERSION=' cluster/config.env | cut -d'"' -f2)
+          [ -n "${KUBERNETES_VERSION}" ] || { echo "KUBERNETES_VERSION missing from cluster/config.env"; exit 1; }
+          url="https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
+          sums="${url}.sha256"
+          curl --proto '=https' --tlsv1.2 -fsSL -o kubectl "${url}"
+          curl --proto '=https' --tlsv1.2 -fsSL -o kubectl.sha256 "${sums}"
+          expected="$(cat kubectl.sha256)"
+          actual="$(sha256sum kubectl | awk '{print $1}')"
+          [ "${expected}" = "${actual}" ] || { echo "kubectl checksum mismatch: expected=${expected} actual=${actual}"; exit 1; }
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client=true
+
+      - name: Validate rendered Kustomize tree
+        run: kubectl kustomize clusters/talos-cluster >/dev/null
+
+      - name: Open generated PR
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No deploy repository changes detected."
+            exit 0
+          fi
+
+          branch="deploy-repo-sync/${GITHUB_RUN_ID}"
+          git switch -c "${branch}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .gitignore clusters/talos-cluster/apps clusters/talos-cluster/tenants
+          git commit -m "chore(deploy-repos): sync deploy repository wiring" \
+            -m "Regenerate tenant-scoped Flux wiring for deploy-* repositories that expose kubernetes/overlays/talos-cluster/kustomization.yaml." \
+            -m "Verification: kubectl kustomize clusters/talos-cluster."
+          git push --set-upstream origin "${branch}"
+
+          cat > pr-body.md <<EOF
+          ## Summary
+
+          Regenerates tenant-scoped Flux wiring for deploy repositories matching
+          the \`deploy-*\` contract.
+
+          ## Contract
+
+          - repository is under \`nwarila-platform\`
+          - repository name matches \`deploy-*\`
+          - repository exposes \`kubernetes/overlays/talos-cluster/kustomization.yaml\`
+
+          ## Verification
+
+          - \`kubectl kustomize clusters/talos-cluster\`
+
+          After merge, Flux reconciles the generated GitRepository and
+          Kustomization resources. Future workload/image changes happen in each
+          \`deploy-*\` repository.
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "${branch}" \
+            --title "chore(deploy-repos): sync deploy repository wiring" \
+            --body-file pr-body.md
