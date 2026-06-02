@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: vault-ra-cert
+    namespace: deploy-vault
+    labels:
+        app.kubernetes.io/name: vault
+        app.kubernetes.io/component: aws-credentials
+type: Opaque
+stringData:
+    tls.crt: ENC[AES256_GCM,data:wztfxoKVd10CfV2xhTrGAKU2nlgNcRymK5+E5XmlpgrAdNJmNb0clspQpllIFNXuVNDh+xh7XPkMN/nmbped7jQIn4sz3IAUT/0KmNsC4z8RFvC3eSG1eOkFI2yTbC2ck2RNGzevHmRx2YTA7lk9nF8lEgE6Lb7RVufpy4hRZ/QFkvCzD1K47q4M1EzGm6FhmB79f38UV3nB7tx2txHlC+23rR2hSaK0i1cIfm32vHDRfa82g2NcCXyRTRLq40jTZZRrESPHVw8BsckjDEKb9fflbX5FgJePftKS5G8fzC3vLOJXwhrXD3leI5uWgVC86mN2UHA8Ssc7c6ZPQsDCe+5kBQ6XilvF+5uTW8cZQhi8YrGL95zZG2HBjslLqZsd3ieUus56xOkLGn3H+i4XOE7EXKvv5rMYDKshGX3igWqqUjRJVac9JNg1JfoQp6DiHOzANcZEYOhJHkQnhol7dhnqoaOIcx3HkIhfZz5mD2uuPHTC6rsArYzj4Rs0bxoHFbGhh+vTLKhNk54NGuHFBrGiIZa2VmjZKCVPOPUjKO5mdEvQRDtYcuM+VbsFT1vqsRYjeEeJH+Z53cJziD0ET2emSt1UbwLDeuasmZFaE2TSCSowsVCrXZPlZw5oP9YIVPg/Vy+94l78wQsuvOH1c2E5u4eJ6qxs7lF9CskSkI0AGuRl3AeK0DEjSM+4JpH4dDT+EyC8dxr3PxuIX9o5XH1goyAas/Rwx+1byaU0YEL2XdiCigwsLQhUQHD+YbGoVsm75WRQYUF5qWeSrY8Sz6RNm07Me097jjwW7f3fTSknlJF0HtK0cJoiuqt0JXsiJ0ssBChm/8PgOaUDzmYH5INatlWETBKs3URLtwzcWqsM6MxMpKHNElPPOJBvRv9+8FMey7diC9oPmtwXb9r+llgC34FQGThcDyOo+lb5CNW2BQok3TDtMldrMnZKDQiVvGYOpzRg2frQNnz5iNs1VcGale3oaQtpqokLqLVHeZ1IcxGC3v2g6lR9/PPbDlrsiQ==,iv:/EMpvDWLdqomM33NOYzykKDaPvVRRkaQZutT5gqpxgQ=,tag:+szTKHt8lLJbdNLIpAnKPw==,type:str]
+    tls.key: ENC[AES256_GCM,data:Kx731osFise9NN40dc16pyTziJTzjErJYzcupsmKUp1skR4fOCFljwq84ZpeLXxfvHgLfoCU4qFxvea8u+ZMdtw54xP1qS522pFQ6S34jO3cl209sqAee1WWTyfjjzcl0F5uqF41RUY7zQubvi9fH0ufmvehEkMzzi8lujnEQPslU39D/IQniJBAitTyWXONp1pGumZEHeuxT07EGc/59bNb3RdR5vMnR/Z7Otq8aWM50g9SorI18c9+SHMxsWcKzCatZKYSqdoZgtTjFmGSHbzpAqF1P9k0Xbj3mogpzh8NyqddjF591KI4QoUK0a6TAA==,iv:eEwCQjpWZCtlrywy/nFEWtCSTKsu8cKQ8ltQiwyiF3s=,tag:eiOSKr4rRguXdEHM6sEzzg==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBaWm1wZzBQaWw5enNaaThs
+            WnA1Q1BYWjByNVo5YTNJdzJTTGhUYnZWZmlRClZ1UHlhRFNqTHlubWRaazJsekJJ
+            d0xzLzhKRUt0V1U2L01mVG5YN0Y2TzAKLS0tIE9YQXVtL3c4ZkcwU2xpWkRqSFZJ
+            SnVWak5HUENQRkRqcjhaTWYrMUgwQlEKWNvhcAqYVV0QCmJHi1e+vOMwOYKQnSfN
+            HP1zqNTug3uLCcv06VIgj/ETOJCzL+1qPTePWIgx2++h1tnbL9SY5g==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age15q49wp6ljn007uqrxvpzyes20tumx4e6xej6ksfvfaehvfmmrd4szfaf66
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-02T08:59:48Z"
+    mac: ENC[AES256_GCM,data:galIdidqmfm3mVQcgcmU3vXmGkstw2FwfpPGx/q8IenUgs5FKeRDJ1ekft1jABuB4X37Q6vkO/GL4upgpyVSi2gLzAAow+kHxp0UJS7b67tpaSGBv5YAaZOjx4o5cQBKUhJwO03QzvDYMJZIyyKNN6QK0l4X0mQiRA+2yBi3kLs=,iv:Ok5TGqlxsvoi2oa8/m1zXLgjXjUxbWGvDiabPfKBXws=,tag:a59Zos2ujCn65qHBBx6kaA==,type:str]
+    version: 3.13.1

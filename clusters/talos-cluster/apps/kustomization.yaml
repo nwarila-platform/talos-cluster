@@ -9,3 +9,4 @@ resources:
   - kyverno
   - metrics-server
   - namespace-hardening
+  - vault-aws-access
