@@ -30,7 +30,7 @@ ADR-0008 replaces that with KMS auto-unseal. KMS auto-unseal needs the Vault
 process to call `kms:Encrypt`/`kms:Decrypt` with AWS credentials, from a cluster
 that has **no AWS-native identity source** (not EKS, no instance profile, no
 IMDS). The only in-AWS options are a static IAM access key or IAM Roles
-Anywhere. The chiseled Vault image is `FROM scratch`, shell-free, read-only
+Anywhere. The UBI9-micro Vault image (`FROM registry.access.redhat.com/ubi9/ubi-micro`, shell removed) is shell-free, read-only
 rootfs, runs as UID 65532, and must not be modified. This ADR records how
 `talos-cluster` delivers credentials and egress for that design without
 weakening any of those constraints, and why the key model is a dedicated CMK.
@@ -38,7 +38,7 @@ weakening any of those constraints, and why the key model is a dedicated CMK.
 ## Decision Drivers
 
 1. **No long-lived AWS access key in Git** (org deny-all + secret hygiene).
-2. **No modification to the frozen, signed chiseled Vault image** (no shell,
+2. **No modification to the frozen, signed UBI9-micro Vault image** (no shell,
    no aws-cli, read-only rootfs, restricted PSS).
 3. **Credentials must auto-refresh** so a long-running unsealed Vault does not
    break when short-lived STS credentials expire (~1h).
@@ -162,7 +162,7 @@ still unseals on restart (serve-mode proactive refresh).
 ### Positive
 - No long-lived AWS key anywhere; the only standing secret is a short-validity,
   CN-scoped certificate. Per-pod-restart human toil (ADR-0003) is eliminated.
-- The chiseled Vault image is unchanged; the AWS dependency is a sidecar.
+- The UBI9-micro Vault image is unchanged; the AWS dependency is a sidecar.
 - Recovery/root material is never in Git (SSM-only, CMK-encrypted, write-once).
 
 ### Negative
