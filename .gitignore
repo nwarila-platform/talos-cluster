@@ -60,6 +60,10 @@
 !/clusters/talos-cluster/apps/namespace-hardening/kube-node-lease.yaml
 !/clusters/talos-cluster/apps/namespace-hardening/kube-public.yaml
 !/clusters/talos-cluster/apps/namespace-hardening/kustomization.yaml
+!/clusters/talos-cluster/apps/vault-aws-access/
+!/clusters/talos-cluster/apps/vault-aws-access/kustomization.yaml
+!/clusters/talos-cluster/apps/vault-aws-access/README.md
+!/clusters/talos-cluster/apps/vault-aws-access/vault-ra-cert.sops.yaml
 !/clusters/talos-cluster/tenants/
 !/clusters/talos-cluster/tenants/kustomization.yaml
 !/clusters/talos-cluster/tenants/deploy-*/
@@ -160,5 +164,6 @@
 !/docs/decision-records/repo/0009-stig-cis-compliance-baseline.md
 !/docs/decision-records/repo/0010-adopt-kyverno-policy-engine.md
 !/docs/decision-records/repo/0011-auto-discover-deploy-repositories.md
+!/docs/decision-records/repo/0012-vault-kms-auto-unseal-credential-delivery.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep
