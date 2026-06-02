@@ -13,7 +13,6 @@
 !/.editorconfig
 !/.pre-commit-config.yaml
 !/AGENTS.md
-!/CLAUDE.md
 !/Makefile
 !/README.md
 !/systems
@@ -167,3 +166,7 @@
 !/docs/decision-records/repo/0012-vault-kms-auto-unseal-credential-delivery.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep
+!/docs/decision-records/org/0005-keep-github-control-planes-namespace-local.md
+!/docs/decision-records/org/.gitkeep
+!/.github/workflows/org-adr-sync.yaml
+!/.github/workflows/org-adr-auto-sync.yaml
