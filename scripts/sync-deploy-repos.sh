@@ -33,7 +33,6 @@ COMMIT_RE="^[0-9a-f]{40}$"
 
 declare -A DEPLOY_REPO_REF_KIND_OVERRIDES=()
 declare -A DEPLOY_REPO_REF_OVERRIDES=()
-declare -A DEPLOY_REPO_RBAC_PROFILE_OVERRIDES=()
 declare -a PLATFORM_CRITICAL_DEPLOY_REPOS=()
 
 if [[ -f "${OVERRIDES_FILE}" ]]; then
@@ -44,7 +43,6 @@ elif [[ -n "${DEPLOY_REPO_OVERRIDES_FILE:-}" ]]; then
     exit 1
 fi
 
-declare -A PLATFORM_CRITICAL_BY_REPO=()
 for repo in "${PLATFORM_CRITICAL_DEPLOY_REPOS[@]}"; do
     if ! [[ "${repo}" =~ ${NAME_RE} ]]; then
         echo "ERROR: platform-critical deploy repo name does not match ${NAME_RE}: ${repo}" >&2
@@ -53,7 +51,6 @@ for repo in "${PLATFORM_CRITICAL_DEPLOY_REPOS[@]}"; do
 
     ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${repo}]:-}"
     ref_value="${DEPLOY_REPO_REF_OVERRIDES[${repo}]:-}"
-    rbac_profile="${DEPLOY_REPO_RBAC_PROFILE_OVERRIDES[${repo}]:-}"
 
     if [[ -z "${ref_kind}" || -z "${ref_value}" ]]; then
         echo "ERROR: platform-critical deploy repo ${repo} must set an immutable ref override" >&2
@@ -67,12 +64,6 @@ for repo in "${PLATFORM_CRITICAL_DEPLOY_REPOS[@]}"; do
         echo "ERROR: platform-critical deploy repo ${repo} commit ref must be a 40-character SHA" >&2
         exit 1
     fi
-    if [[ -z "${rbac_profile}" ]]; then
-        echo "ERROR: platform-critical deploy repo ${repo} must set a tightened RBAC profile" >&2
-        exit 1
-    fi
-
-    PLATFORM_CRITICAL_BY_REPO["${repo}"]="true"
 done
 
 require_file() {
@@ -108,7 +99,6 @@ fi
 declare -A BRANCH_BY_REPO=()
 declare -A REF_KIND_BY_REPO=()
 declare -A REF_VALUE_BY_REPO=()
-declare -A RBAC_PROFILE_BY_REPO=()
 deploy_repos=()
 
 add_repo() {
@@ -116,7 +106,6 @@ add_repo() {
     local branch="${2:-main}"
     local ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${name}]:-branch}"
     local ref_value="${DEPLOY_REPO_REF_OVERRIDES[${name}]:-${branch:-main}}"
-    local rbac_profile="${DEPLOY_REPO_RBAC_PROFILE_OVERRIDES[${name}]:-default}"
 
     if ! [[ "${name}" =~ ${NAME_RE} ]]; then
         echo "ERROR: deploy repo name does not match ${NAME_RE}: ${name}" >&2
@@ -130,15 +119,10 @@ add_repo() {
         echo "ERROR: commit ref for ${name} must be a 40-character SHA: ${ref_value}" >&2
         exit 1
     fi
-    if [[ -n "${PLATFORM_CRITICAL_BY_REPO[${name}]:-}" && "${rbac_profile}" == "default" ]]; then
-        echo "ERROR: platform-critical deploy repo ${name} cannot use default RBAC" >&2
-        exit 1
-    fi
 
     BRANCH_BY_REPO["${name}"]="${branch:-main}"
     REF_KIND_BY_REPO["${name}"]="${ref_kind}"
     REF_VALUE_BY_REPO["${name}"]="${ref_value}"
-    RBAC_PROFILE_BY_REPO["${name}"]="${rbac_profile}"
     deploy_repos+=("${name}")
 }
 
@@ -225,10 +209,9 @@ rules:
       - persistentvolumeclaims
       - pods
       - pods/log
-      - secrets
       - serviceaccounts
       - services
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources:
       - controllerrevisions
@@ -236,85 +219,28 @@ rules:
       - deployments
       - replicasets
       - statefulsets
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
     resources:
       - cronjobs
       - jobs
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources:
       - ingresses
       - networkpolicies
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["cilium.io"]
     resources:
       - ciliumnetworkpolicies
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["policy"]
     resources:
       - poddisruptionbudgets
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["autoscaling"]
     resources:
       - horizontalpodautoscalers
-    verbs: ["*"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources:
-      - roles
-      - rolebindings
-    verbs: ["*"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: deploy-reconciler
-  namespace: ${tenant}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: deploy-reconciler
-subjects:
-  - kind: ServiceAccount
-    name: deploy-reconciler
-    namespace: ${tenant}
-EOF
-}
-
-render_reconciler_rbac_vault_secret_zero() {
-    local tenant="$1"
-    local target="$2"
-
-    cat > "${target}" <<EOF
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: deploy-reconciler
-  namespace: ${tenant}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: deploy-reconciler
-  namespace: ${tenant}
-rules:
-  - apiGroups: [""]
-    resources:
-      - configmaps
-      - serviceaccounts
-      - services
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources:
-      - statefulsets
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["networking.k8s.io"]
-    resources:
-      - networkpolicies
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["cilium.io"]
-    resources:
-      - ciliumnetworkpolicies
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -335,33 +261,20 @@ EOF
 
 render_reconciler_rbac() {
     local tenant="$1"
-    local profile="$2"
-    local target="$3"
+    local target="$2"
 
-    case "${profile}" in
-        default)
-            render_reconciler_rbac_default "${tenant}" "${target}"
-            ;;
-        vault-secret-zero)
-            render_reconciler_rbac_vault_secret_zero "${tenant}" "${target}"
-            ;;
-        *)
-            echo "ERROR: unsupported reconciler RBAC profile for ${tenant}: ${profile}" >&2
-            exit 1
-            ;;
-    esac
+    render_reconciler_rbac_default "${tenant}" "${target}"
 }
 
 render_tenant() {
     local tenant="$1"
-    local rbac_profile="${RBAC_PROFILE_BY_REPO[${tenant}]:-default}"
     local tenant_dir="${TENANTS_DIR}/${tenant}"
 
     mkdir -p "${tenant_dir}"
     render_template "${TENANT_TEMPLATE_DIR}/namespace.yaml.tmpl" "${tenant_dir}/namespace.yaml" "${tenant}"
     render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-default-deny.yaml.tmpl" "${tenant_dir}/networkpolicy-default-deny.yaml" "${tenant}"
     render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-allow-dns.yaml.tmpl" "${tenant_dir}/networkpolicy-allow-dns.yaml" "${tenant}"
-    render_reconciler_rbac "${tenant}" "${rbac_profile}" "${tenant_dir}/flux-reconciler-rbac.yaml"
+    render_reconciler_rbac "${tenant}" "${tenant_dir}/flux-reconciler-rbac.yaml"
 
     cat > "${tenant_dir}/kustomization.yaml" <<EOF
 # Generated by scripts/sync-deploy-repos.sh.
