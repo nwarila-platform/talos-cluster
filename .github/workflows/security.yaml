@@ -12,15 +12,15 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   gitleaks:
     name: Gitleaks Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Install gitleaks
@@ -44,7 +44,9 @@ jobs:
     name: Config Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Audit Talos config patches
         run: |
@@ -134,7 +136,67 @@ jobs:
             echo "PASS: Versions are pinned (semver)"
           fi
 
-          # 4. All nodes have patches
+          # 4. README version truthfulness
+          echo "--- Checking README version truthfulness ---"
+          read_helm_chart_version() {
+            local file="$1"
+            local chart="$2"
+            awk -v chart="${chart}" "
+              \$1 == \"chart:\" && \$2 == chart { found = 1; next }
+              found && \$1 == \"version:\" { print \$2; exit }
+            " "${file}"
+          }
+
+          require_readme_row() {
+            local name="$1"
+            local version="$2"
+            local row="| **${name}** | ${version} |"
+            if ! grep -Fq "${row}" README.md; then
+              echo "FAIL: README.md software table missing '${name}' version '${version}'"
+              FAIL=1
+            else
+              echo "PASS: README.md lists ${name} ${version}"
+            fi
+          }
+
+          require_readme_literal() {
+            local literal="$1"
+            local description="$2"
+            if ! grep -Fq -- "${literal}" README.md; then
+              echo "FAIL: README.md missing ${description}: ${literal}"
+              FAIL=1
+            else
+              echo "PASS: README.md contains ${description}"
+            fi
+          }
+
+          KYVERNO_VERSION="$(read_helm_chart_version clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml kyverno)"
+          METRICS_SERVER_VERSION="$(read_helm_chart_version clusters/talos-cluster/apps/metrics-server/helmrelease.yaml metrics-server)"
+          KUBELET_CSR_APPROVER_VERSION="$(read_helm_chart_version clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml kubelet-csr-approver)"
+          FLUX_VERSION="$(awk '/^# Flux Version:/ { print $4; exit }' clusters/talos-cluster/flux-system/gotk-components.yaml)"
+          GATEWAY_API_VERSION="$(grep -Eo 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+/standard-install\.yaml' clusters/talos-cluster/apps/gateway-api/kustomization.yaml \
+            | head -1 | sed -E 's#releases/download/(v[0-9]+\.[0-9]+\.[0-9]+)/standard-install\.yaml#\1#' || true)"
+
+          for derived in KYVERNO_VERSION METRICS_SERVER_VERSION KUBELET_CSR_APPROVER_VERSION FLUX_VERSION GATEWAY_API_VERSION; do
+            if [[ -z "${!derived}" ]]; then
+              echo "FAIL: Could not derive ${derived} for README version audit"
+              FAIL=1
+            fi
+          done
+
+          require_readme_row "TalosOS" "${TALOS_VERSION}"
+          require_readme_row "Kubernetes" "${KUBERNETES_VERSION}"
+          require_readme_row "Cilium" "${CILIUM_VERSION}"
+          require_readme_row "Longhorn" "${LONGHORN_VERSION}"
+          require_readme_row "Flux" "${FLUX_VERSION}"
+          require_readme_row "Kyverno" "${KYVERNO_VERSION}"
+          require_readme_row "Gateway API CRDs" "${GATEWAY_API_VERSION}"
+          require_readme_row "metrics-server" "${METRICS_SERVER_VERSION}"
+          require_readme_row "postfinance/kubelet-csr-approver" "${KUBELET_CSR_APPROVER_VERSION}"
+          require_readme_literal "--version \"\${CILIUM_VERSION}\"" "config.env-sourced Cilium install version"
+          require_readme_literal "--version \"\${LONGHORN_VERSION}\"" "config.env-sourced Longhorn install version"
+
+          # 5. All nodes have patches
           echo "--- Checking node patch coverage ---"
           for entry in ${CP_NODES} ${WORKER_NODES}; do
             hostname="${entry%%:*}"
@@ -146,7 +208,7 @@ jobs:
             fi
           done
 
-          # 5. Per-node IP consistency between cluster/config.env and the
+          # 6. Per-node IP consistency between cluster/config.env and the
           # patch's machine.network.interfaces[0].addresses entry. apply.sh
           # targets the config.env IP with `talosctl apply-config --nodes`,
           # so if the patch declares a different address, the node reboots

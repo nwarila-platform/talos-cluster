@@ -1,4 +1,4 @@
-﻿name: Org ADR Sync
+name: Org ADR Sync
 
 on:
   pull_request:

@@ -12,7 +12,7 @@ Production TalosOS Kubernetes cluster for the TDNHQ site.
 ## Architecture
 - 3x Control Plane nodes (`cp1`, `cp2`, `cp3` — asset names TDNHQ-TLOMGT01/02/03) with shared VIP at 10.69.112.62
 - 3x Worker nodes (`w1`, `w2`, `w3` — asset names TDNHQ-TLOWRK01/02/03)
-- Cilium CNI (replaces kube-proxy), ingress-nginx, metrics-server, local-path-provisioner
+- Cilium CNI (replaces kube-proxy), Flux GitOps, Gateway API, Kyverno, metrics-server, Longhorn, SOPS/age encrypted Kubernetes secrets
 - All machine configs managed as code via Talos config patches
 - Secrets stored in AWS S3 (locally mirrored in `.s3/`)
 

@@ -22,8 +22,8 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.DEPLOY_REPO_DISCOVERY_TOKEN || github.token }}
     steps:
-      - uses: actions/checkout@v4
-        with:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: # zizmor: ignore[artipacked] keeps GITHUB_TOKEN credentials for git push and gh pr create.
           ref: main
 
       - name: Generate deploy repo manifests

@@ -127,6 +127,7 @@
 !/scripts/agent-loop.sh
 !/scripts/apply.sh
 !/scripts/bootstrap.sh
+!/scripts/check-text-encoding.py
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
 !/scripts/etcd-snapshot.sh

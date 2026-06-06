@@ -1,4 +1,4 @@
-﻿name: Org ADR Auto Sync
+name: Org ADR Auto Sync
 
 on:
   schedule:

@@ -10,6 +10,7 @@ on:
       - "cluster/**"
       - "clusters/**"
       - "addons/**"
+      - "docs/decision-records/**"
       - "scripts/**"
       - ".github/workflows/**"
       - "Makefile"
@@ -22,7 +23,12 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Check tracked text encoding
+        run: python scripts/check-text-encoding.py
 
       - name: Install lint tools
         run: |
@@ -40,7 +46,9 @@ jobs:
     name: Validate Configs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Install talosctl (pinned to cluster TALOS_VERSION)
         run: |
@@ -87,7 +95,9 @@ jobs:
     name: Validate Flux Kustomize
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Install kubectl (pinned to cluster KUBERNETES_VERSION)
         run: |
@@ -112,7 +122,9 @@ jobs:
     name: Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Check for hardcoded secrets in tracked files
         run: |

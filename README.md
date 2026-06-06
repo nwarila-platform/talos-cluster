@@ -6,9 +6,10 @@
 2. [How It Works (The Big Picture)](#how-it-works-the-big-picture)
 3. [Our Specific Cluster](#our-specific-cluster)
 4. [What Software Is Installed](#what-software-is-installed)
-5. [Every File In This Repository Explained](#every-file-in-this-repository-explained)
-6. [What You Need Before Starting](#what-you-need-before-starting)
-7. [Setup From Scratch (Full Walkthrough)](#setup-from-scratch-full-walkthrough)
+5. [Current Architecture](#current-architecture)
+6. [Repository Layout](#repository-layout)
+7. [What You Need Before Starting](#what-you-need-before-starting)
+8. [Setup From Scratch (Full Walkthrough)](#setup-from-scratch-full-walkthrough)
    - [Step 1: Install the Tools](#step-1-install-the-tools)
    - [Step 2: Clone This Repository](#step-2-clone-this-repository)
    - [Step 3: Generate Machine Configs](#step-3-generate-machine-configs)
@@ -18,11 +19,10 @@
    - [Step 7: Bootstrap the Cluster](#step-7-bootstrap-the-cluster)
    - [Step 8: Install Cilium (Networking)](#step-8-install-cilium-networking)
    - [Step 9: Approve Kubelet Certificates](#step-9-approve-kubelet-certificates)
-   - [Step 10: Install Remaining Addons](#step-10-install-remaining-addons)
+   - [Step 10: Reconcile GitOps Addons](#step-10-reconcile-gitops-addons)
    - [Step 11: Verify Everything Works](#step-11-verify-everything-works)
-   - [Step 12: Deploy the Proof of Concept](#step-12-deploy-the-proof-of-concept)
-   - [Step 13: Back Up Your Secrets](#step-13-back-up-your-secrets)
-8. [Day-to-Day Operations](#day-to-day-operations)
+   - [Step 12: Back Up Your Secrets](#step-12-back-up-your-secrets)
+9. [Day-to-Day Operations](#day-to-day-operations)
    - [Checking Cluster Health](#checking-cluster-health)
    - [Changing a Cluster Setting](#changing-a-cluster-setting)
    - [Upgrading Talos to a New Version](#upgrading-talos-to-a-new-version)
@@ -30,12 +30,12 @@
    - [Removing a Worker Node](#removing-a-worker-node)
    - [Recovering Secrets on a New Machine](#recovering-secrets-on-a-new-machine)
    - [Deploying Your Own Application](#deploying-your-own-application)
-9. [CI/CD (Automated Pipelines)](#cicd-automated-pipelines)
-10. [Security](#security)
-11. [Troubleshooting](#troubleshooting)
-12. [Windows / Git Bash Notes](#windows--git-bash-notes)
-13. [Quick Reference (All Commands)](#quick-reference-all-commands)
-14. [Glossary](#glossary)
+10. [CI/CD (Automated Pipelines)](#cicd-automated-pipelines)
+11. [Security](#security)
+12. [Troubleshooting](#troubleshooting)
+13. [Windows / Git Bash Notes](#windows--git-bash-notes)
+14. [Quick Reference (All Commands)](#quick-reference-all-commands)
+15. [Glossary](#glossary)
 
 ---
 
@@ -133,169 +133,60 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 
 | Software | Version | What It Does | Why We Need It |
 |----------|---------|-------------|----------------|
-| **TalosOS** | v1.12.5 | The operating system on each node. Secure, immutable, API-managed. | It's the foundation — every node runs this instead of Ubuntu, CentOS, etc. |
-| **Kubernetes** | v1.35.2 | The container orchestration platform. Manages all running applications. | It's the core — this is what makes the cluster a cluster. |
-| **Cilium** | v1.16.6 | Handles all networking between containers, and replaces the default kube-proxy. | Without a CNI (Container Network Interface), containers on different nodes can't talk to each other. Cilium is the best production choice. |
-| **CoreDNS** | (bundled) | Translates service names to IP addresses inside the cluster. | So containers can find each other by name (e.g., "database") instead of memorizing IP addresses. |
-| **metrics-server** | v0.8.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` to see resource usage, and enables auto-scaling features. |
-| **ingress-nginx** | v1.15.0 | Receives incoming web traffic (HTTP/HTTPS) and routes it to the right application. | Without an ingress controller, there's no way to expose web applications to users. |
-| **local-path-provisioner** | v0.0.30 | Creates storage volumes on the local disk when applications request persistent storage. | Some applications need to save data to disk. This provides the simplest way to do that. |
-| **kubelet-serving-cert-approver** | latest | Automatically approves security certificate requests from nodes. | Without this, you'd have to manually approve certificates every time a node restarts or renews certs. |
+| **TalosOS** | v1.13.2 | The operating system on each node. Secure, immutable, API-managed. | It's the foundation: every node runs this instead of Ubuntu, CentOS, etc. |
+| **Kubernetes** | v1.36.0 | The container orchestration platform. Manages all running applications. | It's the core: this is what makes the cluster a cluster. |
+| **Cilium** | 1.19.4 | Handles pod networking, replaces kube-proxy, and provides the Gateway API dataplane. | Without a CNI (Container Network Interface), containers on different nodes cannot talk to each other. |
+| **CoreDNS** | bundled with Kubernetes | Translates service names to IP addresses inside the cluster. | So containers can find each other by name, such as `database`, instead of memorizing IP addresses. |
+| **Flux** | v2.8.8 | Reconciles the Kubernetes manifests under `clusters/talos-cluster/`. | Keeps Git as the operational source of truth after bootstrap. |
+| **Kyverno** | 3.8.1 | Provides Kubernetes admission policy and audit-mode image signature verification. | Gives the cluster a policy engine without requiring ad hoc manual admission checks. |
+| **Gateway API CRDs** | v1.4.1 | Defines the Kubernetes Gateway API resources used with Cilium. | Uses the upstream Gateway API model for application routing. |
+| **metrics-server** | 3.13.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` and autoscaling signals. |
+| **Longhorn** | 1.11.2 | Provides replicated block storage and the default `StorageClass`. | Applications that need persistent volumes get storage backed by the Talos `longhorn` user volume. |
+| **postfinance/kubelet-csr-approver** | 1.2.14 | Automatically approves kubelet serving certificate requests that match this cluster's node identity rules. | Allows metrics-server to validate kubelet TLS against the cluster CA without manual certificate approval loops. |
 
 ---
 
-## Every File In This Repository Explained
+## Current Architecture
 
-```
-TDNHQ-TALCL01/
-│
-├── cluster/                          # CLUSTER CONFIGURATION
-│   │
-│   ├── config.env                    # The SINGLE SOURCE OF TRUTH for all settings.
-│   │                                 # Contains version numbers, IP addresses, node
-│   │                                 # definitions, and S3 settings. If you need to
-│   │                                 # change a version or add a node, this is where
-│   │                                 # you do it.
-│   │
-│   └── patches/                      # Configuration patches for Talos nodes.
-│       │                             # These are NOT full configs — they are small
-│       │                             # files that customize the base config.
-│       │
-│       ├── common.yaml               # Settings applied to EVERY node (all 6).
-│       │                             # Contains: DNS servers, NTP time servers,
-│       │                             # kernel settings, kubelet settings.
-│       │
-│       ├── controlplane.yaml         # Settings applied to ONLY the 3 control plane
-│       │                             # nodes. Contains: Cilium CNI config, API server
-│       │                             # certificate SANs, PodSecurity policy, etcd
-│       │                             # metrics, scheduler/controller-manager settings.
-│       │
-│       ├── worker.yaml               # Settings applied to ONLY the 3 worker nodes.
-│       │                             # Contains: kubelet node IP subnet filter.
-│       │
-│       ├── cp1.yaml                  # Settings for THIS SPECIFIC NODE ONLY.
-│       ├── cp2.yaml                  # Each file contains: the install disk path,
-│       ├── cp3.yaml                  # the node's static IP address, default route,
-│       ├── w1.yaml                   # and (for CP nodes) the VIP address.
-│       ├── w2.yaml                   # File basename = the node's Talos hostname.
-│       └── w3.yaml
-│
-├── addons/                           # CLUSTER ADD-ON CONFIGURATIONS
-│   │
-│   ├── cilium/
-│   │   └── values.yaml              # Helm values for Cilium. Contains settings
-│   │                                 # specific to running Cilium on TalosOS (cgroup
-│   │                                 # paths, capabilities, KubePrism proxy config).
-│   │
-│   ├── metrics-server/
-│   │   └── values.yaml              # Helm values for metrics-server. Enables
-│   │                                 # insecure TLS to kubelet (required on Talos).
-│   │
-│   ├── ingress-nginx/
-│   │   └── values.yaml              # Helm values for ingress-nginx. Configures it
-│   │                                 # as a DaemonSet using host networking (required
-│   │                                 # for bare metal — no cloud load balancer).
-│   │
-│   └── poc/                          # PROOF OF CONCEPT deployment
-│       ├── namespace.yaml            # Creates the "poc" namespace with security labels.
-│       ├── deployment.yaml           # Deploys 2 nginx containers serving a status page.
-│       └── service.yaml              # Creates a Service and Ingress so the page is
-│                                     # accessible via HTTP on the worker node IPs.
-│
-├── scripts/                          # AUTOMATION SCRIPTS (called by the Makefile)
-│   │
-│   ├── generate.sh                   # Generates machine configs. Creates secrets on
-│   │                                 # first run. Combines base config + patches into
-│   │                                 # a complete config file for each node.
-│   │
-│   ├── apply.sh                      # Pushes machine configs to the Talos nodes.
-│   │                                 # Supports targeting specific nodes by hostname.
-│   │                                 # Use --insecure for first-time setup.
-│   │
-│   ├── bootstrap.sh                  # Initializes the cluster (runs ONCE EVER).
-│   │                                 # Starts etcd, waits for health, gets kubeconfig.
-│   │
-│   ├── upgrade.sh                    # Upgrades Talos on nodes one at a time.
-│   │                                 # Safe order: workers first, then CP, bootstrap last.
-│   │
-│   ├── health.sh                     # Runs a comprehensive health check on the cluster.
-│   │                                 # Checks Talos services, node versions, K8s status.
-│   │
-│   └── s3-sync.sh                    # Syncs secrets between the local .s3/ folder
-│                                     # and the AWS S3 bucket. Supports push and pull.
-│
-├── .github/                          # CI/CD (GitHub Actions)
-│   │
-│   ├── workflows/
-│   │   ├── validate.yaml             # Runs on every Pull Request. Lints scripts,
-│   │   │                             # validates Talos configs, scans for leaked secrets.
-│   │   │
-│   │   ├── deploy.yaml               # Manual trigger. Applies configs or upgrades
-│   │   │                             # nodes. Requires "production" environment approval.
-│   │   │                             # REQUIRES a self-hosted runner on your network.
-│   │   │
-│   │   └── security.yaml             # Runs weekly + on PRs. Scans for secrets with
-│   │                                 # gitleaks, audits config patches, checks version pins.
-│   │
-│   └── CODEOWNERS                    # Defines who must review changes to specific files.
-│                                     # All changes to cluster/, scripts/, .github/ require
-│                                     # review from @HellBomb.
-│
-├── .s3/                              # LOCAL SECRETS MIRROR (GITIGNORED - never committed!)
-│   │                                 # This folder is your local copy of the S3 bucket.
-│   │                                 # It contains everything sensitive:
-│   │
-│   ├── secrets/
-│   │   └── secrets.yaml              # Talos secrets bundle (PKI certificates, tokens).
-│   │                                 # This is the MOST IMPORTANT file. If you lose this
-│   │                                 # AND the S3 backup, you must rebuild the cluster.
-│   │
-│   ├── configs/
-│   │   ├── talosconfig               # Admin credential for talking to Talos API.
-│   │   └── kubeconfig                # Admin credential for talking to Kubernetes API.
-│   │
-│   └── generated/                    # Final machine configs (contain embedded secrets).
-│       ├── controlplane/
-│       │   ├── cp1.yaml
-│       │   ├── cp2.yaml
-│       │   └── cp3.yaml
-│       └── worker/
-│           ├── w1.yaml
-│           ├── w2.yaml
-│           └── w3.yaml
-│
-├── Makefile                          # COMMAND ENTRY POINT. Every operation you perform
-│                                     # goes through this file. Run "make help" to see
-│                                     # all available commands.
-│
-├── .gitignore                        # Tells git which files to NEVER track. The .s3/
-│                                     # folder and any secret files are listed here.
-│
-├── .editorconfig                     # Ensures consistent formatting (tabs vs spaces,
-│                                     # line endings) across all editors.
-│
-├── .pre-commit-config.yaml           # Runs automatic checks before every git commit:
-│                                     # - Scans for leaked secrets (gitleaks)
-│                                     # - Lints shell scripts (shellcheck)
-│                                     # - Checks for private keys, merge conflicts
-│
-├── CLAUDE.md                         # Context file for Claude AI assistant.
-├── README.md                         # This file. You're reading it.
-└── systems                           # Original reference file with node IP assignments.
-```
+This repository has two reconciliation paths:
 
-### What is the `.s3/` Folder?
+- **Talos machine state** is generated from `cluster/config.env` and `cluster/patches/`, then applied with the Makefile and scripts in `scripts/`.
+- **Kubernetes application state** is reconciled by Flux from `clusters/talos-cluster/`. Helm-based addons use `helm.toolkit.fluxcd.io/v2` `HelmRelease` resources, while Kustomize resources cover Gateway API CRDs, namespace hardening, tenant scaffolding, and encrypted secrets.
 
-The `.s3/` folder is a **local mirror** of an AWS S3 bucket. It holds all the sensitive data — encryption keys, certificates, access tokens, and the final generated machine configs (which have secrets embedded in them).
+The current cluster stack is:
 
-**This folder is gitignored** — it is NEVER committed to the repository. If you look at the `.gitignore` file, you'll see `.s3/` listed there.
+- **GitOps:** Flux `v2.8.8` bootstraps from `clusters/talos-cluster/flux-system/` and reconciles app and tenant manifests from this repository.
+- **Networking and ingress:** Cilium `1.19.4` replaces kube-proxy and is the Gateway API dataplane. Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass` live under `clusters/talos-cluster/apps/gateway-api/`.
+- **Policy:** Kyverno `3.8.1` is reconciled by Flux. The current image-signature policy is audit-mode: it records verification failures in policy reports without blocking admission yet.
+- **Storage:** Longhorn `1.11.2` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
+- **Secrets:** SOPS with age encrypts Kubernetes Secret payload fields in git; Flux decrypts them at reconcile time using the in-cluster `sops-age` secret.
+- **Safety net:** GitHub Actions validate configs, deploy through an approved self-hosted path, scan for secrets and compliance issues, detect drift, capture etcd snapshots, and keep organization ADR mirrors synchronized.
 
-The workflow is:
+---
 
-1. You work locally — secrets live in `.s3/` on your machine
-2. When you're done, run `make s3-push` to upload them to AWS S3 (encrypted)
-3. If you're on a new machine, run `make s3-pull` to download them from AWS S3
-4. In CI/CD, the pipeline pulls from S3 before running operations
+## Repository Layout
+
+This is a tracked-layout summary, not a byte-for-byte `git ls-files` dump. Use `git ls-files` when you need the exact file list.
+
+| Path | Purpose |
+|------|---------|
+| `cluster/config.env` | Single source of truth for cluster identity, node inventory, and Talos/Kubernetes/Cilium/Longhorn version pins. |
+| `cluster/patches/` | Talos strategic-merge patches for common, control-plane, worker, firewall, volume, and node-specific machine settings. |
+| `clusters/talos-cluster/flux-system/` | Flux bootstrap manifests and repository sync definition. |
+| `clusters/talos-cluster/apps/` | Flux-reconciled platform apps: deploy repo references, Gateway API, kubelet CSR approver, Kyverno, metrics-server, namespace hardening, and encrypted Vault AWS access material. |
+| `clusters/talos-cluster/tenants/` | Tenant namespace/network-policy definitions plus onboarding templates. |
+| `addons/` | Helm values retained for manually installed or adopted releases: `cilium`, `kubelet-csr-approver`, `kyverno`, `longhorn`, and `metrics-server`. |
+| `docs/` | Compliance notes and ADR mirrors split into org, template, and repo decision records. |
+| `scripts/` | Operator automation used by the Makefile: generate, apply, bootstrap, health, upgrade, S3 sync, drift, snapshot, tenant onboarding, and deploy-repo sync. |
+| `.github/workflows/` | CI, deploy, security, drift, snapshot, compliance, tenant, deploy-repo sync, and org ADR synchronization workflows. |
+| `.sops.yaml` | SOPS/age encryption policy for Kubernetes Secret payload fields. |
+| `.github/CODEOWNERS`, `.github/renovate.json5`, `.pre-commit-config.yaml`, `.editorconfig` | Repository governance, dependency update, local validation, and editor-formatting controls. |
+| `Makefile` | Operator command entry point. Run `make help` to see supported commands. |
+| `systems` | Node inventory cross-reference between Talos hostnames, physical asset names, and IP addresses. |
+
+### Local Secret Mirror
+
+The `.s3/` directory is a local, gitignored mirror of the production S3 secret bucket. It can contain Talos secrets, kubeconfigs, talosconfigs, and generated machine configs, so it must stay out of git. Operators use `make s3-push` and `make s3-pull` to synchronize that local state with the encrypted S3 bucket when needed.
 
 ---
 
@@ -319,7 +210,7 @@ You need 3 command-line tools installed on your computer. Here's exactly what th
 talosctl version --client --short
 ```
 
-You should see output like: `Talos v1.12.5`
+You should see output matching the `TALOS_VERSION` pin in `cluster/config.env`.
 
 ### 2. `kubectl` — Kubernetes CLI
 
@@ -526,12 +417,13 @@ Add the Cilium Helm repository and install:
 
 ```bash
 export KUBECONFIG=.s3/configs/kubeconfig
+source cluster/config.env
 
 helm repo add cilium https://helm.cilium.io/
 helm repo update
 
 helm install cilium cilium/cilium \
-    --version 1.16.6 \
+    --version "${CILIUM_VERSION}" \
     --namespace kube-system \
     -f addons/cilium/values.yaml
 ```
@@ -568,76 +460,37 @@ kubectl get csr --no-headers | grep Pending | awk '{print $1}' | while read csr;
 done
 ```
 
-Then install the auto-approver so you never have to do this manually again:
+Do not install a standalone approver here. Flux reconciles the accepted `postfinance/kubelet-csr-approver` release from `clusters/talos-cluster/apps/kubelet-csr-approver/` in the next step. See [ADR-0005](docs/decision-records/repo/0005-kubelet-csr-approver.md).
+
+### Step 10: Reconcile GitOps Addons
+
+Flux owns the remaining Kubernetes platform addons under `clusters/talos-cluster/apps/`. The committed `HelmRelease` resources install or adopt:
+
+- `postfinance/kubelet-csr-approver` `1.2.14`
+- `metrics-server` `3.13.0`
+- `kyverno` `3.8.1`
+- Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass`
+- namespace hardening and tenant envelopes
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml
+kubectl apply -k clusters/talos-cluster/flux-system
 ```
 
-### Step 10: Install Remaining Addons
-
-Each command below installs one addon. Run them in order.
-
-**Kubelet CSR Approver** (auto-approves kubelet serving-cert CSRs so kubelet's `rotate-server-certificates: true` setting works without manual `kubectl certificate approve`):
+Flux's `Kustomization` points at `./clusters/talos-cluster`, so once the bootstrap Git and SOPS age secrets exist in `flux-system`, Flux reconciles `flux-system/`, `apps/`, and `tenants/` from git.
 
 ```bash
-helm repo add postfinance https://postfinance.github.io/kubelet-csr-approver
-helm repo update
-helm install kubelet-csr-approver postfinance/kubelet-csr-approver \
-    --version 1.2.14 \
-    --namespace kube-system \
-    -f addons/kubelet-csr-approver/values.yaml
+kubectl -n flux-system get gitrepositories,kustomizations
+kubectl -n kube-system get helmreleases.helm.toolkit.fluxcd.io
+kubectl -n kyverno get helmreleases.helm.toolkit.fluxcd.io
+kubectl get gatewayclass
 ```
 
-Verify it landed and the controller acquired the leader lease:
+metrics-server now uses chart defaults and validates kubelet serving certificates against the cluster CA. The previous kubelet TLS bypass workaround is not part of the current values.
+
+**Longhorn storage** is still pinned in `cluster/config.env` as a manual Helm release pending Flux migration. Source the version instead of hardcoding it:
 
 ```bash
-kubectl -n kube-system get pods -l app.kubernetes.io/name=kubelet-csr-approver
-kubectl -n kube-system logs -l app.kubernetes.io/name=kubelet-csr-approver --tail 5
-```
-
-You should see `Successfully acquired lease` and `Starting workers`. See [ADR-0005](docs/decision-records/repo/0005-kubelet-csr-approver.md).
-
-**Metrics Server** (enables `kubectl top` to see CPU/memory usage):
-
-```bash
-helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
-helm repo update
-helm install metrics-server metrics-server/metrics-server \
-    --namespace kube-system \
-    -f addons/metrics-server/values.yaml
-```
-
-**Ingress NGINX** (routes incoming web traffic to your applications):
-
-```bash
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-helm repo update
-
-# Create and label the namespace (required for security policy)
-kubectl create namespace ingress-nginx
-kubectl label namespace ingress-nginx \
-    pod-security.kubernetes.io/enforce=privileged \
-    pod-security.kubernetes.io/audit=privileged \
-    pod-security.kubernetes.io/warn=privileged
-
-helm install ingress-nginx ingress-nginx/ingress-nginx \
-    --namespace ingress-nginx \
-    -f addons/ingress-nginx/values.yaml
-```
-
-**Local Path Provisioner** (provides storage for applications that need to save data):
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
-
-# Make it the default storage class
-kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
-```
-
-**Longhorn** (distributed block storage with replication; provides the cluster's default `StorageClass`):
-
-```bash
+source cluster/config.env
 helm repo add longhorn https://charts.longhorn.io
 helm repo update
 
@@ -652,14 +505,12 @@ kubectl label namespace longhorn-system \
     pod-security.kubernetes.io/warn=privileged
 
 helm install longhorn longhorn/longhorn \
-    --version 1.11.1 \
+    --version "${LONGHORN_VERSION}" \
     --namespace longhorn-system \
     -f addons/longhorn/values.yaml
 ```
 
 The `values.yaml` makes `longhorn` the cluster's default `StorageClass` and sets `defaultDataPath: /var/mnt/longhorn` so Longhorn writes to the Talos `UserVolumeConfig` declared in `cluster/patches/volumes.yaml` (50–240 GiB carved out of every node's system disk). See [ADR-0007](docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md) for the rationale behind each non-default value.
-
-> **Note on the local-path-provisioner step above:** The live cluster does NOT have local-path-provisioner installed; Longhorn is the only StorageClass. The local-path step is a vestige from earlier setup and should be considered optional. Removing it from this runbook is a follow-up.
 
 ### Step 11: Verify Everything Works
 
@@ -685,25 +536,7 @@ Run the full health check:
 make health
 ```
 
-### Step 12: Deploy the Proof of Concept
-
-Deploy a simple web page that confirms the cluster is working:
-
-```bash
-kubectl apply -f addons/poc/
-```
-
-Wait 15 seconds, then test it:
-
-```bash
-curl http://10.69.112.68/
-curl http://10.69.112.69/
-curl http://10.69.112.70/
-```
-
-All worker nodes should return an HTML page containing "OPERATIONAL". You can also open `http://10.69.112.68` in a web browser.
-
-### Step 13: Back Up Your Secrets
+### Step 12: Back Up Your Secrets
 
 Push all secrets to the S3 bucket for safekeeping:
 
@@ -946,13 +779,13 @@ accept the recovered state and back-port to the repo.
 
 > **Note:** Restore from snapshot has not yet been drilled against this
 > cluster. A follow-up cycle will run the drill against a sacrificial cluster
-> and document the result as ADR-0007. Until then, the snapshots are a
+> and document the result in a dedicated recovery-drill record. Until then, the snapshots are a
 > recovery primitive whose viability is **not formally verified**.
 
 ### Deploying Your Own Application
 
-1. Create a YAML file describing your application (a Deployment, Service, and optionally an Ingress).
-2. Apply it:
+1. Create Kubernetes manifests for your application, such as a Deployment, Service, and optionally Gateway API routing.
+2. Prefer committing those manifests under the appropriate GitOps app or tenant path so Flux can reconcile them. For a one-off manual test, apply them directly:
 
    ```bash
    kubectl apply -f my-app.yaml
@@ -964,49 +797,28 @@ accept the recovered state and back-port to the repo.
    kubectl get pods
    ```
 
-For a simple example, look at the files in `addons/poc/`.
+Tenant scaffolding lives under `clusters/talos-cluster/tenants/`; deploy-repository references live under `clusters/talos-cluster/apps/deploy-*`.
 
 ---
 
 ## CI/CD (Automated Pipelines)
 
-Three GitHub Actions workflows are configured:
+Ten GitHub Actions workflows are configured:
 
-### Validate (runs on every Pull Request)
+| Purpose | Workflow file | What it does |
+|---------|---------------|--------------|
+| Validate | `validate.yaml` | Runs PR validation for scripts, YAML, generated Talos configs, and secret hygiene. |
+| Deploy | `deploy.yaml` | Manually applies configs or upgrades through the production environment on a self-hosted runner with cluster reachability. |
+| Security | `security.yaml` | Runs Gitleaks and the config audit on PRs, weekly schedule, and manual dispatch. |
+| Drift | `drift.yaml` | Compares repository-declared Talos state and Kubernetes version pins against the live cluster from a self-hosted runner. |
+| etcd snapshot | `etcd-snapshot.yaml` | Captures daily Talos etcd snapshots and uploads them to S3. |
+| Compliance | `kubescape.yaml` | Runs the pinned Kubescape CIS Kubernetes scan and uploads SARIF to GitHub Code Scanning. |
+| Tenant onboarding | `onboard-tenant.yaml` | Manually scaffolds tenant namespace and network-policy manifests. |
+| Deploy repo sync | `sync-deploy-repos.yaml` | Discovers deployment repositories and refreshes the generated Flux deploy app entries. |
+| Org ADR sync | `org-adr-sync.yaml` | Mirrors organization ADRs into `docs/decision-records/org/` on PRs, schedule, and manual dispatch. |
+| Org ADR auto-sync | `org-adr-auto-sync.yaml` | Scheduled/manual automation for keeping mirrored org ADRs current. |
 
-**Trigger:** Any PR to `main` that changes files in `cluster/`, `scripts/`, or `Makefile`.
-
-**What it does:**
-
-1. **Lints shell scripts** with ShellCheck (catches common scripting mistakes)
-2. **Lints YAML files** with yamllint (catches formatting issues)
-3. **Generates throwaway configs** and validates them with `talosctl validate`
-4. **Scans for leaked secrets** in the code (private keys, tokens, etc.)
-
-### Deploy (manual trigger only)
-
-**Trigger:** You manually click "Run workflow" in the GitHub Actions UI.
-
-**What it does:**
-
-1. Pulls secrets from S3
-2. Generates and validates configs
-3. Applies configs or performs upgrades (your choice)
-4. Runs health checks
-
-**Requirements:**
-
-- A **self-hosted GitHub Actions runner** on a machine that has network access to the Talos nodes (10.69.112.0/24 network). GitHub's cloud runners cannot reach your private network.
-- The `production` environment must be configured in GitHub with required reviewers for approval.
-
-### Security Audit (weekly + on PRs)
-
-**Trigger:** Every Monday at 6:00 AM UTC, and on every PR to `main`.
-
-**What it does:**
-
-1. **Gitleaks scan** — searches the entire git history for accidentally committed secrets
-2. **Config audit** — checks that no secrets are in patch files, VIP is consistent, versions are pinned (not "latest"), and every node has a patch file
+The deploy, drift, etcd snapshot, and Kubescape workflows require self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
 
 ---
 
@@ -1056,33 +868,20 @@ Look for the specific error message, fix the patch file, regenerate, validate, a
 
 ### metrics-server shows 0/1 Ready
 
-**Cause:** Kubelet serving certificates haven't been approved.
+**Cause:** metrics-server validates kubelet serving certificates against the cluster CA. If it is not Ready, first check whether kubelet serving CSRs are pending or whether the Flux-managed kubelet CSR approver is unhealthy.
 
 **Fix:**
 
 ```bash
-kubectl get csr | grep Pending | awk '{print $1}' | xargs kubectl certificate approve
+kubectl get csr
+kubectl -n kube-system get helmrelease kubelet-csr-approver
+kubectl -n kube-system get pods -l app.kubernetes.io/name=kubelet-csr-approver
 ```
 
-Then delete the metrics-server pod so it restarts:
+After any missing CSRs are approved or the approver has recovered, restart metrics-server:
 
 ```bash
 kubectl delete pod -n kube-system -l app.kubernetes.io/name=metrics-server
-```
-
-### ingress-nginx pods not starting (PodSecurity violation)
-
-**Cause:** The `ingress-nginx` namespace doesn't have the `privileged` PodSecurity label.
-
-**Fix:**
-
-```bash
-kubectl label namespace ingress-nginx \
-    pod-security.kubernetes.io/enforce=privileged \
-    pod-security.kubernetes.io/audit=privileged \
-    pod-security.kubernetes.io/warn=privileged \
-    --overwrite
-kubectl rollout restart daemonset ingress-nginx-controller -n ingress-nginx
 ```
 
 ### "failed to determine endpoints" when using talosctl
