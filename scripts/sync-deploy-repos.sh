@@ -26,8 +26,45 @@ TENANTS_DIR="${DEPLOY_TENANTS_DIR:-${ROOT_DIR}/clusters/talos-cluster/tenants}"
 TENANT_TEMPLATE_DIR="${DEPLOY_TENANT_TEMPLATE_DIR:-${TENANTS_DIR}/_template}"
 APPS_KUSTOMIZATION="${DEPLOY_APPS_KUSTOMIZATION:-${APPS_DIR}/kustomization.yaml}"
 TENANTS_KUSTOMIZATION="${DEPLOY_TENANTS_KUSTOMIZATION:-${TENANTS_DIR}/kustomization.yaml}"
+OVERRIDES_FILE="${DEPLOY_REPO_OVERRIDES_FILE:-${ROOT_DIR}/cluster/deploy-repo-overrides.sh}"
 
 NAME_RE="^${PREFIX}[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+COMMIT_RE="^[0-9a-f]{40}$"
+
+declare -A DEPLOY_REPO_REF_KIND_OVERRIDES=()
+declare -A DEPLOY_REPO_REF_OVERRIDES=()
+declare -a PLATFORM_CRITICAL_DEPLOY_REPOS=()
+
+if [[ -f "${OVERRIDES_FILE}" ]]; then
+    # shellcheck source=/dev/null
+    source "${OVERRIDES_FILE}"
+elif [[ -n "${DEPLOY_REPO_OVERRIDES_FILE:-}" ]]; then
+    echo "ERROR: DEPLOY_REPO_OVERRIDES_FILE not found: ${OVERRIDES_FILE}" >&2
+    exit 1
+fi
+
+for repo in "${PLATFORM_CRITICAL_DEPLOY_REPOS[@]}"; do
+    if ! [[ "${repo}" =~ ${NAME_RE} ]]; then
+        echo "ERROR: platform-critical deploy repo name does not match ${NAME_RE}: ${repo}" >&2
+        exit 1
+    fi
+
+    ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${repo}]:-}"
+    ref_value="${DEPLOY_REPO_REF_OVERRIDES[${repo}]:-}"
+
+    if [[ -z "${ref_kind}" || -z "${ref_value}" ]]; then
+        echo "ERROR: platform-critical deploy repo ${repo} must set an immutable ref override" >&2
+        exit 1
+    fi
+    if [[ "${ref_kind}" != "commit" && "${ref_kind}" != "tag" ]]; then
+        echo "ERROR: platform-critical deploy repo ${repo} must use ref kind commit or tag" >&2
+        exit 1
+    fi
+    if [[ "${ref_kind}" == "commit" && ! "${ref_value}" =~ ${COMMIT_RE} ]]; then
+        echo "ERROR: platform-critical deploy repo ${repo} commit ref must be a 40-character SHA" >&2
+        exit 1
+    fi
+done
 
 require_file() {
     local path="$1"
@@ -60,18 +97,32 @@ if [[ "${INCLUDE_PRIVATE}" != "true" && "${INCLUDE_PRIVATE}" != "false" ]]; then
 fi
 
 declare -A BRANCH_BY_REPO=()
+declare -A REF_KIND_BY_REPO=()
+declare -A REF_VALUE_BY_REPO=()
 deploy_repos=()
 
 add_repo() {
     local name="$1"
     local branch="${2:-main}"
+    local ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${name}]:-branch}"
+    local ref_value="${DEPLOY_REPO_REF_OVERRIDES[${name}]:-${branch:-main}}"
 
     if ! [[ "${name}" =~ ${NAME_RE} ]]; then
         echo "ERROR: deploy repo name does not match ${NAME_RE}: ${name}" >&2
         exit 1
     fi
+    if [[ "${ref_kind}" != "branch" && "${ref_kind}" != "tag" && "${ref_kind}" != "commit" ]]; then
+        echo "ERROR: unsupported GitRepository ref kind for ${name}: ${ref_kind}" >&2
+        exit 1
+    fi
+    if [[ "${ref_kind}" == "commit" && ! "${ref_value}" =~ ${COMMIT_RE} ]]; then
+        echo "ERROR: commit ref for ${name} must be a 40-character SHA: ${ref_value}" >&2
+        exit 1
+    fi
 
     BRANCH_BY_REPO["${name}"]="${branch:-main}"
+    REF_KIND_BY_REPO["${name}"]="${ref_kind}"
+    REF_VALUE_BY_REPO["${name}"]="${ref_value}"
     deploy_repos+=("${name}")
 }
 
@@ -133,16 +184,11 @@ render_template() {
     sed "s/__TENANT_NAMESPACE__/${tenant}/g" "${source}" > "${target}"
 }
 
-render_tenant() {
+render_reconciler_rbac_default() {
     local tenant="$1"
-    local tenant_dir="${TENANTS_DIR}/${tenant}"
+    local target="$2"
 
-    mkdir -p "${tenant_dir}"
-    render_template "${TENANT_TEMPLATE_DIR}/namespace.yaml.tmpl" "${tenant_dir}/namespace.yaml" "${tenant}"
-    render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-default-deny.yaml.tmpl" "${tenant_dir}/networkpolicy-default-deny.yaml" "${tenant}"
-    render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-allow-dns.yaml.tmpl" "${tenant_dir}/networkpolicy-allow-dns.yaml" "${tenant}"
-
-    cat > "${tenant_dir}/flux-reconciler-rbac.yaml" <<EOF
+    cat > "${target}" <<EOF
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -163,10 +209,9 @@ rules:
       - persistentvolumeclaims
       - pods
       - pods/log
-      - secrets
       - serviceaccounts
       - services
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources:
       - controllerrevisions
@@ -174,34 +219,29 @@ rules:
       - deployments
       - replicasets
       - statefulsets
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
     resources:
       - cronjobs
       - jobs
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources:
       - ingresses
       - networkpolicies
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["cilium.io"]
     resources:
       - ciliumnetworkpolicies
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["policy"]
     resources:
       - poddisruptionbudgets
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["autoscaling"]
     resources:
       - horizontalpodautoscalers
-    verbs: ["*"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources:
-      - roles
-      - rolebindings
-    verbs: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -217,6 +257,24 @@ subjects:
     name: deploy-reconciler
     namespace: ${tenant}
 EOF
+}
+
+render_reconciler_rbac() {
+    local tenant="$1"
+    local target="$2"
+
+    render_reconciler_rbac_default "${tenant}" "${target}"
+}
+
+render_tenant() {
+    local tenant="$1"
+    local tenant_dir="${TENANTS_DIR}/${tenant}"
+
+    mkdir -p "${tenant_dir}"
+    render_template "${TENANT_TEMPLATE_DIR}/namespace.yaml.tmpl" "${tenant_dir}/namespace.yaml" "${tenant}"
+    render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-default-deny.yaml.tmpl" "${tenant_dir}/networkpolicy-default-deny.yaml" "${tenant}"
+    render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-allow-dns.yaml.tmpl" "${tenant_dir}/networkpolicy-allow-dns.yaml" "${tenant}"
+    render_reconciler_rbac "${tenant}" "${tenant_dir}/flux-reconciler-rbac.yaml"
 
     cat > "${tenant_dir}/kustomization.yaml" <<EOF
 # Generated by scripts/sync-deploy-repos.sh.
@@ -230,9 +288,16 @@ resources:
 EOF
 }
 
+render_git_ref() {
+    local name="$1"
+    local ref_kind="${REF_KIND_BY_REPO[${name}]:-branch}"
+    local ref_value="${REF_VALUE_BY_REPO[${name}]:-${BRANCH_BY_REPO[${name}]:-main}}"
+
+    printf '    %s: %s\n' "${ref_kind}" "${ref_value}"
+}
+
 render_app() {
     local name="$1"
-    local branch="$2"
     local app_dir="${APPS_DIR}/${name}"
 
     mkdir -p "${app_dir}"
@@ -248,7 +313,7 @@ metadata:
 spec:
   interval: 5m
   ref:
-    branch: ${branch}
+$(render_git_ref "${name}")
   url: https://github.com/${ORG}/${name}.git
 EOF
 
@@ -319,7 +384,7 @@ mapfile -t deploy_repos < <(printf '%s\n' "${deploy_repos[@]}" | sort -u)
 
 for repo in "${deploy_repos[@]}"; do
     render_tenant "${repo}"
-    render_app "${repo}" "${BRANCH_BY_REPO[${repo}]:-main}"
+    render_app "${repo}"
 done
 
 mapfile -t app_entries < <(
