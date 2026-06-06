@@ -95,6 +95,7 @@
 # -- Cluster: Talos machine config patches + version pinning ------------------
 !/cluster/
 !/cluster/config.env
+!/cluster/deploy-repo-overrides.sh
 !/cluster/patches/
 !/cluster/patches/common.yaml
 !/cluster/patches/firewall.yaml

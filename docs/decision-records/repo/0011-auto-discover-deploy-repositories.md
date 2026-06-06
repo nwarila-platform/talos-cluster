@@ -82,6 +82,25 @@ respect the cluster's `--no-cross-namespace-refs=true` Flux hardening. The
 Kustomization uses `targetNamespace: <repo>` so namespaced workload objects land
 in the tenant namespace even if the app repo omits `metadata.namespace`.
 
+Platform-critical deploy repos are a deliberate exception to the normal
+branch-tracking model. When a tenant namespace carries secret-zero or equivalent
+material, `scripts/sync-deploy-repos.sh` reads
+`cluster/deploy-repo-overrides.sh` and can render that tenant with:
+
+- an immutable Flux `GitRepository.spec.ref` (`commit` or `tag`) instead of the
+  discovered default branch; and
+- a tightened `deploy-reconciler` Role profile scoped to the resource types the
+  tenant currently reconciles.
+
+`deploy-vault` uses this exception because the namespace contains the
+SOPS-delivered `vault-ra-cert` IAM Roles Anywhere certificate/key used by Vault
+KMS auto-unseal. Pinning deploy-vault to a reviewed commit makes workload
+changes require a talos-cluster ref-bump PR before Flux applies them. The
+tightened Role removes `secrets`, `roles`, and `rolebindings` from the
+deploy-vault reconciler as defense-in-depth. RBAC alone is not the primary
+control: a permitted workload update could still mount an existing namespace
+Secret. The immutable ref is therefore the load-bearing review gate.
+
 Direct scheduled writes to `main` are intentionally not enabled in this ADR.
 They can be added only by a superseding or implementing decision that explicitly
 accepts the future-change-authority risk and confirms branch protection allows
@@ -145,6 +164,8 @@ This decision is confirmed when:
 - App teams/repos own their manifests and image digests after onboarding.
 - Tenant Flux reconciliation is namespace-scoped instead of cluster-admin.
 - The deny-all `.gitignore` becomes pattern-based for `deploy-*` outputs.
+- Platform-critical tenants can force reviewed talos-cluster ref bumps before
+  sensitive workload changes apply.
 
 ### Negative
 
@@ -154,6 +175,8 @@ This decision is confirmed when:
   is accepted.
 - App repos that need cluster-scoped resources cannot use this path; those
   remain cluster-platform changes.
+- Platform-critical pinned refs add an intentional talos-cluster maintenance
+  step whenever those apps need to advance.
 
 ### Neutral
 
@@ -161,6 +184,9 @@ This decision is confirmed when:
   pod specs, image pins, and app-specific NetworkPolicies.
 - The sync skips repos that do not expose the expected overlay instead of
   creating partial Flux resources.
+- Re-homing a secret-zero-bearing app to a hand-owned platform Kustomization may
+  still be stronger, but that is an architectural migration outside this ADR's
+  deploy-repo discovery scope.
 
 ## Assumptions
 
@@ -169,6 +195,8 @@ This decision is confirmed when:
 3. Workloads should be namespaced. Cluster-scoped CRDs, ClusterRoles, admission
    policies, and storage/controller installs remain `talos-cluster` work.
 4. The `deploy-reconciler` Role can be tightened as app needs become clearer.
+5. Platform-critical deploy repo tags are protected if used; otherwise pin by
+   full commit SHA.
 
 ## Supersedes
 
