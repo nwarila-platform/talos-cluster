@@ -14,8 +14,7 @@
 name: Kubescape
 
 on:
-  schedule:
-    - cron: "0 4 * * *"  # daily 04:00 UTC (after etcd snapshot at 03:00, before workday)
+  # Scheduled runs disabled 2026-06-07: no self-hosted runners exist yet (a planned future cluster feature). Pre-wired for that future; runnable manually via workflow_dispatch once a runner is online. See PLAN section 7.
   workflow_dispatch:
 
 permissions:

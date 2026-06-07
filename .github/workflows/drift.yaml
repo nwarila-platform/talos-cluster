@@ -14,8 +14,7 @@
 name: Drift Detection
 
 on:
-  schedule:
-    - cron: "0 12 * * *"   # daily at 12:00 UTC
+  # Scheduled runs disabled 2026-06-07: no self-hosted runners exist yet (a planned future cluster feature). Pre-wired for that future; runnable manually via workflow_dispatch once a runner is online. See PLAN section 7.
   workflow_dispatch:
 
 permissions:
