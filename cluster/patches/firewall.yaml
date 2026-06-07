@@ -45,6 +45,22 @@ ingress:
   - subnet: 10.69.112.0/24
 
 ---
+# trustd - control-plane certificate service. Worker nodes contact trustd
+# (via the control-plane endpoint) to issue/renew their apid server certs.
+# OMITTING this rule firewalled trustd off and expired every worker's Talos
+# cert (2026-05-26..28 outage); workers stayed k8s-healthy but Talos-unmanageable.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-trustd
+portSelector:
+  ports:
+    - 50001
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+
+---
 # kube-apiserver - listens only on control-plane nodes. Pods reach apiserver
 # via Cilium service translation (10.96.0.1:443 -> 10.69.112.6X:6443);
 # source IP after translation is the pod IP (10.244.0.0/16).
