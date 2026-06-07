@@ -17,32 +17,53 @@ on:
 
 permissions:
   contents: read
+  id-token: write
   issues: write   # only used by the open-issue-on-failure step
 
 jobs:
   snapshot:
     name: Capture + upload
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
 
-      - name: Install talosctl (pinned to cluster TALOS_VERSION)
+      - name: Install talosctl for Windows (pinned to cluster TALOS_VERSION)
+        shell: powershell
         run: |
-          set -euo pipefail
-          TALOS_VERSION=$(grep '^TALOS_VERSION=' cluster/config.env | cut -d'"' -f2)
-          [ -n "${TALOS_VERSION}" ] || { echo "TALOS_VERSION missing"; exit 1; }
-          url="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
-          sums="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/sha256sum.txt"
-          curl --proto '=https' --tlsv1.2 -fsSL -o talosctl "${url}"
-          curl --proto '=https' --tlsv1.2 -fsSL -o sha256sum.txt "${sums}"
-          expected=$(awk '$2=="talosctl-linux-amd64"{print $1}' sha256sum.txt)
-          actual=$(sha256sum talosctl | awk '{print $1}')
-          [ "${expected}" = "${actual}" ] || { echo "talosctl checksum mismatch"; exit 1; }
-          chmod +x talosctl
-          sudo mv talosctl /usr/local/bin/talosctl
+          $ErrorActionPreference = "Stop"
+          $talosVersion = (Select-String -Path cluster/config.env -Pattern '^TALOS_VERSION="([^"]+)"').Matches[0].Groups[1].Value
+          if (-not $talosVersion) {
+            throw "TALOS_VERSION missing"
+          }
+          $artifact = "talosctl-windows-amd64.exe"
+          $baseUrl = "https://github.com/siderolabs/talos/releases/download/$talosVersion"
+          Invoke-WebRequest -Uri "$baseUrl/$artifact" -OutFile "talosctl.exe"
+          Invoke-WebRequest -Uri "$baseUrl/sha256sum.txt" -OutFile "sha256sum.txt"
+          $expected = $null
+          foreach ($line in Get-Content -Path "sha256sum.txt") {
+            if ($line -match "^\s*([a-fA-F0-9]+)\s+$([regex]::Escape($artifact))$") {
+              $expected = $matches[1].ToLowerInvariant()
+              break
+            }
+          }
+          if (-not $expected) {
+            throw "checksum entry for $artifact not found"
+          }
+          $actual = (Get-FileHash -Path "talosctl.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) {
+            throw "talosctl checksum mismatch: expected=$expected actual=$actual"
+          }
+          $toolDir = (Get-Location).Path
+          $toolDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $env:PATH = "$toolDir;$env:PATH"
+          $clientVersion = (& ".\talosctl.exe" version --client --short) -join "`n"
+          Write-Output $clientVersion
+          if ($clientVersion -notlike "*Talos $talosVersion*") {
+            throw "talosctl version mismatch: expected $talosVersion"
+          }
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
@@ -51,10 +72,18 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Pull secrets from S3 (talosconfig)
-        run: bash scripts/s3-sync.sh pull
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PATH = "$PWD;$env:PATH"
+          & "C:\Program Files\Git\bin\bash.exe" -lc 'set -euo pipefail; export PATH="$(pwd):$PATH"; bash scripts/s3-sync.sh pull'
 
       - name: Take + upload etcd snapshot
-        run: bash scripts/etcd-snapshot.sh | tee snapshot-output.txt
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PATH = "$PWD;$env:PATH"
+          & "C:\Program Files\Git\bin\bash.exe" -lc 'set -euo pipefail; export PATH="$(pwd):$PATH"; bash scripts/etcd-snapshot.sh | tee snapshot-output.txt'
 
       - name: Open issue on scheduled failure
         if: failure() && github.event_name == 'schedule'
