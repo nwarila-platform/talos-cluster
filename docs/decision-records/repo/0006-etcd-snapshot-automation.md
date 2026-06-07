@@ -11,6 +11,14 @@
 | Reversibility  | High                                    |
 | Review-by      | N/A (Accepted)                          |
 
+## Status Note (2026-06-07)
+
+Scheduled execution is disabled pending the Stage-1 local backup server. The
+S3 snapshot target in this ADR is expected to be superseded by a local
+backup-server target for etcd state; Stage-0 S3 storage for rebuild-critical
+secrets remains correct. This ADR is not fully superseded yet; a later ADR
+should record the retargeted design and restore drill once Stage-1 exists.
+
 ## TL;DR
 
 A scheduled GitHub Actions workflow (`.github/workflows/etcd-snapshot.yaml`) runs `scripts/etcd-snapshot.sh` daily at 03:00 UTC. The script captures an etcd bbolt snapshot via `talosctl etcd snapshot` from a non-bootstrap CP and uploads it KMS-encrypted to `s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/YYYY-MM-DD/snapshot-HHMMSSZ.db`. Combined with the existing `secrets/secrets.yaml` mirror in the same bucket, this is sufficient to recover the cluster via `talosctl bootstrap --recover-from` after a CP-quorum failure. The cycle that introduces this ADR sets up the capture path; restore-testing against a sacrificial cluster is out of scope and tracked as a follow-up.

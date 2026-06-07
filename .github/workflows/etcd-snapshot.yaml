@@ -1,9 +1,9 @@
 # =============================================================================
-# etcd Snapshot — captures a Talos etcd snapshot and uploads it to S3 daily.
+# etcd Snapshot - captures a Talos etcd snapshot and uploads it on demand.
 #
-# Implements the scheduled-snapshot leg of ADR-0006. The actual snapshot
+# Implements the snapshot leg of ADR-0006. The actual snapshot
 # logic lives in scripts/etcd-snapshot.sh. This workflow only handles
-# scheduling, tool installation, and AWS credential plumbing.
+# manual execution, tool installation, and AWS credential plumbing.
 #
 # Requires a self-hosted runner with cluster VIP reachability (same
 # posture as Deploy and Drift Detection).
@@ -11,8 +11,9 @@
 name: etcd Snapshot
 
 on:
-  schedule:
-    - cron: "0 3 * * *"   # daily at 03:00 UTC — off-peak for this cluster
+  # Scheduled runs disabled 2026-06-07: etcd snapshots are moving to the
+  # Stage-1 local backup server, not S3. Re-enable and retarget when that
+  # server exists. See PLAN section 7 and ADR-0006.
   workflow_dispatch:
 
 permissions:
