@@ -25,14 +25,14 @@ A scheduled GitHub Actions workflow (`.github/workflows/etcd-snapshot.yaml`) run
 
 ## Context and Problem Statement
 
-Until this ADR, the cluster had no recovery option for catastrophic CP failure. Every Kubernetes object - CRDs, Helm release tracking (including the kubelet-csr-approver release added in ADR-0005), RBAC, namespaces, ServiceAccounts, every Longhorn `Volume`/`Replica` reference, every `PersistentVolumeClaim` binding - lives only in etcd, replicated across the three CP nodes. With three CPs the cluster tolerates one CP loss; two CPs lost simultaneously (a bad apply on cp1 + a hardware failure on cp2, a coordinated reboot under power-event conditions, a misconfigured `make apply` that wipes both `/var/lib/etcd`s before quorum is restored, an etcd corruption that propagates) leaves quorum unrecoverable.
+Until this ADR, the cluster had no recovery option for catastrophic CP failure. Every Kubernetes object — CRDs, Helm release tracking (including the kubelet-csr-approver release added in ADR-0005), RBAC, namespaces, ServiceAccounts, every Longhorn `Volume`/`Replica` reference, every `PersistentVolumeClaim` binding — lives only in etcd, replicated across the three CP nodes. With three CPs the cluster tolerates one CP loss; two CPs lost simultaneously (a bad apply on cp1 + a hardware failure on cp2, a coordinated reboot under power-event conditions, a misconfigured `make apply` that wipes both `/var/lib/etcd`s before quorum is restored, an etcd corruption that propagates) leaves quorum unrecoverable.
 
 The recovery story at that point would be:
 1. Rebuild the cluster from `make bootstrap` against the existing Talos machine configs.
 2. Lose every CRD, every Helm release, every Service account, every Longhorn metadata reference.
 3. Reapply every addon by hand from the README runbook.
 4. Attempt to re-attach Longhorn replicas from the workers' system disks (Longhorn stores both metadata and data; without the cluster-side `Volume` resources, the worker-side replicas are orphaned).
-5. Hope production state survives. Some workloads - anything with cluster-managed state in CRDs - definitely will not.
+5. Hope production state survives. Some workloads — anything with cluster-managed state in CRDs — definitely will not.
 
 Talos provides `talosctl etcd snapshot <local-path>` for exactly this. The command streams the etcd bbolt DB from the leader to the talosctl client. Combined with the secrets bundle this repo already mirrors in S3, the pair forms a complete recovery primitive: `talosctl bootstrap --recover-from /path/to/snapshot.db --talosconfig <new-config>` against a freshly wiped CP node restores the entire cluster control plane to the snapshot's state.
 
@@ -48,7 +48,7 @@ The gap until now: no scheduled execution. An operator who remembered to run `ta
 
 ## Considered Options
 
-1. **Daily `talosctl etcd snapshot` via GitHub Actions to S3.**
+1. **Daily `talosctl etcd snapshot` via GitHub Actions → S3.**
 2. **Velero installed in the cluster, configured to back up etcd + PVCs to S3.**
 3. **Longhorn-only backups via Longhorn's S3 backup target.**
 4. **Manual snapshots on a quarterly cadence; no automation.**
@@ -57,9 +57,9 @@ The gap until now: no scheduled execution. An operator who remembered to run `ta
 
 Chosen option: **Option 1, scheduled `talosctl etcd snapshot` to S3.**
 
-`scripts/etcd-snapshot.sh` is the orchestrator. `.github/workflows/etcd-snapshot.yaml` runs it on a daily 03:00 UTC schedule from a self-hosted runner. The snapshot lands at `s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/YYYY-MM-DD/snapshot-HHMMSSZ.db` with `--sse aws:kms` using the same KMS key (`arn:aws:kms:us-east-1:793496711039:key/6c9426c6-448d-46d1-97dc-0b8ca9bd15df`) the `secrets/` objects already use. Object metadata records source CP node, source IP, cluster name, Talos version, and Kubernetes version - useful at restore time when matching a snapshot to a compatible cluster bootstrap.
+`scripts/etcd-snapshot.sh` is the orchestrator. `.github/workflows/etcd-snapshot.yaml` runs it on a daily 03:00 UTC schedule from a self-hosted runner. The snapshot lands at `s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/YYYY-MM-DD/snapshot-HHMMSSZ.db` with `--sse aws:kms` using the same KMS key (`arn:aws:kms:us-east-1:793496711039:key/6c9426c6-448d-46d1-97dc-0b8ca9bd15df`) the `secrets/` objects already use. Object metadata records source CP node, source IP, cluster name, Talos version, and Kubernetes version — useful at restore time when matching a snapshot to a compatible cluster bootstrap.
 
-This ADR is explicitly scoped to **capture**, not to **restore-testing**. A restore drill that takes a snapshot from production and replays it against a sacrificial test cluster is the natural next ADR (ADR-0007 candidate). Until that drill happens, the snapshots are unproven recovery primitives - better than the prior state of having none, but not formally verified.
+This ADR is explicitly scoped to **capture**, not to **restore-testing**. A restore drill that takes a snapshot from production and replays it against a sacrificial test cluster is the natural next ADR (ADR-0007 candidate). Until that drill happens, the snapshots are unproven recovery primitives — better than the prior state of having none, but not formally verified.
 
 ## Pros and Cons of the Options
 
@@ -69,7 +69,7 @@ This ADR is explicitly scoped to **capture**, not to **restore-testing**. A rest
 - **Good, because** the entire automation is ~100 lines of bash + one workflow. No new in-cluster operators to maintain.
 - **Good, because** S3 + KMS is the same posture already used for `secrets/secrets.yaml`. No new credential surface.
 - **Good, because** snapshots are date-bucketed in S3; an operator finding "the snapshot from yesterday afternoon" is one `aws s3 ls` away.
-- **Neutral, because** snapshots are 50-300 MiB each (per Sidero's published guidance on bbolt DB sizes for small-to-medium clusters). At 7d STANDARD + 365d Glacier retention, total storage is well under $5/mo.
+- **Neutral, because** snapshots are 50–300 MiB each (per Sidero's published guidance on bbolt DB sizes for small-to-medium clusters). At 7d STANDARD + 365d Glacier retention, total storage is well under $5/mo.
 - **Bad, because** the cycle adds **capture** without proving **restore**. Untested backups are a known anti-pattern. The follow-up restore-drill ADR mitigates this, but the gap exists between this ADR landing and that drill being run.
 
 ### Option 2: Velero in-cluster
@@ -108,13 +108,13 @@ Adherence to this ADR is confirmed by the following mechanisms. The wording `MUS
 ### Positive
 
 - The cluster has a recovery primitive. Worst-case incident becomes "find the most recent snapshot in S3 and replay it" rather than "rebuild from scratch and lose all CRD/RBAC/Helm state."
-- Snapshot age - recovery point objective (RPO) - is 24 hours by default. For a cluster of this size with no high-frequency cluster-state mutations, that's adequate.
-- Recovery from a single bad apply (e.g., a future operator who runs `make apply` against a repo state that wipes a CRD) is now bounded - pull the previous day's snapshot, restore, retry the apply with the corrected repo.
+- Snapshot age — recovery point objective (RPO) — is 24 hours by default. For a cluster of this size with no high-frequency cluster-state mutations, that's adequate.
+- Recovery from a single bad apply (e.g., a future operator who runs `make apply` against a repo state that wipes a CRD) is now bounded — pull the previous day's snapshot, restore, retry the apply with the corrected repo.
 
 ### Negative
 
 - Snapshots are unproven until a restore drill is documented in a follow-up ADR. The first drill SHOULD be run before any operational dependency forms on these snapshots being viable.
-- The S3 bucket accumulates snapshots; without a lifecycle policy, storage cost grows ~50-300 MiB per day. The bucket has no current lifecycle rules (verified 2026-05-25); this ADR's recommended lifecycle is documented inline but not auto-applied:
+- The S3 bucket accumulates snapshots; without a lifecycle policy, storage cost grows ~50–300 MiB per day. The bucket has no current lifecycle rules (verified 2026-05-25); this ADR's recommended lifecycle is documented inline but not auto-applied:
 
    ```bash
    aws s3api put-bucket-lifecycle-configuration --bucket 793496711039-terraform \
@@ -123,7 +123,7 @@ Adherence to this ADR is confirmed by the following mechanisms. The wording `MUS
 
    where `lifecycle.json` contains a rule scoped to prefix `nwarila-platform/talos-cluster/etcd-snapshots/` that transitions to GLACIER_IR after 30 days and expires after 365 days. Applying this is an operator decision because the bucket is shared with Terraform state and other prefixes; the lifecycle rule must be added without disturbing those.
 
-- Each scheduled run takes ~30-60s of self-hosted runner time. Trivial.
+- Each scheduled run takes ~30–60s of self-hosted runner time. Trivial.
 
 ### Neutral
 
@@ -156,8 +156,8 @@ A follow-up PR (tracked) will:
 
 ## Related ADRs
 
-- [ADR-0003 (repo)](0003-repo-as-cluster-source-of-truth.md) - establishes the "repo is source of truth" claim. This ADR closes the recoverability counterpart: declarative truth recovers the cluster *shape*, etcd snapshots recover the *state*.
-- [ADR-0005 (repo)](0005-kubelet-csr-approver.md) - introduces the kubelet-csr-approver Helm release whose state lives in etcd. Without snapshots, a CP-quorum failure would lose tracking of the release; with snapshots, the release reappears in the recovered cluster.
+- [ADR-0003 (repo)](0003-repo-as-cluster-source-of-truth.md) — establishes the "repo is source of truth" claim. This ADR closes the recoverability counterpart: declarative truth recovers the cluster *shape*, etcd snapshots recover the *state*.
+- [ADR-0005 (repo)](0005-kubelet-csr-approver.md) — introduces the kubelet-csr-approver Helm release whose state lives in etcd. Without snapshots, a CP-quorum failure would lose tracking of the release; with snapshots, the release reappears in the recovered cluster.
 
 ## Compliance Notes
 
@@ -165,7 +165,7 @@ This ADR records a disaster-recovery primitive. Combined with [ADR-0003](0003-re
 
 | Framework              | Control / Practice ID                              | Potential Evidence Contribution                                                                                              |
 | ---------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| NIST SP 800-53 Rev. 5  | CP-9 (System Backup)                               | Daily encrypted snapshots of etcd state to off-host storage. RPO <= 24h.                                                      |
+| NIST SP 800-53 Rev. 5  | CP-9 (System Backup)                               | Daily encrypted snapshots of etcd state to off-host storage. RPO ≤ 24h.                                                       |
 | NIST SP 800-53 Rev. 5  | CP-10 (System Recovery and Reconstitution)         | `talosctl bootstrap --recover-from` is the documented reconstitution procedure; this ADR ensures the input artifact exists.   |
 | NIST SP 800-53 Rev. 5  | SC-28 (Protection of Information at Rest)          | Snapshots are stored with `--sse aws:kms` using the same customer-managed KMS key as the cluster's secrets bundle.            |
 | NIST SP 800-53 Rev. 5  | CM-2 (Baseline Configuration)                      | Combined with [ADR-0003](0003-repo-as-cluster-source-of-truth.md), the repo + the snapshot form a complete baseline that is both declarative *and* state-bearing. |
