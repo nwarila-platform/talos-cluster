@@ -27,6 +27,19 @@
 !/clusters/talos-cluster/flux-system/kustomization.yaml
 !/clusters/talos-cluster/apps/
 !/clusters/talos-cluster/apps/kustomization.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/
+!/clusters/talos-cluster/apps/actions-runner-controller/kustomization.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/kustomization-controller.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/kustomization-scale-set.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/controller/
+!/clusters/talos-cluster/apps/actions-runner-controller/controller/helmrelease.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/controller/helmrepository.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/controller/kustomization.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/arc-github-app.sops.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrelease.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrepository.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/kustomization.yaml
 !/clusters/talos-cluster/apps/deploy-*/
 !/clusters/talos-cluster/apps/deploy-*/gitrepository.yaml
 !/clusters/talos-cluster/apps/deploy-*/kustomization-flux.yaml
@@ -65,6 +78,19 @@
 !/clusters/talos-cluster/apps/vault-aws-access/vault-ra-cert.sops.yaml
 !/clusters/talos-cluster/tenants/
 !/clusters/talos-cluster/tenants/kustomization.yaml
+!/clusters/talos-cluster/tenants/arc-runners/
+!/clusters/talos-cluster/tenants/arc-runners/ciliumnetworkpolicy-listener-egress.yaml
+!/clusters/talos-cluster/tenants/arc-runners/ciliumnetworkpolicy-runner-egress.yaml
+!/clusters/talos-cluster/tenants/arc-runners/kustomization.yaml
+!/clusters/talos-cluster/tenants/arc-runners/namespace.yaml
+!/clusters/talos-cluster/tenants/arc-runners/networkpolicy-allow-dns.yaml
+!/clusters/talos-cluster/tenants/arc-runners/networkpolicy-default-deny.yaml
+!/clusters/talos-cluster/tenants/arc-systems/
+!/clusters/talos-cluster/tenants/arc-systems/ciliumnetworkpolicy-controller-egress.yaml
+!/clusters/talos-cluster/tenants/arc-systems/kustomization.yaml
+!/clusters/talos-cluster/tenants/arc-systems/namespace.yaml
+!/clusters/talos-cluster/tenants/arc-systems/networkpolicy-allow-dns.yaml
+!/clusters/talos-cluster/tenants/arc-systems/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/tenants/deploy-*/
 !/clusters/talos-cluster/tenants/deploy-*/kustomization.yaml
 !/clusters/talos-cluster/tenants/deploy-*/namespace.yaml
@@ -81,6 +107,7 @@
 # -- GitHub configuration -----------------------------------------------------
 !/.github/
 !/.github/CODEOWNERS
+!/.github/actionlint.yaml
 !/.github/renovate.json5
 !/.github/workflows/
 !/.github/workflows/deploy.yaml
@@ -88,6 +115,7 @@
 !/.github/workflows/etcd-snapshot.yaml
 !/.github/workflows/kubescape.yaml
 !/.github/workflows/onboard-tenant.yaml
+!/.github/workflows/arc-smoke.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/sync-deploy-repos.yaml
 !/.github/workflows/validate.yaml
