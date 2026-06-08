@@ -1,0 +1,21 @@
+name: ARC Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: talos-arc-ci
+    runs-on: talos-arc-ci
+    timeout-minutes: 5
+    steps:
+      - name: Show runner context
+        shell: bash
+        run: |
+          echo "runner_name=${RUNNER_NAME}"
+          echo "runner_os=${RUNNER_OS}"
+          echo "runner_arch=${RUNNER_ARCH}"
+          echo "github_repository=${GITHUB_REPOSITORY}"

@@ -1,0 +1,36 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-arc-runner-egress
+  namespace: arc-runners
+spec:
+  endpointSelector:
+    matchLabels:
+      arc.nwarila.io/role: runner
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: github.com
+        - matchName: api.github.com
+        - matchName: codeload.github.com
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchName: results-receiver.actions.githubusercontent.com
+        - matchPattern: "*.blob.core.windows.net"
+        - matchName: objects.githubusercontent.com
+        - matchName: objects-origin.githubusercontent.com
+        - matchName: github-releases.githubusercontent.com
+        - matchName: github-registry-files.githubusercontent.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

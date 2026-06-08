@@ -1,0 +1,36 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-arc-listener-egress
+  namespace: arc-runners
+spec:
+  endpointSelector:
+    matchLabels:
+      arc.nwarila.io/role: listener
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: github.com
+        - matchName: api.github.com
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchName: results-receiver.actions.githubusercontent.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
