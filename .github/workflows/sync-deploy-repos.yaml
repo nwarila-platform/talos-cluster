@@ -23,8 +23,9 @@ jobs:
       GH_TOKEN: ${{ secrets.DEPLOY_REPO_DISCOVERY_TOKEN || github.token }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with: # zizmor: ignore[artipacked] keeps GITHUB_TOKEN credentials for git push and gh pr create.
+        with:
           ref: main
+          persist-credentials: false
 
       - name: Generate deploy repo manifests
         run: bash scripts/sync-deploy-repos.sh
@@ -48,47 +49,43 @@ jobs:
       - name: Validate rendered Kustomize tree
         run: kubectl kustomize clusters/talos-cluster >/dev/null
 
-      - name: Open generated PR
-        run: |
-          set -euo pipefail
-          if git diff --quiet; then
-            echo "No deploy repository changes detected."
-            exit 0
-          fi
+      - name: Open or update generated PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ github.token }}
+          base: main
+          branch: automation/deploy-repo-sync
+          delete-branch: true
+          sign-commits: true
+          add-paths: |
+            .gitignore
+            clusters/talos-cluster/apps
+            clusters/talos-cluster/tenants
+          commit-message: |
+            chore(deploy-repos): sync deploy repository wiring
 
-          branch="deploy-repo-sync/${GITHUB_RUN_ID}"
-          git switch -c "${branch}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .gitignore clusters/talos-cluster/apps clusters/talos-cluster/tenants
-          git commit -m "chore(deploy-repos): sync deploy repository wiring" \
-            -m "Regenerate tenant-scoped Flux wiring for deploy-* repositories that expose kubernetes/overlays/talos-cluster/kustomization.yaml." \
-            -m "Verification: kubectl kustomize clusters/talos-cluster."
-          git push --set-upstream origin "${branch}"
+            Regenerate tenant-scoped Flux wiring for deploy-* repositories that expose kubernetes/overlays/talos-cluster/kustomization.yaml.
 
-          cat > pr-body.md <<EOF
-          ## Summary
+            Verification: kubectl kustomize clusters/talos-cluster.
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          title: "chore(deploy-repos): sync deploy repository wiring"
+          body: |
+            ## Summary
 
-          Regenerates tenant-scoped Flux wiring for deploy repositories matching
-          the \`deploy-*\` contract.
+            Regenerates tenant-scoped Flux wiring for deploy repositories matching
+            the `deploy-*` contract.
 
-          ## Contract
+            ## Contract
 
-          - repository is under \`nwarila-platform\`
-          - repository name matches \`deploy-*\`
-          - repository exposes \`kubernetes/overlays/talos-cluster/kustomization.yaml\`
+            - repository is under `nwarila-platform`
+            - repository name matches `deploy-*`
+            - repository exposes `kubernetes/overlays/talos-cluster/kustomization.yaml`
 
-          ## Verification
+            ## Verification
 
-          - \`kubectl kustomize clusters/talos-cluster\`
+            - `kubectl kustomize clusters/talos-cluster`
 
-          After merge, Flux reconciles the generated GitRepository and
-          Kustomization resources. Future workload/image changes happen in each
-          \`deploy-*\` repository.
-          EOF
-
-          gh pr create \
-            --base main \
-            --head "${branch}" \
-            --title "chore(deploy-repos): sync deploy repository wiring" \
-            --body-file pr-body.md
+            After merge, Flux reconciles the generated GitRepository and
+            Kustomization resources. Future workload/image changes happen in each
+            `deploy-*` repository.
