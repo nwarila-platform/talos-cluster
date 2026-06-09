@@ -79,7 +79,6 @@
 !/clusters/talos-cluster/tenants/
 !/clusters/talos-cluster/tenants/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-runners/
-!/clusters/talos-cluster/tenants/arc-runners/ciliumnetworkpolicy-listener-egress.yaml
 !/clusters/talos-cluster/tenants/arc-runners/ciliumnetworkpolicy-runner-egress.yaml
 !/clusters/talos-cluster/tenants/arc-runners/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-runners/namespace.yaml
@@ -87,6 +86,7 @@
 !/clusters/talos-cluster/tenants/arc-runners/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/tenants/arc-systems/
 !/clusters/talos-cluster/tenants/arc-systems/ciliumnetworkpolicy-controller-egress.yaml
+!/clusters/talos-cluster/tenants/arc-systems/ciliumnetworkpolicy-listener-egress.yaml
 !/clusters/talos-cluster/tenants/arc-systems/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-systems/namespace.yaml
 !/clusters/talos-cluster/tenants/arc-systems/networkpolicy-allow-dns.yaml

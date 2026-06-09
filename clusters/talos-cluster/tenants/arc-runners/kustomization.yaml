@@ -4,5 +4,4 @@ resources:
   - namespace.yaml
   - networkpolicy-default-deny.yaml
   - networkpolicy-allow-dns.yaml
-  - ciliumnetworkpolicy-listener-egress.yaml
   - ciliumnetworkpolicy-runner-egress.yaml
