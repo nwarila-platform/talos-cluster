@@ -8,7 +8,7 @@ machine:
   network:
     interfaces:
       - deviceSelector:
-          physical: true
+          busPath: "0000:00:1f.6"
         addresses:
           - 10.69.112.70/24
         routes:

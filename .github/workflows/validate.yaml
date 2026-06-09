@@ -11,6 +11,7 @@ on:
       - "clusters/**"
       - "addons/**"
       - "docs/decision-records/**"
+      - "docs/runbooks/**"
       - "scripts/**"
       - ".github/workflows/**"
       - "Makefile"
@@ -41,6 +42,19 @@ jobs:
       - name: YAML Lint
         run: |
           yamllint -d '{extends: default, rules: {line-length: {max: 200}, truthy: {check-keys: false}, comments: {min-spaces-from-content: 1}}}' cluster/ addons/
+
+  maintenance-iso:
+    name: Maintenance ISO Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Validate maintenance ISO builder guard
+        run: |
+          bash -n scripts/build-maintenance-iso.sh
+          bash scripts/build-maintenance-iso.sh --self-test
 
   validate-configs:
     name: Validate Configs
