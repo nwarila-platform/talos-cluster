@@ -110,7 +110,6 @@
 !/.github/actionlint.yaml
 !/.github/renovate.json5
 !/.github/workflows/
-!/.github/workflows/deploy.yaml
 !/.github/workflows/drift.yaml
 !/.github/workflows/etcd-snapshot.yaml
 !/.github/workflows/kubescape.yaml
@@ -156,6 +155,7 @@
 !/scripts/agent-loop.sh
 !/scripts/apply.sh
 !/scripts/bootstrap.sh
+!/scripts/check-firewall-management-ports.py
 !/scripts/check-text-encoding.py
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
