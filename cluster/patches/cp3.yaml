@@ -10,12 +10,12 @@ machine:
   network:
     interfaces:
       - deviceSelector:
-          physical: true
+          busPath: "0000:00:1f.6"
         dhcp: false
         vip:
           ip: 10.69.112.62
       - deviceSelector:
-          physical: true
+          busPath: "0000:00:1f.6"
         addresses:
           - 10.69.112.65/24
         routes:
