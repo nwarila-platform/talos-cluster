@@ -803,22 +803,22 @@ Tenant scaffolding lives under `clusters/talos-cluster/tenants/`; deploy-reposit
 
 ## CI/CD (Automated Pipelines)
 
-Ten GitHub Actions workflows are configured:
+Repository-owned GitHub Actions workflows include:
 
 | Purpose | Workflow file | What it does |
 |---------|---------------|--------------|
 | Validate | `validate.yaml` | Runs PR validation for scripts, YAML, generated Talos configs, and secret hygiene. |
-| Deploy | `deploy.yaml` | Manually applies configs or upgrades through the production environment on a self-hosted runner with cluster reachability. |
 | Security | `security.yaml` | Runs Gitleaks and the config audit on PRs, weekly schedule, and manual dispatch. |
 | Drift | `drift.yaml` | Compares repository-declared Talos state and Kubernetes version pins against the live cluster from a self-hosted runner. |
 | etcd snapshot | `etcd-snapshot.yaml` | Captures daily Talos etcd snapshots and uploads them to S3. |
 | Compliance | `kubescape.yaml` | Runs the pinned Kubescape CIS Kubernetes scan and uploads SARIF to GitHub Code Scanning. |
+| ARC smoke | `arc-smoke.yaml` | Manually verifies the `talos-arc-ci` runner scale set can execute a job. |
 | Tenant onboarding | `onboard-tenant.yaml` | Manually scaffolds tenant namespace and network-policy manifests. |
 | Deploy repo sync | `sync-deploy-repos.yaml` | Discovers deployment repositories and refreshes the generated Flux deploy app entries. |
 | Org ADR sync | `org-adr-sync.yaml` | Mirrors organization ADRs into `docs/decision-records/org/` on PRs, schedule, and manual dispatch. |
 | Org ADR auto-sync | `org-adr-auto-sync.yaml` | Scheduled/manual automation for keeping mirrored org ADRs current. |
 
-The deploy, drift, etcd snapshot, and Kubescape workflows require self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
+Talos apply and upgrade remain manual/loop operations from an operator workstation using `make apply` and `make upgrade`. CI-based Talos apply was intentionally removed so public-repo workflows do not hold a Talos admin config. The drift, etcd snapshot, and Kubescape workflows require self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
 
 ---
 

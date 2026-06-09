@@ -99,7 +99,7 @@ Adherence to this ADR is confirmed by the following mechanisms. The wording `MUS
 This decision rests on the following assumptions. If any becomes false, this ADR should be revisited:
 
 1. `talosctl --talosconfig <prod> diff --nodes <ip>` returns an empty diff when the local generated config matches the running machine config. (Held true for Talos 1.12 in practice; confirm before authoring the drift workflow.)
-2. A CI runner can be configured with network access to the cluster VIP without exposing the talosconfig more broadly than the existing `make apply` workflow does. (The current `deploy.yaml` workflow already requires a self-hosted runner on the management network; the drift workflow can re-use it.)
+2. A CI runner can be configured with network access to the cluster VIP without exposing the talosconfig broadly. The previous self-hosted apply workflow was retired in 2026-06; future drift automation must use the protected runner design rather than reusing a Talos-admin CI apply path.
 3. The portfolio remains single-maintainer, so the "PR review" gate is a self-review. Adding a second maintainer is itself a process change that may justify revisiting this ADR.
 
 ## Supersedes

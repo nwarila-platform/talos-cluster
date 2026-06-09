@@ -48,6 +48,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check Talos firewall management ports
+        run: python3 scripts/check-firewall-management-ports.py
+
       - name: Audit Talos config patches
         run: |
           echo "==> Auditing configuration patches..."

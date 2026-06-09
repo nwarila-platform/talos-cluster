@@ -5,8 +5,8 @@
 # logic lives in scripts/etcd-snapshot.sh. This workflow only handles
 # manual execution, tool installation, and AWS credential plumbing.
 #
-# Requires a self-hosted runner with cluster VIP reachability (same
-# posture as Deploy and Drift Detection).
+# Requires a self-hosted runner with cluster VIP reachability. Scheduled use
+# waits for the Stage-1 local backup server and future cluster runner.
 # =============================================================================
 name: etcd Snapshot
 

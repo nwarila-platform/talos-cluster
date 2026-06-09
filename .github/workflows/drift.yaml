@@ -9,7 +9,7 @@
 # Implements ADR-0003 §Confirmation §3.
 #
 # Requires a self-hosted runner with network reach to the cluster VIP
-# (10.69.112.62) — same posture as the Deploy workflow.
+# (10.69.112.62); scheduled use waits for the future cluster runner.
 # =============================================================================
 name: Drift Detection
 
