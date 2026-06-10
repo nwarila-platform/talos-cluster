@@ -8,5 +8,5 @@ metadata:
 spec:
   interval: 5m
   ref:
-    commit: d8de8588e11d5c7aa7a2e14f74782859634b7192
+    commit: 7f66dcfd84a205fb9702a525e268ed895d841f4a
   url: https://github.com/nwarila-platform/deploy-vault.git

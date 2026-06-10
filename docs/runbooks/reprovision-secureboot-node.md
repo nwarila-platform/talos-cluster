@@ -42,10 +42,50 @@ argument.
    - Latest etcd snapshot and manifest.
    - Any workload/PV backup needed before evicting workloads from this node.
 
-3. Drain or otherwise evacuate workloads from the node using the current
+3. Confirm Longhorn replica health before touching the node. This is a hard
+   gate for every worker reprovision; do not continue if any critical volume is
+   degraded, has fewer than two healthy replicas away from the target node, or
+   has all healthy replicas co-located on the target node.
+
+   Map critical PVCs to Longhorn volumes:
+
+   ```bash
+   kubectl -n deploy-vault get pvc \
+     -o custom-columns=PVC:.metadata.name,VOLUME:.spec.volumeName,SC:.spec.storageClassName,PHASE:.status.phase
+   ```
+
+   Check Longhorn volume robustness and requested replica counts:
+
+   ```bash
+   kubectl -n longhorn-system get volumes.longhorn.io \
+     -o custom-columns=VOLUME:.metadata.name,ROBUSTNESS:.status.robustness,REPLICAS:.spec.numberOfReplicas,STATE:.status.state
+   ```
+
+   Check actual replica placement:
+
+   ```bash
+   kubectl -n longhorn-system get replicas.longhorn.io \
+     -o custom-columns=VOLUME:.spec.volumeName,NODE:.spec.nodeID,STATE:.status.currentState,HEALTHY_AT:.status.healthyAt
+   ```
+
+   For every Vault PVC volume, require:
+
+   - `storageClassName` is `longhorn-vault`.
+   - Longhorn `ROBUSTNESS` is `healthy`, never `degraded` or `faulted`.
+   - `REPLICAS` is `3`.
+   - At least two healthy/running replicas are on workers other than the target.
+   - The surviving healthy replicas are on distinct workers. For example, before
+     reprovisioning `w1`, Vault must already have healthy replicas on both `w2`
+     and `w3`.
+
+   Apply the same check to any other workload/PV the owner marks critical for
+   the maintenance window. Stop and repair Longhorn before the drain if the
+   target worker holds the only healthy copy of any critical volume.
+
+4. Drain or otherwise evacuate workloads from the node using the current
    operational procedure for this cluster.
 
-4. Confirm the node patch in this repo targets the intended install disk and
+5. Confirm the node patch in this repo targets the intended install disk and
    uses the fleet NIC bus path:
 
    ```yaml

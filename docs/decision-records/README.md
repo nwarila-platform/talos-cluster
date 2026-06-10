@@ -58,6 +58,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0010](repo/0010-adopt-kyverno-policy-engine.md)               | Adopt Kyverno as the Cluster Policy Engine      | Accepted | 2026-05-27 | Install Kyverno via Flux as the policy engine for image signature verification, SBOM/attestation checks, and future tenant guardrails. |
 | [0011](repo/0011-auto-discover-deploy-repositories.md)         | Auto-Discover Deploy Repositories by Convention | Accepted | 2026-06-01 | Generate tenant-scoped Flux wiring for `deploy-*` repositories that expose the standard Talos overlay, so app repos own future workload/image changes. |
 | [0012](repo/0012-vault-kms-auto-unseal-credential-delivery.md) | Vault KMS Auto-Unseal — AWS Credential Delivery, Egress, and Key Model | Accepted | 2026-06-02 | Deliver AWS creds to Vault's `awskms` seal via an IAM Roles Anywhere serve-mode sidecar (no image change); dedicated single-purpose CMK; SOPS workload cert in `apps/vault-aws-access/`; recovery bundle SSM-only. |
+| [0013](repo/0013-use-dedicated-vault-longhorn-storageclass.md) | Use a Dedicated Vault Longhorn StorageClass      | Accepted | 2026-06-10 | Add the `longhorn-vault` StorageClass for new Vault PVCs: 3 replicas with replica node anti-affinity, without raising the cluster-wide Longhorn default. |
 
 ## Status Lifecycle
 
