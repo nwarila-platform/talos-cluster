@@ -27,6 +27,11 @@ spec:
       remediateLastFailure: false
     cleanupOnFail: true
   values:
+    # Kyverno publishes cosign-verifiable release images to GHCR. The
+    # reg.kyverno.io mirrors do not expose discoverable signatures for v1.18.1.
+    global:
+      image:
+        registry: ghcr.io
     admissionController:
       replicas: 3
       networkPolicy:

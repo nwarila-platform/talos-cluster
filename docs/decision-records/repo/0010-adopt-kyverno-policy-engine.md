@@ -193,6 +193,15 @@ None (current).
   through a sibling Flux Kustomization `kyverno-policies` with
   `dependsOn: [kyverno]` so policies apply only after the engine HelmRelease is
   Ready.
+- Step 8b follow-up: Cilium verification is restricted to the observed Cilium
+  release workflows. The signed Cilium 1.19.4 components verify through GitHub
+  Actions OIDC and Rekor, but `certgen`, `hubble-ui-backend`, `hubble-ui`, and
+  `startup-script` are not discoverably signed at their chart-pinned digests,
+  so they are narrow audit-mode exceptions until upstream signs them or the
+  cluster moves to signed replacements. Kyverno chart images are switched from
+  `reg.kyverno.io` to the signed `ghcr.io/kyverno/*` source and verified via the
+  upstream signature repository `ghcr.io/kyverno/signatures`; the
+  `reg.kyverno.io` v1.18.1 mirrors returned `no signatures found` under cosign.
 - Step 8c (follow-up): Promote verified image families from audit to enforce
   once PolicyReports show consistent `pass` across all matched images and any
   unsignable exceptions are documented.
