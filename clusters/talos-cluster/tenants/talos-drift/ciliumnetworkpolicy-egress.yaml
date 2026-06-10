@@ -1,0 +1,35 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-talos-drift-egress
+  namespace: talos-drift
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: talos-drift
+      app.kubernetes.io/component: drift-check
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+    - toCIDRSet:
+        - cidr: 10.69.112.63/32
+        - cidr: 10.69.112.64/32
+        - cidr: 10.69.112.65/32
+        - cidr: 10.69.112.68/32
+        - cidr: 10.69.112.69/32
+        - cidr: 10.69.112.70/32
+      toPorts:
+        - ports:
+            - port: "50000"
+              protocol: TCP

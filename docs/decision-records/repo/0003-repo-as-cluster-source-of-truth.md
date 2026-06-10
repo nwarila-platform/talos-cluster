@@ -13,7 +13,9 @@
 
 ## TL;DR
 
-This repository is the declarative source of truth for `TDNHQ-TALCL01`. Cluster state — node count, hostnames, install disks, Talos and Kubernetes versions, machine-config patches — is changed by editing this repository and applying via `make apply` / `make upgrade`. Out-of-band changes (direct `talosctl apply-config` from an operator workstation, manual `kubectl edit` of node-level state, ad-hoc scale-out without a PR) are NOT permitted, with the single exception of break-glass incidents that MUST be back-filled into this repository within seven days of the incident. To make this enforceable, a follow-up cycle (out of scope for this ADR) MUST add CI-side drift detection that compares the running cluster against the regenerated machine configs in this repository.
+This repository is the declarative source of truth for `TDNHQ-TALCL01`. Cluster state - node count, hostnames, install disks, Talos and Kubernetes versions, machine-config patches - is changed by editing this repository and applying via `make apply` / `make upgrade`. Out-of-band changes (direct `talosctl apply-config` from an operator workstation, manual `kubectl edit` of node-level state, ad-hoc scale-out without a PR) are NOT permitted, with the single exception of break-glass incidents that MUST be back-filled into this repository within seven days of the incident.
+
+The first automated enforcement is the in-cluster `talos-drift-readonly` CronJob. It uses a Talos `os:reader` credential and read-only Kubernetes RBAC to detect reduced drift across Talos/Kubernetes version pins, declared node InternalIPs, and Flux health. It deliberately does not read Talos `machineconfig`, because that resource contains secrets and requires `os:admin`.
 
 ## Context and Problem Statement
 
@@ -39,11 +41,13 @@ A repository that claims to be the source of truth for a production cluster but 
 
 ## Decision Outcome
 
-Chosen option: **Option 2, declare repo authoritative and commit to drift detection in a follow-up cycle.**
+Chosen option: **Option 2, declare repo authoritative and require automated drift detection.**
 
-This ADR (a) records that the repository IS the source of truth for cluster declarative state, (b) records the break-glass back-fill SLA, and (c) explicitly commits to a follow-up cycle that authors a drift-detection workflow. Bundling the drift-detection implementation into this ADR would force one of two unhealthy compromises: either the ADR PR balloons in scope and reviewability suffers, or the drift detector ships rushed and produces false positives that get muted before they're trusted.
+This ADR (a) records that the repository IS the source of truth for cluster declarative state, (b) records the break-glass back-fill SLA, and (c) requires automated drift detection. The first implementation is intentionally reduced and read-only; full machine-config drift detection remains a later protected apply-path concern.
 
-Drift detection is sketched here, not authored: a CI job runs `make generate` against a throwaway secrets bundle, then runs `talosctl --talosconfig <prod> diff` against each live node and posts the diff as a PR comment / scheduled-job artifact. The same job asserts that `kubectl version --output=json` on the cluster reports a server `gitVersion` whose major.minor matches `KUBERNETES_VERSION` in `cluster/config.env`. Anything non-empty fails the job. Implementation details (where the talosconfig credential comes from in CI, whether the job runs on a self-hosted runner with network access to the VIP, how often the scheduled job fires) belong in the follow-up ADR-and-PR.
+The original follow-up sketch was a CI job that would hold a production Talos credential, regenerate machine configs, and run `talosctl diff` against live nodes. That design is now deferred. A strict read-only credential cannot read Talos `machineconfig`, and putting an admin-capable credential into a generic CI drift job is the wrong first step for this cluster's runner foundation.
+
+The implemented first step is smaller but physically read-only: Flux reconciles `clusters/talos-cluster/apps/talos-drift/`, which runs hourly in-cluster with a SOPS-encrypted `os:reader` talosconfig. The pod compares `cluster/config.env`-derived expected state against `talosctl version --short`, the Kubernetes `/version` endpoint, Node status, and Flux `Kustomization`/`HelmRelease` Ready state. On drift it logs `DRIFT DETECTED`, emits a namespace-local warning Event, and exits non-zero so the Job is visibly failed. Machine-config drift remains deferred to the future protected apply path that will have an `os:admin` pod identity.
 
 ## Pros and Cons of the Options
 
@@ -72,7 +76,7 @@ Adherence to this ADR is confirmed by the following mechanisms. The wording `MUS
 
 1. **Out-of-band changes prohibited.** Direct `talosctl apply-config`, `talosctl upgrade`, manual `kubectl edit` of node-level state, and scale-out / scale-in performed outside a PR to this repository MUST NOT be the normal mode of operation.
 2. **Break-glass exception.** During an active incident, an operator MAY apply out-of-band changes if they materially shorten the time to restore service. The operator MUST back-fill the change into this repository within seven days of the incident, in a PR that links the incident write-up and explains why the in-repo path was not used.
-3. **Drift-detection follow-up.** A repo-tier follow-up ADR and implementing PR MUST author CI-side drift detection (a `talosctl diff` job and a server-version assertion) before the `Review-by` date in this ADR's metadata table. If the follow-up has not landed by that date, this ADR is re-opened.
+3. **Reduced read-only drift detection.** The in-cluster `talos-drift-readonly` CronJob MUST run with Talos `os:reader`, MUST NOT mount `.s3/secrets/secrets.yaml` or any admin-capable material, and MUST detect mismatches in Talos version, Kubernetes version, declared node InternalIPs, and Flux `Kustomization`/`HelmRelease` Ready state.
 4. **Version pin discipline.** `cluster/config.env` `TALOS_VERSION` and `KUBERNETES_VERSION` MUST be updated in the same PR that bumps the live cluster. The PR that runs the upgrade and the PR that updates the pin MAY be the same PR (the upgrade workflow's manual approval gate is the change-management point).
 5. **Reconciliation precedent.** The reconciliation PR that introduces this ADR is the recorded precedent for how drift is closed when discovered: regenerate locally, `talosctl validate --strict` on the regenerated configs, `talosctl diff` against the live cluster, then merge.
 
@@ -81,13 +85,13 @@ Adherence to this ADR is confirmed by the following mechanisms. The wording `MUS
 ### Positive
 
 - Reviewers and agents have an explicit rule to cite when an out-of-band change is proposed.
-- Future drift will be detected by CI rather than by accident during credential testing.
+- Reduced read-only drift is detected in-cluster rather than by accident during credential testing.
 - The break-glass exception is named explicitly, so operators are not forced to choose between policy violation and slower incident response.
 
 ### Negative
 
-- The policy is unenforced between this ADR and the follow-up implementation. The `Review-by` date bounds that gap.
-- Drift-detection CI requires the cluster's talosconfig in a CI runner that can reach the VIP, which is a new credential-handling surface. The follow-up ADR will address that risk explicitly.
+- Talos machine-config drift remains outside the strict read-only detector because `machineconfig` is admin-only.
+- The custom warning Event requires one namespace-local Kubernetes `events` create permission. All cluster and Flux access remains read-only.
 - Operators must remember to file a back-fill PR within seven days of a break-glass action; the policy relies on individual discipline at exactly the moment that discipline is hardest to maintain.
 
 ### Neutral
@@ -98,8 +102,8 @@ Adherence to this ADR is confirmed by the following mechanisms. The wording `MUS
 
 This decision rests on the following assumptions. If any becomes false, this ADR should be revisited:
 
-1. `talosctl --talosconfig <prod> diff --nodes <ip>` returns an empty diff when the local generated config matches the running machine config. (Held true for Talos 1.12 in practice; confirm before authoring the drift workflow.)
-2. A CI runner can be configured with network access to the cluster VIP without exposing the talosconfig broadly. The previous self-hosted apply workflow was retired in 2026-06; future drift automation must use the protected runner design rather than reusing a Talos-admin CI apply path.
+1. Talos `os:reader` continues to allow `version` while denying `machineconfig` and write operations.
+2. The future protected apply path can safely host an `os:admin` pod identity for machine-config drift and apply operations without exposing that identity to generic CI jobs.
 3. The portfolio remains single-maintainer, so the "PR review" gate is a self-review. Adding a second maintainer is itself a process change that may justify revisiting this ADR.
 
 ## Supersedes
@@ -108,11 +112,12 @@ None.
 
 ## Superseded by
 
-None (current). A follow-up ADR will be authored when the drift-detection workflow is implemented; that ADR refines but does not supersede this one.
+None (current). A future protected apply-path ADR may refine this one when machine-config drift detection is implemented.
 
 ## Implementing PRs
 
-The PR that introduces this ADR also implements the reconciliation that surfaced the drift (renaming patches to short names per [ADR-0002](0002-use-short-talos-hostnames.md), adding cp3/w3 to the inventory, bumping `KUBERNETES_VERSION` to v1.35.2, and correcting install disks to `/dev/nvme0n1`).
+- The PR that introduces this ADR also implements the reconciliation that surfaced the drift (renaming patches to short names per [ADR-0002](0002-use-short-talos-hostnames.md), adding cp3/w3 to the inventory, bumping `KUBERNETES_VERSION` to v1.35.2, and correcting install disks to `/dev/nvme0n1`).
+- The Step 18 PR implements reduced read-only in-cluster drift detection under `clusters/talos-cluster/apps/talos-drift/` and retires the dead self-hosted `drift.yaml` workflow.
 
 ## Related ADRs
 
@@ -121,7 +126,7 @@ The PR that introduces this ADR also implements the reconciliation that surfaced
 
 ## Compliance Notes
 
-This ADR records a process control rather than a technical one. The associated drift-detection workflow (follow-up) is the technical enforcement.
+This ADR records a process control plus the reduced read-only technical enforcement implemented by the `talos-drift-readonly` CronJob. Machine-config drift remains a deferred technical control.
 
 | Framework              | Control / Practice ID                              | Potential Evidence Contribution                                                                                                            |
 | ---------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
