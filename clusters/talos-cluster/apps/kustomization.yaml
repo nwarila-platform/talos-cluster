@@ -10,4 +10,5 @@ resources:
   - kyverno
   - metrics-server
   - namespace-hardening
+  - talos-drift
   - vault-aws-access

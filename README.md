@@ -160,7 +160,7 @@ The current cluster stack is:
 - **Policy:** Kyverno `3.8.1` is reconciled by Flux. The current image-signature policy is audit-mode: it records verification failures in policy reports without blocking admission yet.
 - **Storage:** Longhorn `1.11.2` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
 - **Secrets:** SOPS with age encrypts Kubernetes Secret payload fields in git; Flux decrypts them at reconcile time using the in-cluster `sops-age` secret.
-- **Safety net:** GitHub Actions validate configs, deploy through an approved self-hosted path, scan for secrets and compliance issues, detect drift, capture etcd snapshots, and keep organization ADR mirrors synchronized.
+- **Safety net:** GitHub Actions validate configs, scan for secrets and compliance issues, and keep organization ADR mirrors synchronized. Flux also runs the `talos-drift-readonly` CronJob in-cluster to detect reduced read-only drift for version pins, node InternalIPs, and Flux health.
 
 ---
 
@@ -173,12 +173,12 @@ This is a tracked-layout summary, not a byte-for-byte `git ls-files` dump. Use `
 | `cluster/config.env` | Single source of truth for cluster identity, node inventory, and Talos/Kubernetes/Cilium/Longhorn version pins. |
 | `cluster/patches/` | Talos strategic-merge patches for common, control-plane, worker, firewall, volume, and node-specific machine settings. |
 | `clusters/talos-cluster/flux-system/` | Flux bootstrap manifests and repository sync definition. |
-| `clusters/talos-cluster/apps/` | Flux-reconciled platform apps: deploy repo references, Gateway API, kubelet CSR approver, Kyverno, metrics-server, namespace hardening, and encrypted Vault AWS access material. |
+| `clusters/talos-cluster/apps/` | Flux-reconciled platform apps: deploy repo references, Gateway API, kubelet CSR approver, Kyverno, metrics-server, namespace hardening, encrypted Vault AWS access material, and read-only drift detection. |
 | `clusters/talos-cluster/tenants/` | Tenant namespace/network-policy definitions plus onboarding templates. |
 | `addons/` | Helm values retained for manually installed or adopted releases: `cilium`, `kubelet-csr-approver`, `kyverno`, `longhorn`, and `metrics-server`. |
 | `docs/` | Compliance notes and ADR mirrors split into org, template, and repo decision records. |
-| `scripts/` | Operator automation used by the Makefile: generate, apply, bootstrap, health, upgrade, S3 sync, drift, snapshot, tenant onboarding, and deploy-repo sync. |
-| `.github/workflows/` | CI, deploy, security, drift, snapshot, compliance, tenant, deploy-repo sync, and org ADR synchronization workflows. |
+| `scripts/` | Operator automation used by the Makefile: generate, apply, bootstrap, health, upgrade, S3 sync, local drift helpers, snapshot, tenant onboarding, deploy-repo sync, and read-only drift tests. |
+| `.github/workflows/` | CI, deploy, security, snapshot, compliance, tenant, deploy-repo sync, and org ADR synchronization workflows. |
 | `.sops.yaml` | SOPS/age encryption policy for Kubernetes Secret payload fields. |
 | `.github/CODEOWNERS`, `.github/renovate.json5`, `.pre-commit-config.yaml`, `.editorconfig` | Repository governance, dependency update, local validation, and editor-formatting controls. |
 | `Makefile` | Operator command entry point. Run `make help` to see supported commands. |
@@ -766,16 +766,20 @@ their next health check. Workloads referenced in the snapshot (Deployments,
 DaemonSets, StatefulSets, Helm releases tracked via Helm 3 Secrets) come back
 as etcd is repopulated.
 
-#### 7. Re-run drift detection to confirm repo and recovered state match
+#### 7. Check read-only drift signals after recovery
 
 ```bash
-bash scripts/drift-check.sh
+kubectl -n talos-drift get cronjob,jobs,pods,events
+kubectl -n talos-drift logs job/<latest-talos-drift-readonly-job>
 ```
 
-Any drift the workflow surfaces is something the snapshot didn't carry — for
-example, a Talos machine-config change that was made between the snapshot and
-the incident. Decide whether to reapply via `make apply` (preferred) or to
-accept the recovered state and back-port to the repo.
+After Flux is restored, the `talos-drift-readonly` CronJob confirms the
+Kubernetes/Talos version pins, declared node InternalIPs, and Flux
+Kustomization/HelmRelease health with credentials that cannot mutate Talos or
+cluster resources. It does not inspect Talos `machineconfig`; that resource is
+admin-only because it contains secrets. Machine-config drift must be checked by
+the future protected apply path, or by an operator workstation admin check during
+a recovery drill, before reapplying machine configs.
 
 > **Note:** Restore from snapshot has not yet been drilled against this
 > cluster. A follow-up cycle will run the drill against a sacrificial cluster
@@ -809,7 +813,6 @@ Repository-owned GitHub Actions workflows include:
 |---------|---------------|--------------|
 | Validate | `validate.yaml` | Runs PR validation for scripts, YAML, generated Talos configs, and secret hygiene. |
 | Security | `security.yaml` | Runs Gitleaks and the config audit on PRs, weekly schedule, and manual dispatch. |
-| Drift | `drift.yaml` | Compares repository-declared Talos state and Kubernetes version pins against the live cluster from a self-hosted runner. |
 | etcd snapshot | `etcd-snapshot.yaml` | Captures daily Talos etcd snapshots and uploads them to S3. |
 | Compliance | `kubescape.yaml` | Runs the pinned Kubescape CIS Kubernetes scan and uploads SARIF to GitHub Code Scanning. |
 | ARC smoke | `arc-smoke.yaml` | Manually verifies the `talos-arc-ci` runner scale set can execute a job. |
@@ -818,7 +821,14 @@ Repository-owned GitHub Actions workflows include:
 | Org ADR sync | `org-adr-sync.yaml` | Mirrors organization ADRs into `docs/decision-records/org/` on PRs, schedule, and manual dispatch. |
 | Org ADR auto-sync | `org-adr-auto-sync.yaml` | Scheduled/manual automation for keeping mirrored org ADRs current. |
 
-Talos apply and upgrade remain manual/loop operations from an operator workstation using `make apply` and `make upgrade`. CI-based Talos apply was intentionally removed so public-repo workflows do not hold a Talos admin config. The drift, etcd snapshot, and Kubescape workflows require self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
+Runtime drift detection is no longer a GitHub Actions workflow. Flux reconciles
+`clusters/talos-cluster/apps/talos-drift/`, which runs an hourly in-cluster
+CronJob using a SOPS-encrypted Talos `os:reader` config and a least-privilege
+Kubernetes ServiceAccount. The reduced detector covers version pins, node
+InternalIPs, and Flux health. It intentionally does not cover Talos
+machine-config drift because `machineconfig` is admin-only.
+
+Talos apply and upgrade remain manual/loop operations from an operator workstation using `make apply` and `make upgrade`. CI-based Talos apply was intentionally removed so public-repo workflows do not hold a Talos admin config. The etcd snapshot and Kubescape workflows require self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
 
 ---
 
