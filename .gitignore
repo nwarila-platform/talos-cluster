@@ -143,6 +143,7 @@
 !/cluster/patches/cp1.yaml
 !/cluster/patches/cp2.yaml
 !/cluster/patches/cp3.yaml
+!/cluster/patches/volumes-secureboot-tpm.yaml
 !/cluster/patches/volumes.yaml
 !/cluster/patches/w1.yaml
 !/cluster/patches/w2.yaml

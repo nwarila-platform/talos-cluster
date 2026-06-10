@@ -135,6 +135,8 @@ To estimate whether the node clock is sane, inspect resource metadata
 
 The node config used for install must contain:
 
+- the node name listed in `SECUREBOOT_TPM_NODES` in `cluster/config.env`
+  for the reprovision window only
 - install image:
 
   ```text
