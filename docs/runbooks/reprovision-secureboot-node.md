@@ -256,7 +256,41 @@ The TPM key is sealed to PCR 7, so the pre-apply SecureBoot gate is not optional
    - `50000` apid
    - `50001` trustd
 
-5. Restore scheduling only after the node is healthy and manageable.
+5. If the reprovisioned node is a Longhorn storage node, re-accept the fresh
+   `/var/mnt/longhorn` filesystem before restoring workload scheduling. A wiped
+   worker has a new filesystem UUID, so Longhorn reports the existing disk as
+   `DiskFilesystemChanged` until the stale recorded UUID is cleared. First prove
+   the Longhorn disk is empty:
+
+   ```bash
+   kubectl -n longhorn-system get nodes.longhorn.io <node> -o yaml
+   ```
+
+   In `status.diskStatus.<disk>`, confirm `storageScheduled: 0`, no
+   `scheduledReplica` entries, and no backing images for that disk. NEVER clear
+   the UUID on any disk that still holds replicas or backing images.
+
+   Re-accept only that node's disk by clearing the stale status UUID:
+
+   ```bash
+   kubectl -n longhorn-system patch nodes.longhorn.io <node> \
+     --subresource=status \
+     --type=merge \
+     -p '{"status":{"diskStatus":{"<disk>":{"diskUUID":""}}}}'
+   ```
+
+   Wait for Longhorn to reread the current filesystem UUID and prove the disk is
+   ready, schedulable, and has nonzero capacity:
+
+   ```bash
+   kubectl -n longhorn-system get nodes.longhorn.io <node> -o yaml
+   ```
+
+   Require `Ready=True`, `Schedulable=True`, and `storageMaximum > 0` for the
+   disk before the node can host replicas again.
+
+6. Restore scheduling only after the node is healthy, manageable, and the
+   Longhorn disk postcheck has passed.
 
 ## Recommendation
 
