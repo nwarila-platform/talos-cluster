@@ -42,6 +42,54 @@ set_hostname() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: staged SecureBoot+TPM migration node selection
+# ---------------------------------------------------------------------------
+is_secureboot_tpm_node() {
+    local node_name="$1"
+    local secureboot_node
+
+    for secureboot_node in ${SECUREBOOT_TPM_NODES:-}; do
+        if [[ "${node_name}" == "${secureboot_node}" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+write_secureboot_install_patch() {
+    local patch_file="$1"
+
+    if [[ -z "${TALOS_SECUREBOOT_INSTALL_IMAGE:-}" ]]; then
+        echo "ERROR: TALOS_SECUREBOOT_INSTALL_IMAGE is not set" >&2
+        exit 1
+    fi
+
+    cat > "${patch_file}" <<EOF
+machine:
+  install:
+    image: "${TALOS_SECUREBOOT_INSTALL_IMAGE}"
+EOF
+}
+
+patch_node_config() {
+    local base_config="$1"
+    local node_name="$2"
+    local output="$3"
+    local patch_args=(--patch @"${ROOT_DIR}/cluster/patches/${node_name}.yaml")
+
+    if is_secureboot_tpm_node "${node_name}"; then
+        local secureboot_install_patch="${TEMP_DIR}/${node_name}-secureboot-install.yaml"
+        write_secureboot_install_patch "${secureboot_install_patch}"
+        patch_args+=(--patch @"${secureboot_install_patch}")
+    fi
+
+    talosctl machineconfig patch "${base_config}" \
+        "${patch_args[@]}" \
+        --output "${output}"
+}
+
+# ---------------------------------------------------------------------------
 # Create directory structure
 # ---------------------------------------------------------------------------
 mkdir -p "${S3_DIR}/secrets"
@@ -87,18 +135,28 @@ echo "    Talosconfig saved."
 # Patch per-node control plane configs
 # ---------------------------------------------------------------------------
 VOLUMES_PATCH="${ROOT_DIR}/cluster/patches/volumes.yaml"
+SECUREBOOT_TPM_VOLUMES_PATCH="${ROOT_DIR}/cluster/patches/volumes-secureboot-tpm.yaml"
 FIREWALL_PATCH="${ROOT_DIR}/cluster/patches/firewall.yaml"
 
 # Append the multi-doc volumes patch (VolumeConfig + UserVolumeConfig).
 # `talosctl machineconfig patch` only strategically-merges the v1alpha1 main
-# doc; new top-level kinds like VolumeConfig must be appended after.
+# doc; new top-level kinds like VolumeConfig must be appended after. SecureBoot
+# nodes get a per-node variant that includes TPM-backed STATE/EPHEMERAL
+# encryption while legacy nodes keep the existing unencrypted volume docs.
 append_volumes() {
     local target="$1"
-    if [[ ! -f "${VOLUMES_PATCH}" ]]; then
-        echo "ERROR: ${VOLUMES_PATCH} missing" >&2
+    local node_name="$2"
+    local volumes_patch="${VOLUMES_PATCH}"
+
+    if is_secureboot_tpm_node "${node_name}"; then
+        volumes_patch="${SECUREBOOT_TPM_VOLUMES_PATCH}"
+    fi
+
+    if [[ ! -f "${volumes_patch}" ]]; then
+        echo "ERROR: ${volumes_patch} missing" >&2
         exit 1
     fi
-    cat "${VOLUMES_PATCH}" >> "${target}"
+    cat "${volumes_patch}" >> "${target}"
 }
 
 # Append the multi-doc host ingress firewall patch (NetworkDefaultActionConfig
@@ -121,12 +179,13 @@ for entry in ${CP_NODES}; do
     node_hostname=$(echo "${node_name}" | tr '[:upper:]' '[:lower:]')
     echo "    ${node_name} (${ip}) → hostname: ${node_hostname}"
 
-    talosctl machineconfig patch "${TEMP_DIR}/controlplane.yaml" \
-        --patch @"${ROOT_DIR}/cluster/patches/${node_name}.yaml" \
-        --output "${S3_DIR}/generated/controlplane/${node_name}.yaml"
+    patch_node_config \
+        "${TEMP_DIR}/controlplane.yaml" \
+        "${node_name}" \
+        "${S3_DIR}/generated/controlplane/${node_name}.yaml"
 
     set_hostname "${S3_DIR}/generated/controlplane/${node_name}.yaml" "${node_hostname}"
-    append_volumes "${S3_DIR}/generated/controlplane/${node_name}.yaml"
+    append_volumes "${S3_DIR}/generated/controlplane/${node_name}.yaml" "${node_name}"
     append_firewall "${S3_DIR}/generated/controlplane/${node_name}.yaml"
 done
 
@@ -140,12 +199,13 @@ for entry in ${WORKER_NODES}; do
     node_hostname=$(echo "${node_name}" | tr '[:upper:]' '[:lower:]')
     echo "    ${node_name} (${ip}) → hostname: ${node_hostname}"
 
-    talosctl machineconfig patch "${TEMP_DIR}/worker.yaml" \
-        --patch @"${ROOT_DIR}/cluster/patches/${node_name}.yaml" \
-        --output "${S3_DIR}/generated/worker/${node_name}.yaml"
+    patch_node_config \
+        "${TEMP_DIR}/worker.yaml" \
+        "${node_name}" \
+        "${S3_DIR}/generated/worker/${node_name}.yaml"
 
     set_hostname "${S3_DIR}/generated/worker/${node_name}.yaml" "${node_hostname}"
-    append_volumes "${S3_DIR}/generated/worker/${node_name}.yaml"
+    append_volumes "${S3_DIR}/generated/worker/${node_name}.yaml" "${node_name}"
     append_firewall "${S3_DIR}/generated/worker/${node_name}.yaml"
 done
 
