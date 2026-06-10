@@ -137,6 +137,74 @@ jobs:
       - name: Render cluster Kustomize tree
         run: kubectl kustomize clusters/talos-cluster >/dev/null
 
+      - name: Check rendered resource namespaces
+        run: |
+          set -euo pipefail
+          rendered="$(mktemp)"
+          kubectl kustomize clusters/talos-cluster >"${rendered}"
+
+          python3 - "${rendered}" <<'PY'
+          import re
+          import sys
+
+          cluster_scoped_kinds = {
+              "APIService",
+              "ClusterPolicy",
+              "ClusterRole",
+              "ClusterRoleBinding",
+              "CustomResourceDefinition",
+              "GatewayClass",
+              "MutatingWebhookConfiguration",
+              "Namespace",
+              "PriorityClass",
+              "StorageClass",
+              "ValidatingWebhookConfiguration",
+          }
+
+          def top_level_field(lines, field):
+              prefix = f"{field}:"
+              for line in lines:
+                  if line.startswith(prefix):
+                      return line.split(":", 1)[1].strip()
+              return ""
+
+          def metadata_field(lines, field):
+              in_metadata = False
+              prefix = f"  {field}:"
+              for line in lines:
+                  if line == "metadata:":
+                      in_metadata = True
+                      continue
+                  if not in_metadata:
+                      continue
+                  if line and not line.startswith(" "):
+                      break
+                  if line.startswith(prefix):
+                      return line.split(":", 1)[1].strip()
+              return ""
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              rendered = handle.read()
+
+          missing = []
+          for index, doc in enumerate(re.split(r"(?m)^---\s*$", rendered), start=1):
+              lines = [line.rstrip("\r") for line in doc.splitlines()]
+              kind = top_level_field(lines, "kind")
+              if not kind:
+                  continue
+              namespace = metadata_field(lines, "namespace")
+              if namespace or kind in cluster_scoped_kinds:
+                  continue
+              name = metadata_field(lines, "name") or f"document-{index}"
+              missing.append(f"{kind}/{name}")
+
+          if missing:
+              print("Rendered namespaced resources missing metadata.namespace:")
+              for resource in missing:
+                  print(f"- {resource}")
+              sys.exit(1)
+          PY
+
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
