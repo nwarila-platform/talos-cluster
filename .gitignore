@@ -71,6 +71,9 @@
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
 !/clusters/talos-cluster/apps/kyverno/release/helmrepository.yaml
 !/clusters/talos-cluster/apps/kyverno/release/kustomization.yaml
+!/clusters/talos-cluster/apps/longhorn-vault-storage/
+!/clusters/talos-cluster/apps/longhorn-vault-storage/kustomization.yaml
+!/clusters/talos-cluster/apps/longhorn-vault-storage/storageclass.yaml
 !/clusters/talos-cluster/apps/metrics-server/
 !/clusters/talos-cluster/apps/metrics-server/helmrelease.yaml
 !/clusters/talos-cluster/apps/metrics-server/helmrepository.yaml
@@ -213,6 +216,7 @@
 !/docs/decision-records/repo/0010-adopt-kyverno-policy-engine.md
 !/docs/decision-records/repo/0011-auto-discover-deploy-repositories.md
 !/docs/decision-records/repo/0012-vault-kms-auto-unseal-credential-delivery.md
+!/docs/decision-records/repo/0013-use-dedicated-vault-longhorn-storageclass.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep
 !/docs/decision-records/org/0005-keep-github-control-planes-namespace-local.md

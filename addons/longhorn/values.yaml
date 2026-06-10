@@ -19,10 +19,12 @@ defaultSettings:
   # dedicated 50-240 GiB volume.
   defaultDataPath: /var/mnt/longhorn
 
-  # 2-way replication is the small-cluster sweet spot for 6 nodes with
-  # 3 worker storage targets: tolerates one node loss, doesn't over-fan
-  # writes. Chart default is 3. The defaultClassReplicaCount below pins
-  # the same number for the StorageClass.
+  # 2-way replication remains the small-cluster default for ordinary PVCs:
+  # it tolerates one node loss without applying 3x storage cost to every
+  # workload. Bootstrap-critical PVCs that must survive worker reprovisioning
+  # opt into dedicated StorageClasses, such as longhorn-vault. Chart default
+  # is 3. The defaultClassReplicaCount below pins the same number for the
+  # default StorageClass.
   defaultReplicaCount: 2
 
   # Force-delete pods stranded on a downed node so the StatefulSet/

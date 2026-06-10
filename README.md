@@ -510,7 +510,7 @@ helm install longhorn longhorn/longhorn \
     -f addons/longhorn/values.yaml
 ```
 
-The `values.yaml` makes `longhorn` the cluster's default `StorageClass` and sets `defaultDataPath: /var/mnt/longhorn` so Longhorn writes to the Talos `UserVolumeConfig` declared in `cluster/patches/volumes.yaml` (50–240 GiB carved out of every node's system disk). See [ADR-0007](docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md) for the rationale behind each non-default value.
+The `values.yaml` makes `longhorn` the cluster's default `StorageClass` and sets `defaultDataPath: /var/mnt/longhorn` so Longhorn writes to the Talos `UserVolumeConfig` declared in `cluster/patches/volumes.yaml` (50–240 GiB carved out of every node's system disk). Vault uses the separate Flux-owned `longhorn-vault` StorageClass for 3-replica, hard node anti-affinity volumes. See [ADR-0007](docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md) and [ADR-0013](docs/decision-records/repo/0013-use-dedicated-vault-longhorn-storageclass.md) for the rationale behind these storage defaults.
 
 ### Step 11: Verify Everything Works
 

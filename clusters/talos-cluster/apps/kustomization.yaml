@@ -8,6 +8,7 @@ resources:
   - gateway-api
   - kubelet-csr-approver
   - kyverno
+  - longhorn-vault-storage
   - metrics-server
   - namespace-hardening
   - talos-drift
