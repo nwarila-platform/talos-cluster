@@ -11,7 +11,9 @@ scripts/build-maintenance-iso.sh <node>
 ```
 
 That script pins the static `ip=` kernel argument to `eno1` and refuses an empty
-device field before it posts a schematic to Talos Factory.
+device field before it posts a schematic to Talos Factory. The maintenance ISO
+is intentionally non-destructive; do not hand-add a wipe-on-boot kernel
+argument.
 
 ## Scope And Guardrails
 
@@ -74,6 +76,7 @@ device field before it posts a schematic to Talos Factory.
    - the current repo schematic extensions from `TALOS_SCHEMATIC_ID`
    - `talos.halt_if_installed=0`
    - the pinned `ip=...:eno1:off` static network argument
+   - no `talos.experimental.wipe=...` argument
 
 The w3 canary failed repeatedly when a hand-built ISO used `ip=...:w3::off`.
 That empty device field caused the kernel to apply the address to multiple
@@ -131,6 +134,44 @@ commands are known traps:
 To estimate whether the node clock is sane, inspect resource metadata
 `created`/`updated` timestamps from resources that do work in maintenance mode.
 
+## Wipe Existing STATE/EPHEMERAL
+
+Do this only after the SecureBoot gate above reports `SECUREBOOT: true`.
+
+Talos v1.13 documents two reset mechanisms in the
+[kernel reference](https://docs.siderolabs.com/talos/v1.13/reference/kernel.md)
+and the
+[reset runbook](https://docs.siderolabs.com/talos/v1.13/configure-your-talos-cluster/lifecycle-management/resetting-a-machine.md):
+
+- `talos.experimental.wipe=system` resets the system disk on next boot.
+- `talos.experimental.wipe=system:EPHEMERAL,STATE` resets only EPHEMERAL and
+  STATE, which reverts Talos into maintenance mode.
+- `talosctl reset --system-labels-to-wipe STATE --system-labels-to-wipe EPHEMERAL`
+  wipes only those selected system disk partitions by label.
+
+Do not bake `talos.experimental.wipe=...` into the maintenance ISO for this
+fleet. A wipe-on-boot ISO is destructive on every boot and would run before the
+operator has proved the maintenance boot is enforcing SecureBoot. Keep the ISO
+safe to boot, then wipe deliberately from maintenance mode:
+
+```bash
+talosctl --talosconfig .s3/configs/talosconfig \
+  -e <node-ip> \
+  -n <node-ip> \
+  reset -i \
+  --graceful=false \
+  --reboot \
+  --system-labels-to-wipe STATE \
+  --system-labels-to-wipe EPHEMERAL
+```
+
+The `-i`/`--insecure` reset path uses the maintenance service, which is the
+right mode after booting the SecureBoot maintenance ISO. `--graceful=false`
+avoids Kubernetes/etcd drain handling because this is already an evacuated node
+in maintenance mode. `--reboot` brings the node back to the same non-destructive
+maintenance ISO after the partition wipe; wait for the maintenance API to
+return before applying the generated node config.
+
 ## Install Config Requirements
 
 The node config used for install must contain:
@@ -157,7 +198,8 @@ The TPM key is sealed to PCR 7, so the pre-apply SecureBoot gate is not optional
 
 ## Install And Postchecks
 
-1. Apply the generated node config only after the SecureBoot gate passes.
+1. Apply the generated node config only after the SecureBoot gate passes and
+   the documented STATE/EPHEMERAL reset has rebooted back to maintenance mode.
 2. Reboot or power-cycle physically as needed.
 3. Confirm the node rejoins:
 
