@@ -10,6 +10,7 @@ reclaimPolicy: Delete
 volumeBindingMode: Immediate
 parameters:
   numberOfReplicas: "3"
+  nodeSelector: vault
   fsType: ext4
   dataLocality: disabled
   replicaSoftAntiAffinity: disabled

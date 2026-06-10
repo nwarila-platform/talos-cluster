@@ -6,7 +6,7 @@
 | Date           | 2026-06-10                              |
 | Authors        | Nick Warila (@NWarila), Codex           |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
-| Consulted      | Longhorn 1.11.2 StorageClass and scheduling documentation |
+| Consulted      | Longhorn 1.11.2 StorageClass, storage tag, and Node CRD documentation |
 | Informed       | Claude, future reviewers                |
 | Reversibility  | Medium                                  |
 | Review-by      | N/A (Accepted)                          |
@@ -34,6 +34,8 @@ Longhorn redundancy that losing one worker leaves at least two healthy copies.
    workload repo should explicitly request that policy.
 5. Existing broken volumes must not be mutated by this repo-only step; the live
    recreate remains a separate owner-gated operation.
+6. Vault replicas must be confined to the three worker Longhorn nodes; the
+   default `longhorn` class must remain usable on all six Longhorn nodes.
 
 ## Considered Options
 
@@ -51,9 +53,17 @@ Chosen option: **Option 1, add a dedicated `longhorn-vault` StorageClass.**
 Flux-owned, non-default StorageClass with:
 
 - `numberOfReplicas: "3"`
+- `nodeSelector: vault`
 - `dataLocality: disabled`
 - `replicaSoftAntiAffinity: disabled`
 - `replicaDiskSoftAntiAffinity: disabled`
+
+Longhorn's StorageClass `nodeSelector` parameter matches Longhorn node tags,
+not Kubernetes node labels. The same Flux-owned kustomization declares the
+Longhorn `Node` CR tag policy: `w1`, `w2`, and `w3` carry the `vault` tag;
+`cp1`, `cp2`, and `cp3` declare an empty tag set. This confines new
+`longhorn-vault` replicas to workers while leaving the default `longhorn`
+StorageClass unrestricted.
 
 `deploy-vault` now requests `storageClassName: longhorn-vault` in the Vault
 StatefulSet volume claim template, and this repository pins the deploy-vault
@@ -95,7 +105,7 @@ faulted Vault volumes must be recreated in a separately gated live step.
 ### Positive
 
 - New Vault volumes should provision with three replicas on distinct schedulable
-  Longhorn nodes.
+  worker Longhorn nodes.
 - Losing or reprovisioning one worker should leave two surviving replicas if
   the preflight confirms the actual live placement before the node is drained or
   powered down.
@@ -105,10 +115,9 @@ faulted Vault volumes must be recreated in a separately gated live step.
 
 - The guarantee is limited to new volumes. Existing PVCs keep their old
   StorageClass parameters until recreated.
-- Worker-only placement cannot be proven from repo state alone unless Longhorn
-  worker node tags are also declared and verified. The runbook therefore gates
-  each reprovision on observed live replica placement: for Vault, at least two
-  healthy replicas must already exist on the other workers.
+- The worker inventory is now part of the storage policy. Adding, renaming, or
+  retiring Longhorn nodes requires updating the Flux-owned tag manifest before
+  relying on the `longhorn-vault` class.
 
 ### Neutral
 
@@ -120,10 +129,13 @@ faulted Vault volumes must be recreated in a separately gated live step.
 
 1. `kubectl kustomize clusters/talos-cluster` renders a StorageClass named
    `longhorn-vault` with `numberOfReplicas: "3"` and
-   `replicaSoftAntiAffinity: disabled`.
+   `nodeSelector: vault`.
 2. The rendered deploy-vault GitRepository pins to a commit whose Vault
    StatefulSet requests `storageClassName: longhorn-vault`.
-3. `docs/runbooks/reprovision-secureboot-node.md` requires a Longhorn
+3. The same rendered tree declares Longhorn `Node` resources with the `vault`
+   tag only on `w1`, `w2`, and `w3`; `cp1`, `cp2`, and `cp3` render with
+   `tags: []`.
+4. `docs/runbooks/reprovision-secureboot-node.md` requires a Longhorn
    replica-health preflight before any worker is drained or powered down.
 
 ## Related ADRs

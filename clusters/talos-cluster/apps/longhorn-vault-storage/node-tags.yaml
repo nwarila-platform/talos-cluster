@@ -1,0 +1,52 @@
+# Longhorn node tags used by the longhorn-vault StorageClass.
+# These are Longhorn Node CR tags, not Kubernetes node labels.
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: cp1
+  namespace: longhorn-system
+spec:
+  tags: []
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: cp2
+  namespace: longhorn-system
+spec:
+  tags: []
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: cp3
+  namespace: longhorn-system
+spec:
+  tags: []
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: w1
+  namespace: longhorn-system
+spec:
+  tags:
+    - vault
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: w2
+  namespace: longhorn-system
+spec:
+  tags:
+    - vault
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: w3
+  namespace: longhorn-system
+spec:
+  tags:
+    - vault
