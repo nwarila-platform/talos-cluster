@@ -223,6 +223,17 @@ None (current).
   `certgen`, `hubble-ui-backend`, `hubble-ui`, and `startup-script`; revisit
   them on every Cilium chart bump or when upstream starts publishing signatures
   for those images.
+- Step 8b mutateDigest follow-up: live admission logs showed signed Cilium and
+  Kyverno tag references failing with `no signatures found` because
+  `mutateDigest: false` prevented Kyverno from resolving tags to immutable
+  digests before cosign lookup. Cosign signatures are digest-keyed, so the
+  policy now sets `mutateDigest: true` on the signed image rules. Kyverno
+  resolves the admitted Pod image to its digest, verifies the digest-keyed
+  signature, and pins the admitted Pod image reference to the digest. The
+  policy also disables Pod-controller autogen with
+  `pod-policies.kyverno.io/autogen-controllers: none` so Helm/Flux-managed
+  Deployments, StatefulSets, and DaemonSets are not rewritten by admission
+  mutation; controller-created Pods still match the Pod rule at admission.
 - Step 8c (follow-up): Promote verified image families from audit to enforce
   once PolicyReports show consistent `pass` across all matched images and any
   unsignable exceptions are documented.
