@@ -202,6 +202,17 @@ None (current).
   `reg.kyverno.io` to the signed `ghcr.io/kyverno/*` source and verified via the
   upstream signature repository `ghcr.io/kyverno/signatures`; the
   `reg.kyverno.io` v1.18.1 mirrors returned `no signatures found` under cosign.
+- Step 8b convergence follow-up: Kyverno `v1.18.1` component signatures
+  (`kyverno`, `kyvernopre`, `kyverno-cli`, `background-controller`,
+  `cleanup-controller`, `reports-controller`) are in
+  `ghcr.io/kyverno/signatures`, not co-located with the component repositories,
+  so the policy pins exact component references and puts the alternate
+  repository on the attestor entry. Cilium `1.19.4` release images
+  (`cilium`, `cilium-envoy`, `operator-*`, `hubble-relay`,
+  `clustermesh-apiserver`) are signed co-located at their chart-pinned digests.
+  The explicit Cilium exceptions remain `certgen`, `hubble-ui-backend`,
+  `hubble-ui`, and `startup-script`; revisit them on every Cilium chart bump or
+  when upstream starts publishing signatures for those images.
 - Step 8c (follow-up): Promote verified image families from audit to enforce
   once PolicyReports show consistent `pass` across all matched images and any
   unsignable exceptions are documented.
