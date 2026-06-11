@@ -22,6 +22,11 @@ This ADR intentionally lands the engine before landing image verification
 policies. Kyverno CRDs and webhooks must be healthy first; audit/enforce image
 policies are follow-up PRs.
 
+Current image verification posture is intentionally scoped: Flux and
+nwarila-platform images are enforced, while Cilium and Kyverno remain in Audit.
+The split reflects the actual signature formats each upstream publishes and the
+verification paths Kyverno can consume today.
+
 ## Context and Problem Statement
 
 ADR-0009 records image signature verification as an accepted compliance gap
@@ -96,6 +101,54 @@ The first implementation PR does **not** add image verification policies.
 Follow-up PRs will add audit-mode policies first, inspect PolicyReports, then
 move specific image families to enforce only after the current cluster images
 are proven signed and exceptions are documented.
+
+## Image Verification Follow-up Status
+
+The Step 8 image-verification follow-ups proved that one global Enforce setting
+is not currently correct for this cluster. The policy now uses per-rule
+`failureAction` values:
+
+- Flux (`ghcr.io/fluxcd/*`) and nwarila-platform
+  (`ghcr.io/nwarila-platform/*`) are `Enforce`.
+- Cilium (`quay.io/cilium/*`) and Kyverno (`ghcr.io/kyverno/*`) remain
+  `Audit`.
+- All four `verifyImages` entries use `mutateDigest: false`.
+- The top-level `validationFailureAction` stays `Audit`; per-rule
+  `failureAction: Enforce` on Flux and nwarila-platform is the scoped override.
+
+Root cause: Kyverno's `verifyImages` signature verifier consumes the legacy
+co-located `sha256-<digest>.sig` signature layout. Flux and nwarila-platform
+images have a verification path that works with that verifier and were proven
+safe in Audit before promotion. Cilium publishes OCI referrer signatures in
+`quay.io`, and Kyverno publishes signatures through
+`ghcr.io/kyverno/signatures` as digest-keyed Sigstore bundle tags. Those
+referrer/bundle signature formats are not consumable by Kyverno `verifyImages`
+as signatures.
+
+Egress was not the cause. The Step 47 investigation proved the Kyverno webhook
+could reach the Sigstore services it needed; the remaining Cilium/Kyverno
+behavior is a signature-format/tooling mismatch, not a network-policy failure.
+
+The newer Kubernetes `ImageValidatingPolicy` path did not provide a clean
+replacement. Step 49 found that Kyverno's `SigstoreBundle` support in
+ImageValidatingPolicy is for attestations, not image signatures. Step 50 then
+tested the attestation route: Cilium publishes SPDX SBOM attestations with
+predicate type `https://spdx.dev/Document` and cosign-sign attestations, but no
+SLSA provenance; Kyverno publishes SLSA v0.2 provenance signed by the
+`slsa-framework/slsa-github-generator` identity. In this deployment, the
+in-cluster ImageValidatingPolicy/SigstoreBundle path emitted no results, even
+for a sanity policy that should always fail, so it is not a functional
+enforcement path yet.
+
+Future options to revisit full coverage:
+
+1. Debug the ImageValidatingPolicy/ValidatingAdmissionPolicy path until a
+   trivial policy emits results, then use it for Kyverno SLSA v0.2 provenance
+   and Cilium SBOM attestation checks.
+2. Re-sign or mirror Cilium and Kyverno images into an internal registry using
+   legacy co-located `.sig` signatures Kyverno `verifyImages` can consume.
+3. Move Cilium and Kyverno signatures to Enforce if a future Kyverno release
+   adds signature verification for referrer/bundle formats.
 
 ## Pros and Cons of the Options
 
@@ -253,9 +306,27 @@ None (current).
   Audit with `mutateDigest: false` so it is accepted by Kyverno and stops
   blocking admission while preserving the corrected attestors, Kyverno
   item-level signature `repository`, Cilium helper skips, and autogen disable.
-  The remaining root causes are tracked separately: Kyverno separate signature
-  repository handling in live admission and Cilium `quay.io` reachability or
-  lookup behavior.
+  Follow-up investigation proved reachability was not the cause; the durable
+  cause is that Cilium and Kyverno publish referrer/bundle signatures Kyverno
+  `verifyImages` cannot consume as signatures.
+- Step 47 investigation: Sigstore egress from the Kyverno admission path was
+  proven reachable, so the Cilium/Kyverno failures were not caused by network
+  policy or registry egress.
+- Step 49 investigation: Kyverno's newer ImageValidatingPolicy
+  `SigstoreBundle` support is attestation-oriented and does not add
+  referrer/bundle image signature verification for the Cilium/Kyverno case.
+- Step 50 attestation spike: Cilium publishes SPDX SBOM and cosign-sign
+  attestations but no SLSA provenance; Kyverno publishes SLSA v0.2 provenance
+  under the `slsa-framework/slsa-github-generator` identity. The in-cluster
+  ImageValidatingPolicy/SigstoreBundle path did not emit results, including for
+  an always-false sanity policy, so it is not a viable enforcement mechanism in
+  this deployment yet.
+- Step 51 scoped-enforce follow-up: the policy promotes only Flux and
+  nwarila-platform image verification to `failureAction: Enforce`, leaves
+  Cilium and Kyverno at `failureAction: Audit`, keeps all four rules at
+  `mutateDigest: false`, and leaves the top-level
+  `validationFailureAction: Audit` as the default. This closes the portion that
+  is canary-proven enforceable without falsely claiming full upstream coverage.
 
 ## Compliance Notes
 
