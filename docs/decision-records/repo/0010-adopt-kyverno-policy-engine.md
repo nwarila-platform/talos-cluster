@@ -246,6 +246,16 @@ None (current).
   the matched running images are canaried with server-side dry-runs before
   trusting live enforcement; rollback is reverting this promotion to the last
   audit policy if any matched image is blocked unexpectedly.
+- Step 8c rollback follow-up: full Enforce was attempted and rolled back after
+  the live canary showed the admission engine denying real Kyverno and Cilium
+  images with `no signatures found`, even though cosign verifies the images.
+  Flux and nwarila-platform images verified cleanly. The policy returns to
+  Audit with `mutateDigest: false` so it is accepted by Kyverno and stops
+  blocking admission while preserving the corrected attestors, Kyverno
+  item-level signature `repository`, Cilium helper skips, and autogen disable.
+  The remaining root causes are tracked separately: Kyverno separate signature
+  repository handling in live admission and Cilium `quay.io` reachability or
+  lookup behavior.
 
 ## Compliance Notes
 
