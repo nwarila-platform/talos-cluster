@@ -234,9 +234,18 @@ None (current).
   `pod-policies.kyverno.io/autogen-controllers: none` so Helm/Flux-managed
   Deployments, StatefulSets, and DaemonSets are not rewritten by admission
   mutation; controller-created Pods still match the Pod rule at admission.
-- Step 8c (follow-up): Promote verified image families from audit to enforce
-  once PolicyReports show consistent `pass` across all matched images and any
-  unsignable exceptions are documented.
+- Step 8c controlled-enforce follow-up: Kyverno rejects the otherwise desired
+  `mutateDigest: true` plus `failureAction: Audit` combination with
+  `mutateDigest must be set to false for 'Audit' failure action`. Tag-to-digest
+  resolution is required for the signed Cilium and Kyverno tag references, so
+  the valid combination is `failureAction: Enforce` with `mutateDigest: true`.
+  The policy therefore promotes all four signed image rules, plus the top-level
+  `validationFailureAction`, to `Enforce` while keeping the image scope, Cilium
+  helper `skipImageReferences`, and
+  `pod-policies.kyverno.io/autogen-controllers: none` unchanged. Post-merge,
+  the matched running images are canaried with server-side dry-runs before
+  trusting live enforcement; rollback is reverting this promotion to the last
+  audit policy if any matched image is blocked unexpectedly.
 
 ## Compliance Notes
 

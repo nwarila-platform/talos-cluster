@@ -1,14 +1,13 @@
-# ClusterPolicy: verify-image-signatures (Step 8b - audit-mode pilot)
+# ClusterPolicy: verify-image-signatures (Step 8c - controlled enforce)
 #
-# Audit-only cosign keyless signature verification for image families known to
+# Enforced cosign keyless signature verification for image families known to
 # publish sigstore signatures via GitHub Actions OIDC. Cilium is matched at the
 # image-family level so signed release digest rotation does not require policy
 # churn; known unsigned helper families are skipped explicitly.
-# This policy intentionally does not enforce; failures appear in PolicyReports
-# only. See ADR-0010.
+# Signature failures for matched, unskipped Pod images are denied. See ADR-0010.
 #
 # Scope: Flux, Cilium, Kyverno, and nwarila-platform GHCR images. Longhorn,
-# registry.k8s.io, and other image families are out of scope for this pilot;
+# registry.k8s.io, and other image families are out of scope for this policy;
 # they fall through without evaluation because their registries are not listed
 # in imageReferences. Kyverno release images are verified from GHCR because the
 # reg.kyverno.io v1.18.1 mirrors do not expose discoverable cosign signatures.
@@ -18,23 +17,23 @@
 # Sigstore reachability: the kyverno chart NetworkPolicies restrict Ingress
 # only; egress to rekor.sigstore.dev and fulcio.sigstore.dev is unrestricted.
 # webhookConfiguration.failurePolicy is set to Ignore so webhook/network errors
-# do not block admission while in audit mode.
+# remain non-blocking while signature failures from a reachable webhook enforce.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: verify-image-signatures
   annotations:
     pod-policies.kyverno.io/autogen-controllers: none
-    policies.kyverno.io/title: Verify Image Signatures (Audit)
+    policies.kyverno.io/title: Verify Image Signatures (Enforce)
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Audit-mode keyless cosign signature verification for Flux, Cilium,
-      Kyverno, and nwarila-platform GHCR images. Generates PolicyReports without
-      blocking admission.
+      Enforced keyless cosign signature verification for Flux, Cilium, Kyverno,
+      and nwarila-platform GHCR images. Resolves tags to digests and denies
+      unmatched signatures for the scoped image families.
 spec:
-  validationFailureAction: Audit
+  validationFailureAction: Enforce
   background: true
   webhookConfiguration:
     failurePolicy: Ignore
@@ -48,7 +47,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/fluxcd/*"
-          failureAction: Audit
+          failureAction: Enforce
           mutateDigest: true
           required: true
           attestors:
@@ -79,7 +78,7 @@ spec:
             - "quay.io/cilium/hubble-ui@sha256:*"
             - "quay.io/cilium/startup-script:*"
             - "quay.io/cilium/startup-script@sha256:*"
-          failureAction: Audit
+          failureAction: Enforce
           mutateDigest: true
           required: true
           attestors:
@@ -104,7 +103,7 @@ spec:
             - "ghcr.io/kyverno/cleanup-controller:v1.18.1"
             - "ghcr.io/kyverno/reports-controller:v1.18.1"
           repository: "ghcr.io/kyverno/signatures"
-          failureAction: Audit
+          failureAction: Enforce
           mutateDigest: true
           required: true
           attestors:
@@ -123,7 +122,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nwarila-platform/*"
-          failureAction: Audit
+          failureAction: Enforce
           mutateDigest: true
           required: true
           attestors:
