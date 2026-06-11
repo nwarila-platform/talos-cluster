@@ -7,7 +7,8 @@
 # Scope: Flux, Cilium, Kyverno, and nwarila-platform GHCR images. Longhorn,
 # registry.k8s.io, and other image families are out of scope for this pilot;
 # they fall through without evaluation because their registries are not listed
-# in imageReferences.
+# in imageReferences. Kyverno release images are verified from GHCR because the
+# reg.kyverno.io v1.18.1 mirrors do not expose discoverable cosign signatures.
 #
 # Sigstore reachability: the kyverno chart NetworkPolicies restrict Ingress
 # only; egress to rekor.sigstore.dev and fulcio.sigstore.dev is unrestricted.
@@ -60,6 +61,13 @@ spec:
       verifyImages:
         - imageReferences:
             - "quay.io/cilium/*"
+          # Cilium 1.19.4 signs the core multi-arch images, but these helper
+          # images are not discoverably signed at their chart-pinned digests.
+          skipImageReferences:
+            - "quay.io/cilium/certgen:v0.4.3@sha256:d63d1cb3ee6db2167cb1ca9e7e31f30b6197846fcf42505d8f59e2f090a42c86"
+            - "quay.io/cilium/hubble-ui-backend:v0.13.5@sha256:fac0c300ae119274edca11fd89b1ad23c788792d8bc4ea2ba631c709e8d3c688"
+            - "quay.io/cilium/hubble-ui:v0.13.5@sha256:f7d514fc54d784ed6df9d58cf0e97648b143f92b766dd1780ed3fc845bd4c516"
+            - "quay.io/cilium/startup-script:1763560095-8f36c34@sha256:50b9cf9c280096b59b80d2fc8ee6638facef79ac18998a22f0cbc40d5d28c16f"
           failureAction: Audit
           mutateDigest: false
           required: true
@@ -67,7 +75,7 @@ spec:
             - entries:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
-                    subjectRegExp: "^https://github\\.com/cilium/.+/\\.github/workflows/.+@refs/.+$"
+                    subjectRegExp: "^https://github\\.com/cilium/(cilium/\\.github/workflows/build-images-releases\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+|proxy/\\.github/workflows/build-envoy-images-release-base\\.yaml@refs/heads/v[0-9]+\\.[0-9]+)$"
                     rekor:
                       url: "https://rekor.sigstore.dev"
     - name: verify-kyverno-images
@@ -78,7 +86,8 @@ spec:
                 - Pod
       verifyImages:
         - imageReferences:
-            - "reg.kyverno.io/kyverno/*"
+            - "ghcr.io/kyverno/*"
+          repository: "ghcr.io/kyverno/signatures"
           failureAction: Audit
           mutateDigest: false
           required: true
@@ -86,7 +95,7 @@ spec:
             - entries:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
-                    subjectRegExp: "^https://github\\.com/kyverno/.+/\\.github/workflows/.+@refs/.+$"
+                    subjectRegExp: "^https://github\\.com/kyverno/kyverno/\\.github/workflows/release\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"
                     rekor:
                       url: "https://rekor.sigstore.dev"
     - name: verify-nwarila-platform-images
