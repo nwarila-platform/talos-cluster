@@ -205,14 +205,24 @@ None (current).
 - Step 8b convergence follow-up: Kyverno `v1.18.1` component signatures
   (`kyverno`, `kyvernopre`, `kyverno-cli`, `background-controller`,
   `cleanup-controller`, `reports-controller`) are in
-  `ghcr.io/kyverno/signatures`, not co-located with the component repositories,
-  so the policy pins exact component references and puts the alternate
-  repository on the attestor entry. Cilium `1.19.4` release images
-  (`cilium`, `cilium-envoy`, `operator-*`, `hubble-relay`,
-  `clustermesh-apiserver`) are signed co-located at their chart-pinned digests.
-  The explicit Cilium exceptions remain `certgen`, `hubble-ui-backend`,
-  `hubble-ui`, and `startup-script`; revisit them on every Cilium chart bump or
-  when upstream starts publishing signatures for those images.
+  `ghcr.io/kyverno/signatures`, not co-located with the component repositories.
+  The first convergence attempt put `repository` on the attestor entry, but
+  Kyverno expects the signature repository on the `verifyImages` item beside
+  `imageReferences` and `attestors`; entry-level placement was ignored and
+  Kyverno fell back to co-located lookup. The corrected policy keeps the exact
+  Kyverno component references and places
+  `repository: ghcr.io/kyverno/signatures` at item level.
+- Step 8b Cilium follow-up: Cilium release images are verified by family
+  (`quay.io/cilium/*`) instead of by per-digest allowlist so signed operator or
+  release digest rotation does not require a policy edit. Trust remains scoped
+  to the two observed upstream GitHub Actions subjects:
+  `cilium/cilium/.github/workflows/build-images-releases.yaml@refs/tags/v...`
+  and
+  `cilium/proxy/.github/workflows/build-envoy-images-release-base.yaml@refs/heads/v...`.
+  The explicit Cilium exceptions remain the unsigned helper families
+  `certgen`, `hubble-ui-backend`, `hubble-ui`, and `startup-script`; revisit
+  them on every Cilium chart bump or when upstream starts publishing signatures
+  for those images.
 - Step 8c (follow-up): Promote verified image families from audit to enforce
   once PolicyReports show consistent `pass` across all matched images and any
   unsignable exceptions are documented.
