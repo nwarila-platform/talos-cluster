@@ -22,10 +22,10 @@ This ADR intentionally lands the engine before landing image verification
 policies. Kyverno CRDs and webhooks must be healthy first; audit/enforce image
 policies are follow-up PRs.
 
-Current image verification posture is intentionally scoped: Flux and
-nwarila-platform images are enforced, while Cilium and Kyverno remain in Audit.
-The split reflects the actual signature formats each upstream publishes and the
-verification paths Kyverno can consume today.
+Current image verification posture is intentionally scoped: nwarila-platform
+images are enforced, while Flux, Cilium, and Kyverno remain in Audit. The split
+reflects the actual image references, signature formats, and verification paths
+Kyverno can consume safely today.
 
 ## Context and Problem Statement
 
@@ -108,19 +108,23 @@ The Step 8 image-verification follow-ups proved that one global Enforce setting
 is not currently correct for this cluster. The policy now uses per-rule
 `failureAction` values:
 
-- Flux (`ghcr.io/fluxcd/*`) and nwarila-platform
-  (`ghcr.io/nwarila-platform/*`) are `Enforce`.
-- Cilium (`quay.io/cilium/*`) and Kyverno (`ghcr.io/kyverno/*`) remain
-  `Audit`.
+- nwarila-platform (`ghcr.io/nwarila-platform/*`) is `Enforce`.
+- Flux (`ghcr.io/fluxcd/*`), Cilium (`quay.io/cilium/*`), and Kyverno
+  (`ghcr.io/kyverno/*`) remain `Audit`.
 - All four `verifyImages` entries use `mutateDigest: false`.
 - The top-level `validationFailureAction` stays `Audit`; per-rule
-  `failureAction: Enforce` on Flux and nwarila-platform is the scoped override.
+  `failureAction: Enforce` on nwarila-platform is the scoped override.
 
 Root cause: Kyverno's `verifyImages` signature verifier consumes the legacy
-co-located `sha256-<digest>.sig` signature layout. Flux and nwarila-platform
-images have a verification path that works with that verifier and were proven
-safe in Audit before promotion. Cilium publishes OCI referrer signatures in
-`quay.io`, and Kyverno publishes signatures through
+co-located `sha256-<digest>.sig` signature layout. nwarila-platform images have
+a verification path that works with that verifier and were proven safe in Audit
+before promotion. Flux images also have a usable signature path, but the live
+Flux controller Pods use tag-only refs and `mutateDigest: false`, so Enforce
+denied them with `missing digest`. Enabling tag-to-digest resolution requires
+`mutateDigest: true`, which Kyverno only permits with Enforce and which carries
+a GitOps self-heal deadlock risk for the reconciler itself; re-evaluate that
+path deliberately before enforcing Flux again. Cilium publishes OCI referrer
+signatures in `quay.io`, and Kyverno publishes signatures through
 `ghcr.io/kyverno/signatures` as digest-keyed Sigstore bundle tags. Those
 referrer/bundle signature formats are not consumable by Kyverno `verifyImages`
 as signatures.
@@ -327,6 +331,14 @@ None (current).
   `mutateDigest: false`, and leaves the top-level
   `validationFailureAction: Audit` as the default. This closes the portion that
   is canary-proven enforceable without falsely claiming full upstream coverage.
+- Step 53 Flux rollback follow-up: the live scoped-enforce canary found all
+  four Flux controller Pods denied under Enforce because the live refs are
+  tag-only and `mutateDigest: false` leaves no digest for Kyverno to verify.
+  Flux is the GitOps reconciler, so keeping that rule in Enforce risks
+  deadlocking self-heal during Pod recreation. The policy pulls Flux back to
+  `Audit` while keeping nwarila-platform in `Enforce`; resulting state is
+  nwarila-platform `Enforce`, Flux/Cilium/Kyverno `Audit`, and all four rules
+  `mutateDigest: false`.
 
 ## Compliance Notes
 
