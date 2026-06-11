@@ -1,9 +1,9 @@
-# ClusterPolicy: verify-image-signatures (scoped enforce)
+# ClusterPolicy: verify-image-signatures (scoped)
 #
 # Scoped cosign keyless signature verification for image families known to
-# publish sigstore signatures via GitHub Actions OIDC. Flux and nwarila-platform
-# images are enforced; Cilium and Kyverno remain audit-only because their
-# upstream signature formats are not consumable by Kyverno verifyImages yet.
+# publish sigstore signatures via GitHub Actions OIDC. nwarila-platform images
+# are enforced; Flux, Cilium, and Kyverno remain audit-only until they can be
+# enforced without deadlocking GitOps or exceeding Kyverno verifyImages support.
 # Cilium is matched at the image-family level so signed release digest rotation
 # does not require policy churn; known unsigned helper families are skipped
 # explicitly. See ADR-0010.
@@ -27,15 +27,15 @@ metadata:
   name: verify-image-signatures
   annotations:
     pod-policies.kyverno.io/autogen-controllers: none
-    policies.kyverno.io/title: Verify Image Signatures (Scoped Enforce)
+    policies.kyverno.io/title: Verify Image Signatures (Scoped)
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
       Keyless cosign signature verification for Flux, Cilium, Kyverno, and
-      nwarila-platform images. Enforces Flux and nwarila-platform signatures
-      while auditing Cilium and Kyverno until their upstream signature formats
-      are consumable by Kyverno admission.
+      nwarila-platform images. Enforces nwarila-platform signatures while
+      auditing Flux, Cilium, and Kyverno until they can be safely enforced by
+      Kyverno admission.
 spec:
   validationFailureAction: Audit
   background: true
@@ -51,7 +51,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/fluxcd/*"
-          failureAction: Enforce
+          failureAction: Audit
           mutateDigest: false
           required: true
           attestors:
