@@ -24,6 +24,7 @@ kind: ClusterPolicy
 metadata:
   name: verify-image-signatures
   annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
     policies.kyverno.io/title: Verify Image Signatures (Audit)
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/severity: medium
@@ -48,7 +49,7 @@ spec:
         - imageReferences:
             - "ghcr.io/fluxcd/*"
           failureAction: Audit
-          mutateDigest: false
+          mutateDigest: true
           required: true
           attestors:
             - entries:
@@ -79,7 +80,7 @@ spec:
             - "quay.io/cilium/startup-script:*"
             - "quay.io/cilium/startup-script@sha256:*"
           failureAction: Audit
-          mutateDigest: false
+          mutateDigest: true
           required: true
           attestors:
             - entries:
@@ -104,7 +105,7 @@ spec:
             - "ghcr.io/kyverno/reports-controller:v1.18.1"
           repository: "ghcr.io/kyverno/signatures"
           failureAction: Audit
-          mutateDigest: false
+          mutateDigest: true
           required: true
           attestors:
             - entries:
@@ -123,7 +124,7 @@ spec:
         - imageReferences:
             - "ghcr.io/nwarila-platform/*"
           failureAction: Audit
-          mutateDigest: false
+          mutateDigest: true
           required: true
           attestors:
             - entries:
