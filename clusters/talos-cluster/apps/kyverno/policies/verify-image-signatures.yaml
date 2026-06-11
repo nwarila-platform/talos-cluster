@@ -1,14 +1,18 @@
 # ClusterPolicy: verify-image-signatures (Step 8b - audit-mode pilot)
 #
 # Audit-only cosign keyless signature verification for image families known to
-# publish sigstore signatures via GitHub Actions OIDC. This policy intentionally
-# does not enforce; failures appear in PolicyReports only. See ADR-0010.
+# publish sigstore signatures via GitHub Actions OIDC. Component references are
+# exact for the audited versions so report failures are explained per image.
+# This policy intentionally does not enforce; failures appear in PolicyReports
+# only. See ADR-0010.
 #
 # Scope: Flux, Cilium, Kyverno, and nwarila-platform GHCR images. Longhorn,
 # registry.k8s.io, and other image families are out of scope for this pilot;
 # they fall through without evaluation because their registries are not listed
 # in imageReferences. Kyverno release images are verified from GHCR because the
 # reg.kyverno.io v1.18.1 mirrors do not expose discoverable cosign signatures.
+# Kyverno component signatures live in the upstream shared signature repository,
+# not co-located with each component image.
 #
 # Sigstore reachability: the kyverno chart NetworkPolicies restrict Ingress
 # only; egress to rekor.sigstore.dev and fulcio.sigstore.dev is unrestricted.
@@ -60,14 +64,43 @@ spec:
                 - Pod
       verifyImages:
         - imageReferences:
-            - "quay.io/cilium/*"
-          # Cilium 1.19.4 signs the core multi-arch images, but these helper
-          # images are not discoverably signed at their chart-pinned digests.
+            - "quay.io/cilium/cilium:v1.19.4@sha256:2eb67991eaa9368ba199c2fac2c573cb0ffdeb79184533344f42fc9a7ff6af3c"
+            - "quay.io/cilium/cilium@sha256:2eb67991eaa9368ba199c2fac2c573cb0ffdeb79184533344f42fc9a7ff6af3c"
+            - "quay.io/cilium/cilium-envoy:v1.36.6-1778235340-b87d1e32f522b33bd51701c6476d199326f01496@sha256:71d4fa0ec45e8d546dbd5604e169dc77fe92be63b799313bff031d00d89762e3"
+            - "quay.io/cilium/cilium-envoy@sha256:71d4fa0ec45e8d546dbd5604e169dc77fe92be63b799313bff031d00d89762e3"
+            - "quay.io/cilium/operator-generic:v1.19.4@sha256:1aa2b62735e7d8ab49ee840ae59c346932024c88901579121395c1271b435f71"
+            - "quay.io/cilium/operator-generic@sha256:1aa2b62735e7d8ab49ee840ae59c346932024c88901579121395c1271b435f71"
+            - "quay.io/cilium/operator-aws:v1.19.4@sha256:9e41b3959d941a0b60ba187f5a2572305846248efb89ac59c18fd25a032f568d"
+            - "quay.io/cilium/operator-aws@sha256:9e41b3959d941a0b60ba187f5a2572305846248efb89ac59c18fd25a032f568d"
+            - "quay.io/cilium/operator-azure:v1.19.4@sha256:8203f4e5e65c658fe2367a570c7bba5779859982bd3cc263662e35e690be3417"
+            - "quay.io/cilium/operator-azure@sha256:8203f4e5e65c658fe2367a570c7bba5779859982bd3cc263662e35e690be3417"
+            - "quay.io/cilium/operator-alibabacloud:v1.19.4@sha256:693b1e61f22beaa9a0f68aa4056ba873465da96da6382f3276978d01544450dd"
+            - "quay.io/cilium/operator-alibabacloud@sha256:693b1e61f22beaa9a0f68aa4056ba873465da96da6382f3276978d01544450dd"
+            - "quay.io/cilium/hubble-relay:v1.19.4@sha256:59af8c0d561e560c2a042e7600a3496bc0367df8fbf868aa68d5834c8ec1a431"
+            - "quay.io/cilium/hubble-relay@sha256:59af8c0d561e560c2a042e7600a3496bc0367df8fbf868aa68d5834c8ec1a431"
+            - "quay.io/cilium/clustermesh-apiserver:v1.19.4@sha256:9e40006b2e2b6e66d047f9af52577a93b39d9532958ec6d88d46820bb59ab643"
+            - "quay.io/cilium/clustermesh-apiserver@sha256:9e40006b2e2b6e66d047f9af52577a93b39d9532958ec6d88d46820bb59ab643"
+            - "quay.io/cilium/certgen:v0.4.3@sha256:d63d1cb3ee6db2167cb1ca9e7e31f30b6197846fcf42505d8f59e2f090a42c86"
+            - "quay.io/cilium/certgen@sha256:d63d1cb3ee6db2167cb1ca9e7e31f30b6197846fcf42505d8f59e2f090a42c86"
+            - "quay.io/cilium/hubble-ui-backend:v0.13.5@sha256:fac0c300ae119274edca11fd89b1ad23c788792d8bc4ea2ba631c709e8d3c688"
+            - "quay.io/cilium/hubble-ui-backend@sha256:fac0c300ae119274edca11fd89b1ad23c788792d8bc4ea2ba631c709e8d3c688"
+            - "quay.io/cilium/hubble-ui:v0.13.5@sha256:f7d514fc54d784ed6df9d58cf0e97648b143f92b766dd1780ed3fc845bd4c516"
+            - "quay.io/cilium/hubble-ui@sha256:f7d514fc54d784ed6df9d58cf0e97648b143f92b766dd1780ed3fc845bd4c516"
+            - "quay.io/cilium/startup-script:1763560095-8f36c34@sha256:50b9cf9c280096b59b80d2fc8ee6638facef79ac18998a22f0cbc40d5d28c16f"
+            - "quay.io/cilium/startup-script@sha256:50b9cf9c280096b59b80d2fc8ee6638facef79ac18998a22f0cbc40d5d28c16f"
+          # Cilium 1.19.4 signs the release/operator/relay/clustermesh images
+          # above, but these helper/UI images are not discoverably signed at
+          # their chart-pinned digests. Revisit on every Cilium chart bump or if
+          # upstream starts publishing signatures for these references.
           skipImageReferences:
             - "quay.io/cilium/certgen:v0.4.3@sha256:d63d1cb3ee6db2167cb1ca9e7e31f30b6197846fcf42505d8f59e2f090a42c86"
+            - "quay.io/cilium/certgen@sha256:d63d1cb3ee6db2167cb1ca9e7e31f30b6197846fcf42505d8f59e2f090a42c86"
             - "quay.io/cilium/hubble-ui-backend:v0.13.5@sha256:fac0c300ae119274edca11fd89b1ad23c788792d8bc4ea2ba631c709e8d3c688"
+            - "quay.io/cilium/hubble-ui-backend@sha256:fac0c300ae119274edca11fd89b1ad23c788792d8bc4ea2ba631c709e8d3c688"
             - "quay.io/cilium/hubble-ui:v0.13.5@sha256:f7d514fc54d784ed6df9d58cf0e97648b143f92b766dd1780ed3fc845bd4c516"
+            - "quay.io/cilium/hubble-ui@sha256:f7d514fc54d784ed6df9d58cf0e97648b143f92b766dd1780ed3fc845bd4c516"
             - "quay.io/cilium/startup-script:1763560095-8f36c34@sha256:50b9cf9c280096b59b80d2fc8ee6638facef79ac18998a22f0cbc40d5d28c16f"
+            - "quay.io/cilium/startup-script@sha256:50b9cf9c280096b59b80d2fc8ee6638facef79ac18998a22f0cbc40d5d28c16f"
           failureAction: Audit
           mutateDigest: false
           required: true
@@ -86,8 +119,12 @@ spec:
                 - Pod
       verifyImages:
         - imageReferences:
-            - "ghcr.io/kyverno/*"
-          repository: "ghcr.io/kyverno/signatures"
+            - "ghcr.io/kyverno/kyverno:v1.18.1"
+            - "ghcr.io/kyverno/kyvernopre:v1.18.1"
+            - "ghcr.io/kyverno/kyverno-cli:v1.18.1"
+            - "ghcr.io/kyverno/background-controller:v1.18.1"
+            - "ghcr.io/kyverno/cleanup-controller:v1.18.1"
+            - "ghcr.io/kyverno/reports-controller:v1.18.1"
           failureAction: Audit
           mutateDigest: false
           required: true
@@ -98,6 +135,7 @@ spec:
                     subjectRegExp: "^https://github\\.com/kyverno/kyverno/\\.github/workflows/release\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"
                     rekor:
                       url: "https://rekor.sigstore.dev"
+                  repository: "ghcr.io/kyverno/signatures"
     - name: verify-nwarila-platform-images
       match:
         any:
