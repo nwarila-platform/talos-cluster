@@ -88,6 +88,9 @@
 !/clusters/talos-cluster/apps/vault-aws-access/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-aws-access/README.md
 !/clusters/talos-cluster/apps/vault-aws-access/vault-ra-cert.sops.yaml
+!/clusters/talos-cluster/apps/vault-tls/
+!/clusters/talos-cluster/apps/vault-tls/kustomization.yaml
+!/clusters/talos-cluster/apps/vault-tls/vault-serving-cert.sops.yaml
 !/clusters/talos-cluster/tenants/
 !/clusters/talos-cluster/tenants/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-runners/
