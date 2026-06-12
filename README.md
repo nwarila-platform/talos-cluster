@@ -701,90 +701,22 @@ make s3-pull
 
 This downloads all secrets from the AWS S3 bucket. You then have full access to manage the cluster.
 
-### Disaster Recovery — Restoring etcd from a Snapshot
+### Disaster Recovery
 
-The `etcd Snapshot` workflow (`.github/workflows/etcd-snapshot.yaml`) uploads a
-daily snapshot to S3. If the cluster's etcd quorum is lost (two CPs broken
-simultaneously, etcd corruption that propagates, etc.), restore via the
-following sequence. See [ADR-0006](docs/decision-records/repo/0006-etcd-snapshot-automation.md) for the
-decision context.
+Stage-0 S3 storage holds rebuild-critical secrets and access material only.
+Operational state snapshots move to the future Stage-1 local backup server:
+etcd snapshots for Kubernetes state, Vault Raft snapshots for PKI/trust state,
+and later Longhorn/PV data.
 
-#### 1. Find the snapshot you want to restore from
+The old `etcd Snapshot` workflow is manual-only and remains disabled for
+scheduled use until it is retargeted to Stage-1. ADR-0006 is superseded by
+[ADR-0014](docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md),
+which defines the backup/DR architecture, cadence, retention, interim capture
+posture, and monitoring requirements.
 
-```bash
-aws s3 ls s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/ --recursive | tail
-```
-
-Pick the most recent snapshot whose timestamp pre-dates the incident.
-
-#### 2. Pull the snapshot locally
-
-```bash
-mkdir -p .s3/restore
-aws s3 cp \
-  s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/YYYY-MM-DD/snapshot-HHMMSSZ.db \
-  .s3/restore/snapshot.db
-```
-
-#### 3. Wipe the CP nodes (Talos requires a clean state for `--recover-from`)
-
-```bash
-# For EACH control-plane node — applies in safe order (cp1 last as bootstrap)
-talosctl reset --talosconfig .s3/configs/talosconfig --nodes 10.69.112.64 --graceful=false --reboot
-talosctl reset --talosconfig .s3/configs/talosconfig --nodes 10.69.112.65 --graceful=false --reboot
-talosctl reset --talosconfig .s3/configs/talosconfig --nodes 10.69.112.63 --graceful=false --reboot
-```
-
-> **WARNING:** This wipes the system disks on the CP nodes. Only run if the
-> cluster is already unrecoverable. If you're testing recovery, do it on a
-> sacrificial cluster, not production.
-
-#### 4. Reapply machine configs to the wiped CPs
-
-```bash
-make apply-insecure NODES="cp1 cp2 cp3"
-```
-
-#### 5. Bootstrap a CP with the snapshot
-
-```bash
-talosctl bootstrap \
-  --talosconfig .s3/configs/talosconfig \
-  --nodes 10.69.112.63 \
-  --recover-from .s3/restore/snapshot.db
-```
-
-#### 6. Wait for the cluster to come back
-
-```bash
-make health
-kubectl get nodes
-```
-
-The worker nodes' kubelets will re-attach to the recovered control plane on
-their next health check. Workloads referenced in the snapshot (Deployments,
-DaemonSets, StatefulSets, Helm releases tracked via Helm 3 Secrets) come back
-as etcd is repopulated.
-
-#### 7. Check read-only drift signals after recovery
-
-```bash
-kubectl -n talos-drift get cronjob,jobs,pods,events
-kubectl -n talos-drift logs job/<latest-talos-drift-readonly-job>
-```
-
-After Flux is restored, the `talos-drift-readonly` CronJob confirms the
-Kubernetes/Talos version pins, declared node InternalIPs, and Flux
-Kustomization/HelmRelease health with credentials that cannot mutate Talos or
-cluster resources. It does not inspect Talos `machineconfig`; that resource is
-admin-only because it contains secrets. Machine-config drift must be checked by
-the future protected apply path, or by an operator workstation admin check during
-a recovery drill, before reapplying machine configs.
-
-> **Note:** Restore from snapshot has not yet been drilled against this
-> cluster. A follow-up cycle will run the drill against a sacrificial cluster
-> and document the result in a dedicated recovery-drill record. Until then, the snapshots are a
-> recovery primitive whose viability is **not formally verified**.
+Restore is not accepted as working until it is drilled. Use
+[Backup And DR Restore Drill](docs/runbooks/restore-drill-backup-dr.md) for the
+owner-gated etcd and Vault Raft restore procedures and pass criteria.
 
 ### Deploying Your Own Application
 
@@ -813,7 +745,7 @@ Repository-owned GitHub Actions workflows include:
 |---------|---------------|--------------|
 | Validate | `validate.yaml` | Runs PR validation for scripts, YAML, generated Talos configs, and secret hygiene. |
 | Security | `security.yaml` | Runs Gitleaks and the config audit on PRs, weekly schedule, and manual dispatch. |
-| etcd snapshot | `etcd-snapshot.yaml` | Captures daily Talos etcd snapshots and uploads them to S3. |
+| etcd snapshot | `etcd-snapshot.yaml` | Manual-only placeholder pending Stage-1 local backup server retargeting. |
 | Compliance | `kubescape.yaml` | Runs the pinned Kubescape CIS Kubernetes scan and uploads SARIF to GitHub Code Scanning. |
 | ARC smoke | `arc-smoke.yaml` | Manually verifies the `talos-arc-ci` runner scale set can execute a job. |
 | Tenant onboarding | `onboard-tenant.yaml` | Manually scaffolds tenant namespace and network-policy manifests. |
