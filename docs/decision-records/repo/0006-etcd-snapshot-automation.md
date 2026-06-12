@@ -2,7 +2,7 @@
 
 | Field          | Value                                   |
 | -------------- | --------------------------------------- |
-| Status         | Accepted                                |
+| Status         | Superseded by ADR-0014                  |
 | Date           | 2026-05-26                              |
 | Authors        | Nick Warila (@NWarila)                  |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
@@ -11,13 +11,14 @@
 | Reversibility  | High                                    |
 | Review-by      | N/A (Accepted)                          |
 
-## Status Note (2026-06-07)
+## Status Note (2026-06-12)
 
-Scheduled execution is disabled pending the Stage-1 local backup server. The
-S3 snapshot target in this ADR is expected to be superseded by a local
-backup-server target for etcd state; Stage-0 S3 storage for rebuild-critical
-secrets remains correct. This ADR is not fully superseded yet; a later ADR
-should record the retargeted design and restore drill once Stage-1 exists.
+This ADR is superseded by [ADR-0014](0014-use-stage-1-local-backup-server-for-dr.md).
+Scheduled execution remains disabled pending the Stage-1 local backup server.
+The S3 snapshot target in this ADR is not the accepted target for operational
+etcd state anymore; Stage-0 S3 storage for rebuild-critical secrets remains
+correct. The existing script and workflow may still be reused as implementation
+material after they are retargeted to Stage-1.
 
 ## TL;DR
 
@@ -143,7 +144,7 @@ None.
 
 ## Superseded by
 
-None (current).
+[ADR-0014](0014-use-stage-1-local-backup-server-for-dr.md).
 
 ## Implementing PRs
 
