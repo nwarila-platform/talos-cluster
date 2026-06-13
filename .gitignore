@@ -199,6 +199,7 @@
 !/docs/compliance/
 !/docs/compliance/README.md
 !/docs/runbooks/
+!/docs/runbooks/migrate-first-vso-secret.md
 !/docs/runbooks/reprovision-secureboot-node.md
 !/docs/runbooks/restore-drill-backup-dr.md
 !/docs/decision-records/
@@ -224,6 +225,7 @@
 !/docs/decision-records/repo/0012-vault-kms-auto-unseal-credential-delivery.md
 !/docs/decision-records/repo/0013-use-dedicated-vault-longhorn-storageclass.md
 !/docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md
+!/docs/decision-records/repo/0015-use-vault-secrets-operator-for-workload-secrets.md
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep
 !/docs/decision-records/org/0005-keep-github-control-planes-namespace-local.md
