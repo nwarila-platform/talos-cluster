@@ -78,12 +78,38 @@ the rancher-terraform-framework pattern, keeps workloads on native Kubernetes
 Secrets, and avoids adding a second vendor-neutral abstraction when Vault is the
 only intended source of truth.
 
+### Kubernetes 1.36 Risk Acceptance
+
+As of 2026-06-13, talos-cluster runs Kubernetes `v1.36.0` while VSO's published
+supported Kubernetes matrix for the selected release is `1.29` through `1.35`.
+The first VSO release that explicitly supports Kubernetes `1.36` has no
+announced date.
+
+Decision: deploy VSO now on Kubernetes `1.36`, ahead of vendor support. The
+owner explicitly accepted this unsupported-version risk on 2026-06-13.
+
+Rationale: ordinary workload secrets need a Vault consumption path now, and
+continuing to add static SOPS-managed app Secrets would grow the wrong trust
+shape. Kubernetes `1.36` is one minor ahead of the supported `1.35` ceiling and
+is expected to be ABI-close enough for this controller-class workload, but that
+is an accepted risk rather than a vendor guarantee.
+
+Risk: VSO could have subtle incompatibilities with Kubernetes `1.36`, and
+HashiCorp support may decline unsupported-matrix issues until a supporting VSO
+release exists.
+
+Mitigation: pin VSO chart/image version `1.4.0`, watch controller health after
+Flux deploys it, and upgrade to the first release that lists Kubernetes `1.36`
+support. The blast radius is contained: a VSO outage stops future secret sync
+and rotation, but already-running pods holding cached Kubernetes Secrets do not
+immediately lose those Secret values.
+
 ### Cluster Capability
 
-The first implementation must add VSO as a talos-cluster app, for example under
-`clusters/talos-cluster/apps/vault-secrets-operator/`, but this ADR does not
-deploy it. The implementation must be owner-gated because merging the app will
-install CRDs/controllers into the live cluster through Flux.
+The first implementation adds VSO as a talos-cluster app under
+`clusters/talos-cluster/apps/vault-secrets-operator/`. The implementation is
+owner-gated because merging the app installs CRDs/controllers into the live
+cluster through Flux.
 
 The operator must connect to Vault over the TLS listener, not a plaintext
 bootstrap path. Its Vault connection must trust the internal CA used by
@@ -248,7 +274,7 @@ or Vault startup path.
 
 ### Phased Rollout
 
-1. **Design only, this ADR.** No live changes.
+1. **Design, this ADR.** Complete.
 2. **Capability PR, owner-gated live cluster change.** Install VSO CRDs and
    controller through Flux, with TLS trust and controller egress. Do not add
    tenant `VaultStaticSecret` objects in the same PR unless CRD ordering is
@@ -357,8 +383,10 @@ This ADR is confirmed when:
 
 ## Assumptions
 
-1. The VSO version chosen during implementation supports the Kubernetes version
-   actually running in talos-cluster. Verify this at implementation time.
+1. VSO chart/image version `1.4.0` is intentionally deployed on Kubernetes
+   `v1.36.0` before VSO lists that minor in its supported matrix. This is not a
+   compatibility claim; it is the explicit 2026-06-13 owner risk acceptance
+   recorded above.
 2. OSS Vault is sufficient for the first rollout. If Vault Enterprise
    namespaces are introduced later, the `VaultConnection`/`VaultAuth` namespace
    fields must be set by policy.
@@ -378,8 +406,11 @@ None (current).
 ## Implementing PRs
 
 - This ADR and [`migrate-first-vso-secret.md`](../../runbooks/migrate-first-vso-secret.md)
-  define the design and first-migration plan only. They do not install VSO or
-  change live Vault/cluster state.
+  define the design and first-migration plan.
+- Step 67 installs VSO as an inert cluster capability: CRDs, controller,
+  network policy, namespace-local CA trust, and a default `VaultConnection`.
+  It does not configure live Vault Kubernetes auth, create tenant
+  `VaultStaticSecret` objects, or add tenant secret values.
 
 ## Related ADRs
 

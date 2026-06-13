@@ -13,4 +13,5 @@ resources:
   - namespace-hardening
   - talos-drift
   - vault-aws-access
+  - vault-secrets-operator
   - vault-tls
