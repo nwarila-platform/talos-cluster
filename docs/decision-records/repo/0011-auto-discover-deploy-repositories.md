@@ -82,6 +82,15 @@ respect the cluster's `--no-cross-namespace-refs=true` Flux hardening. The
 Kustomization uses `targetNamespace: <repo>` so namespaced workload objects land
 in the tenant namespace even if the app repo omits `metadata.namespace`.
 
+Reviewed exceptions can be listed as explicit tenants in
+`cluster/deploy-repo-overrides.sh` when a tenant source cannot be discovered by
+the `deploy-*`/`nwarila-platform` convention, for example a private cross-org
+repository. These entries use the same generated namespace, Flux
+`GitRepository`, Flux `Kustomization`, and tenant RBAC envelope. They remain
+branch-tracking unless the override file explicitly assigns an immutable ref,
+and private sources must reference a namespace-local Flux source-auth Secret
+without committing credential material.
+
 Every generated tenant gets the same namespace-scoped `deploy-reconciler` Role.
 That default Role covers normal namespaced workload resources, but deliberately
 excludes core `secrets` and tenant-authored `roles`/`rolebindings`. SOPS

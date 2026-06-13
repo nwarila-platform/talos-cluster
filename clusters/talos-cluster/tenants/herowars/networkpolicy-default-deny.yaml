@@ -1,0 +1,19 @@
+# Default-deny NetworkPolicy — tenant workloads start with NO connectivity
+# beyond what other NetworkPolicies in the namespace explicitly allow.
+#
+# `podSelector: {}` matches every pod in the namespace.
+# Both Ingress and Egress are denied by default.
+#
+# Pair this with `allow-dns` (every workload needs DNS) and any tenant-
+# specific allows (K8s API access, gateway ingress, internet egress for
+# image pulls, etc.).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: herowars
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

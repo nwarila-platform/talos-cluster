@@ -1,4 +1,4 @@
-# Tenant namespace template. Generated files substitute __TENANT_NAMESPACE__
+# Tenant namespace template. Generated files substitute herowars
 # with the concrete tenant namespace before applying.
 #
 # Pod Security Standards: restricted enforce/audit/warn.
@@ -14,7 +14,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: __TENANT_NAMESPACE__
+  name: herowars
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest

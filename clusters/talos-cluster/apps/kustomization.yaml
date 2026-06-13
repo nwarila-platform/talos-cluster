@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
   - actions-runner-controller
   - deploy-vault
+  - herowars
   - gateway-api
   - kubelet-csr-approver
   - kyverno
@@ -12,6 +13,7 @@ resources:
   - metrics-server
   - namespace-hardening
   - talos-drift
+  - vault-auth
   - vault-aws-access
   - vault-secrets-operator
   - vault-tls

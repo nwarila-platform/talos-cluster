@@ -1,5 +1,5 @@
-# Tenant namespace template — substitute deploy-vault with the
-# actual `deploy-<name>` value before applying.
+# Tenant namespace template. Generated files substitute deploy-vault
+# with the concrete tenant namespace before applying.
 #
 # Pod Security Standards: restricted enforce/audit/warn.
 # - allowPrivilegeEscalation: false (required)
@@ -22,7 +22,7 @@ metadata:
     pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
-    # Marks this namespace as a tenant — distinguishes from system
+    # Marks this namespace as a tenant; distinguishes from system
     # namespaces (kube-system, longhorn-system, flux-system, etc.).
     # Future cluster-wide policies (e.g., CiliumClusterwideNetworkPolicy)
     # can use this label to target tenants only.
