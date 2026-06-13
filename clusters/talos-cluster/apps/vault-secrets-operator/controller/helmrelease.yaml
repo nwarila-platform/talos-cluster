@@ -1,0 +1,95 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: vault-secrets-operator
+  namespace: vault-secrets-operator
+spec:
+  interval: 10m
+  releaseName: vault-secrets-operator
+  chart:
+    spec:
+      chart: vault-secrets-operator
+      version: 1.4.0
+      sourceRef:
+        kind: HelmRepository
+        name: vault-secrets-operator
+      interval: 1h
+  install:
+    crds: Create
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      remediateLastFailure: false
+    cleanupOnFail: true
+  values:
+    controller:
+      replicas: 1
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      kubeRbacProxy:
+        image:
+          pullPolicy: IfNotPresent
+          repository: quay.io/brancz/kube-rbac-proxy
+          tag: "v0.18.1@sha256:85e87746fc166df9b5d2590eae23688e91b514d64dc0914d5101df4077099f91"
+        resources:
+          requests:
+            cpu: 5m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+      manager:
+        image:
+          pullPolicy: IfNotPresent
+          repository: hashicorp/vault-secrets-operator
+          tag: "1.4.0@sha256:5067f53efadcde1a0d380641b190548595d21b895cb2c28f2c800aa744613513"
+        logging:
+          level: info
+          timeEncoding: rfc3339
+          stacktraceLevel: panic
+        globalTransformationOptions:
+          excludeRaw: true
+        globalVaultAuthOptions:
+          allowDefaultGlobals: false
+        maxConcurrentReconciles: 10
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
+      podSecurityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        runAsNonRoot: true
+        runAsUser: 1000
+    defaultVaultConnection:
+      enabled: true
+      address: https://vault.deploy-vault.svc.cluster.local:8200
+      caCertSecret: vso-vault-ca
+      tlsServerName: vault.deploy-vault.svc.cluster.local
+      skipTLSVerify: false
+    defaultAuthMethod:
+      enabled: false
+    telemetry:
+      serviceMonitor:
+        enabled: false
+    hooks:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+    csi:
+      enabled: false
+  test:
+    enable: false
