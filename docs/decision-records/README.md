@@ -60,6 +60,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0012](repo/0012-vault-kms-auto-unseal-credential-delivery.md) | Vault KMS Auto-Unseal — AWS Credential Delivery, Egress, and Key Model | Accepted | 2026-06-02 | Deliver AWS creds to Vault's `awskms` seal via an IAM Roles Anywhere serve-mode sidecar (no image change); dedicated single-purpose CMK; SOPS workload cert in `apps/vault-aws-access/`; recovery bundle SSM-only. |
 | [0013](repo/0013-use-dedicated-vault-longhorn-storageclass.md) | Use a Dedicated Vault Longhorn StorageClass      | Accepted | 2026-06-10 | Add the `longhorn-vault` StorageClass for new Vault PVCs: 3 replicas with replica node anti-affinity, without raising the cluster-wide Longhorn default. |
 | [0014](repo/0014-use-stage-1-local-backup-server-for-dr.md)    | Use a Stage-1 Local Backup Server for Backup and DR | Accepted | 2026-06-12 | Keep Stage-0 S3 for rebuild-critical secrets, move etcd and Vault Raft snapshots to a local Stage-1 server, and require restore-drill pass criteria. |
+| [0015](repo/0015-use-vault-secrets-operator-for-workload-secrets.md) | Use Vault Secrets Operator for Workload Secrets | Accepted | 2026-06-13 | Install VSO as a cluster capability, use generated tenant auth boundaries plus Vault KV-v2 path scoping, and keep app-specific `VaultStaticSecret` resources in `deploy-*` repos. |
 
 ## Status Lifecycle
 
