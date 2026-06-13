@@ -3,32 +3,37 @@ kind: CiliumNetworkPolicy
 metadata:
   name: allow-vso-controller-egress
   namespace: vault-secrets-operator
-spec:
-  endpointSelector:
-    matchLabels:
-      control-plane: controller-manager
-      app.kubernetes.io/instance: vault-secrets-operator
-      app.kubernetes.io/name: vault-secrets-operator
-  egress:
-    - toEndpoints:
-        - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": kube-system
-            "k8s:k8s-app": kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: ANY
-          rules:
-            dns:
-              - matchPattern: "*"
-    - toEntities:
-        - kube-apiserver
-    - toEndpoints:
-        - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": deploy-vault
-            "k8s:app.kubernetes.io/component": server
-            "k8s:app.kubernetes.io/name": vault
-      toPorts:
-        - ports:
-            - port: "8200"
-              protocol: TCP
+specs:
+  # Helm CRD hook Jobs run as batch pods without the VSO app labels, so DNS/API
+  # egress must be namespace-scoped instead of controller-label-scoped.
+  - endpointSelector: {}
+    egress:
+      - toEndpoints:
+          - matchLabels:
+              "k8s:io.kubernetes.pod.namespace": kube-system
+              "k8s:k8s-app": kube-dns
+        toPorts:
+          - ports:
+              - port: "53"
+                protocol: ANY
+            rules:
+              dns:
+                - matchPattern: "*"
+      - toEntities:
+          - kube-apiserver
+  # Only the controller should reach Vault; hook Jobs only need DNS/API egress.
+  - endpointSelector:
+      matchLabels:
+        control-plane: controller-manager
+        app.kubernetes.io/instance: vault-secrets-operator
+        app.kubernetes.io/name: vault-secrets-operator
+    egress:
+      - toEndpoints:
+          - matchLabels:
+              "k8s:io.kubernetes.pod.namespace": deploy-vault
+              "k8s:app.kubernetes.io/component": server
+              "k8s:app.kubernetes.io/name": vault
+        toPorts:
+          - ports:
+              - port: "8200"
+                protocol: TCP
