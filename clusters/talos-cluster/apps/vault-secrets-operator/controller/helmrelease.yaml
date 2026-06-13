@@ -24,6 +24,8 @@ spec:
   values:
     controller:
       replicas: 1
+      extraLabels:
+        vault-client: "true"
       strategy:
         type: RollingUpdate
         rollingUpdate:
