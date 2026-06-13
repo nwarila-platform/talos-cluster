@@ -6,7 +6,7 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      app.kubernetes.io/component: controller-manager
+      control-plane: controller-manager
       app.kubernetes.io/instance: vault-secrets-operator
       app.kubernetes.io/name: vault-secrets-operator
   egress:
