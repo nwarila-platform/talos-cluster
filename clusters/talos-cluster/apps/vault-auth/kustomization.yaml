@@ -1,0 +1,5 @@
+# Hand-authored - back-fills live Vault Kubernetes-auth RBAC.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - vault-auth-delegator-clusterrolebinding.yaml

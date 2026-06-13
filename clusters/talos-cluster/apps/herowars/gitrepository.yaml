@@ -1,0 +1,14 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: herowars
+  namespace: herowars
+  labels:
+    nwarila.io/deploy-repo: "true"
+spec:
+  interval: 5m
+  ref:
+    branch: main
+  secretRef:
+    name: herowars-git-auth
+  url: ssh://git@github.com/the-hero-wars-guys/ubi9-herowars-engine-porter.git
