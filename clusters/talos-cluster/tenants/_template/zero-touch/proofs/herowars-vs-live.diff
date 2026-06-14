@@ -1,0 +1,134 @@
+diff --git "a/clusters\\talos-cluster\\tenants\\_template\\zero-touch\\proofs\\herowars-live-envelope.yaml" "b/clusters\\talos-cluster\\tenants\\_template\\zero-touch\\proofs\\herowars-render.yaml"
+index 5be857c..4cec450 100644
+--- "a/clusters\\talos-cluster\\tenants\\_template\\zero-touch\\proofs\\herowars-live-envelope.yaml"
++++ "b/clusters\\talos-cluster\\tenants\\_template\\zero-touch\\proofs\\herowars-render.yaml"
+@@ -17,6 +17,15 @@ metadata:
+   name: deploy-reconciler
+   namespace: herowars
+ ---
++apiVersion: v1
++kind: ServiceAccount
++metadata:
++  labels:
++    nwarila.io/platform-owned: "true"
++    nwarila.io/vault-client: "true"
++  name: vault-client
++  namespace: herowars
++---
+ apiVersion: rbac.authorization.k8s.io/v1
+ kind: Role
+ metadata:
+@@ -32,7 +41,6 @@ rules:
+   - persistentvolumeclaims
+   - pods
+   - pods/log
+-  - serviceaccounts
+   - services
+   verbs:
+   - get
+@@ -42,6 +50,14 @@ rules:
+   - update
+   - patch
+   - delete
++- apiGroups:
++  - ""
++  resources:
++  - serviceaccounts
++  verbs:
++  - get
++  - list
++  - watch
+ - apiGroups:
+   - apps
+   resources:
+@@ -133,7 +149,25 @@ roleRef:
+ subjects:
+ - kind: ServiceAccount
+   name: deploy-reconciler
++---
++apiVersion: kustomize.toolkit.fluxcd.io/v1
++kind: Kustomization
++metadata:
++  labels:
++    nwarila.io/deploy-repo: "true"
++  name: herowars
+   namespace: herowars
++spec:
++  interval: 10m
++  path: ./kubernetes/overlays/talos-cluster
++  prune: true
++  serviceAccountName: deploy-reconciler
++  sourceRef:
++    kind: GitRepository
++    name: deploy-herowars-engine-porter
++  targetNamespace: herowars
++  timeout: 10m
++  wait: true
+ ---
+ apiVersion: networking.k8s.io/v1
+ kind: NetworkPolicy
+@@ -161,40 +195,44 @@ spec:
+ apiVersion: networking.k8s.io/v1
+ kind: NetworkPolicy
+ metadata:
+-  name: default-deny-all
++  name: allow-vault-egress
+   namespace: herowars
+ spec:
+-  podSelector: {}
++  egress:
++  - ports:
++    - port: 8200
++      protocol: TCP
++    to:
++    - namespaceSelector:
++        matchLabels:
++          kubernetes.io/metadata.name: deploy-vault
++      podSelector:
++        matchLabels:
++          app.kubernetes.io/name: vault
++  podSelector:
++    matchLabels:
++      vault-client: "true"
+   policyTypes:
+-  - Ingress
+   - Egress
+ ---
+-apiVersion: kustomize.toolkit.fluxcd.io/v1
+-kind: Kustomization
++apiVersion: networking.k8s.io/v1
++kind: NetworkPolicy
+ metadata:
+-  name: herowars
++  name: default-deny-all
+   namespace: herowars
+-  labels:
+-    nwarila.io/deploy-repo: "true"
+ spec:
+-  interval: 10m
+-  path: ./kubernetes/overlays/talos-cluster
+-  prune: true
+-  wait: true
+-  timeout: 10m
+-  targetNamespace: herowars
+-  serviceAccountName: deploy-reconciler
+-  sourceRef:
+-    kind: GitRepository
+-    name: deploy-herowars-engine-porter
++  podSelector: {}
++  policyTypes:
++  - Ingress
++  - Egress
+ ---
+ apiVersion: source.toolkit.fluxcd.io/v1
+ kind: GitRepository
+ metadata:
+-  name: deploy-herowars-engine-porter
+-  namespace: herowars
+   labels:
+     nwarila.io/deploy-repo: "true"
++  name: deploy-herowars-engine-porter
++  namespace: herowars
+ spec:
+   interval: 5m
+   provider: github

@@ -1,0 +1,101 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+configMapGenerator:
+  - name: tenant-contract
+    literals:
+      - tenantId=herowars
+      - org=the-hero-wars-guys
+      - deployRepo=deploy-herowars-engine-porter
+      - deployRepoGit=deploy-herowars-engine-porter.git
+      - sourceName=deploy-herowars-engine-porter
+      - appAuthSecret=herowars-gitops-source-auth
+generatorOptions:
+  disableNameSuffixHash: true
+  annotations:
+    config.kubernetes.io/local-config: "true"
+replacements:
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.tenantId
+    targets:
+      - select:
+          kind: Namespace
+          name: tenant-placeholder
+        fieldPaths:
+          - metadata.name
+      - select:
+          kind: ServiceAccount
+        fieldPaths:
+          - metadata.namespace
+      - select:
+          kind: NetworkPolicy
+        fieldPaths:
+          - metadata.namespace
+      - select:
+          kind: Role
+        fieldPaths:
+          - metadata.namespace
+      - select:
+          kind: RoleBinding
+        fieldPaths:
+          - metadata.namespace
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - metadata.namespace
+      - select:
+          kind: Kustomization
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+          - spec.targetNamespace
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.sourceName
+    targets:
+      - select:
+          kind: GitRepository
+          name: source-placeholder
+        fieldPaths:
+          - metadata.name
+      - select:
+          kind: Kustomization
+        fieldPaths:
+          - spec.sourceRef.name
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.org
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.url
+        options:
+          delimiter: /
+          index: 3
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.deployRepoGit
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.url
+        options:
+          delimiter: /
+          index: 4
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.appAuthSecret
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.secretRef.name

@@ -83,6 +83,7 @@
 !/clusters/talos-cluster/apps/kyverno/namespace.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/
 !/clusters/talos-cluster/apps/kyverno/policies/kustomization.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/protect-vault-client-serviceaccount.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
@@ -151,6 +152,8 @@
 !/clusters/talos-cluster/tenants/_template/networkpolicy-allow-dns.yaml.tmpl
 !/clusters/talos-cluster/tenants/_template/networkpolicy-allow-gateway-ingress.yaml.tmpl
 !/clusters/talos-cluster/tenants/_template/networkpolicy-default-deny.yaml.tmpl
+!/clusters/talos-cluster/tenants/_template/zero-touch/
+!/clusters/talos-cluster/tenants/_template/zero-touch/**
 
 # -- GitHub configuration -----------------------------------------------------
 !/.github/
