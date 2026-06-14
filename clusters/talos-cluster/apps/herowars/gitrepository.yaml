@@ -1,0 +1,15 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: deploy-herowars-engine-porter
+  namespace: herowars
+  labels:
+    nwarila.io/deploy-repo: "true"
+spec:
+  interval: 5m
+  provider: github
+  ref:
+    branch: main
+  secretRef:
+    name: herowars-gitops-source-auth
+  url: https://github.com/the-hero-wars-guys/deploy-herowars-engine-porter.git

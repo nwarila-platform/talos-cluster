@@ -2,10 +2,12 @@
 # =============================================================================
 # sync-deploy-repos.sh - Generate Flux wiring for deploy-* repositories.
 #
-# A repository is admitted only when all of these are true:
+# Convention-discovered repositories are admitted only when all of these are true:
 #   1. name matches deploy-*
 #   2. repository is not archived
 #   3. repository exposes kubernetes/overlays/talos-cluster/kustomization.yaml
+# Explicit tenants in cluster/deploy-repo-overrides.sh use the same renderer for
+# reviewed cross-org or private sources that cannot be discovered by convention.
 #
 # By default, discovery uses the GitHub CLI. For deterministic local tests, set
 # DEPLOY_REPOS to a comma or whitespace separated list of repository names.
@@ -29,8 +31,17 @@ TENANTS_KUSTOMIZATION="${DEPLOY_TENANTS_KUSTOMIZATION:-${TENANTS_DIR}/kustomizat
 OVERRIDES_FILE="${DEPLOY_REPO_OVERRIDES_FILE:-${ROOT_DIR}/cluster/deploy-repo-overrides.sh}"
 
 NAME_RE="^${PREFIX}[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+TENANT_RE="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
 COMMIT_RE="^[0-9a-f]{40}$"
 
+declare -a EXPLICIT_DEPLOY_TENANTS=()
+declare -A DEPLOY_REPO_BRANCH_OVERRIDES=()
+declare -A DEPLOY_REPO_SOURCE_ORG_OVERRIDES=()
+declare -A DEPLOY_REPO_SOURCE_NAME_OVERRIDES=()
+declare -A DEPLOY_REPO_URL_OVERRIDES=()
+declare -A DEPLOY_REPO_MANIFEST_PATH_OVERRIDES=()
+declare -A DEPLOY_REPO_PROVIDER_OVERRIDES=()
+declare -A DEPLOY_REPO_SECRET_REF_OVERRIDES=()
 declare -A DEPLOY_REPO_REF_KIND_OVERRIDES=()
 declare -A DEPLOY_REPO_REF_OVERRIDES=()
 declare -a PLATFORM_CRITICAL_DEPLOY_REPOS=()
@@ -99,16 +110,32 @@ fi
 declare -A BRANCH_BY_REPO=()
 declare -A REF_KIND_BY_REPO=()
 declare -A REF_VALUE_BY_REPO=()
+declare -A SOURCE_NAME_BY_REPO=()
+declare -A SOURCE_URL_BY_REPO=()
+declare -A MANIFEST_PATH_BY_REPO=()
+declare -A PROVIDER_BY_REPO=()
+declare -A SECRET_REF_BY_REPO=()
 deploy_repos=()
 
 add_repo() {
     local name="$1"
     local branch="${2:-main}"
+    local source_org="${3:-${ORG}}"
+    local source_name="${4:-${name}}"
+    local manifest_path="${5:-${MANIFEST_PATH}}"
+    local source_url="${6:-}"
+    local provider="${7:-}"
+    local secret_ref="${8:-}"
+    local admission_mode="${9:-convention}"
     local ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${name}]:-branch}"
     local ref_value="${DEPLOY_REPO_REF_OVERRIDES[${name}]:-${branch:-main}}"
 
-    if ! [[ "${name}" =~ ${NAME_RE} ]]; then
+    if [[ "${admission_mode}" == "convention" ]] && ! [[ "${name}" =~ ${NAME_RE} ]]; then
         echo "ERROR: deploy repo name does not match ${NAME_RE}: ${name}" >&2
+        exit 1
+    fi
+    if [[ "${admission_mode}" == "explicit" ]] && ! [[ "${name}" =~ ${TENANT_RE} ]]; then
+        echo "ERROR: explicit tenant name does not match ${TENANT_RE}: ${name}" >&2
         exit 1
     fi
     if [[ "${ref_kind}" != "branch" && "${ref_kind}" != "tag" && "${ref_kind}" != "commit" ]]; then
@@ -123,6 +150,11 @@ add_repo() {
     BRANCH_BY_REPO["${name}"]="${branch:-main}"
     REF_KIND_BY_REPO["${name}"]="${ref_kind}"
     REF_VALUE_BY_REPO["${name}"]="${ref_value}"
+    SOURCE_NAME_BY_REPO["${name}"]="${source_name}"
+    SOURCE_URL_BY_REPO["${name}"]="${source_url:-https://github.com/${source_org}/${source_name}.git}"
+    MANIFEST_PATH_BY_REPO["${name}"]="${manifest_path}"
+    PROVIDER_BY_REPO["${name}"]="${provider}"
+    SECRET_REF_BY_REPO["${name}"]="${secret_ref}"
     deploy_repos+=("${name}")
 }
 
@@ -174,6 +206,38 @@ discover_from_github() {
             --json name,defaultBranchRef,isPrivate,isArchived \
             --jq '.[] | [.name, (.defaultBranchRef.name // "main"), (.isPrivate|tostring), (.isArchived|tostring)] | @tsv'
     )
+}
+
+add_explicit_repos() {
+    local name
+    local branch
+    local source_org
+    local source_name
+    local manifest_path
+    local source_url
+    local provider
+    local secret_ref
+
+    for name in "${EXPLICIT_DEPLOY_TENANTS[@]}"; do
+        branch="${DEPLOY_REPO_BRANCH_OVERRIDES[${name}]:-main}"
+        source_org="${DEPLOY_REPO_SOURCE_ORG_OVERRIDES[${name}]:-${ORG}}"
+        source_name="${DEPLOY_REPO_SOURCE_NAME_OVERRIDES[${name}]:-${name}}"
+        manifest_path="${DEPLOY_REPO_MANIFEST_PATH_OVERRIDES[${name}]:-${MANIFEST_PATH}}"
+        source_url="${DEPLOY_REPO_URL_OVERRIDES[${name}]:-}"
+        provider="${DEPLOY_REPO_PROVIDER_OVERRIDES[${name}]:-}"
+        secret_ref="${DEPLOY_REPO_SECRET_REF_OVERRIDES[${name}]:-}"
+
+        add_repo \
+            "${name}" \
+            "${branch}" \
+            "${source_org}" \
+            "${source_name}" \
+            "${manifest_path}" \
+            "${source_url}" \
+            "${provider}" \
+            "${secret_ref}" \
+            "explicit"
+    done
 }
 
 render_template() {
@@ -296,9 +360,53 @@ render_git_ref() {
     printf '    %s: %s\n' "${ref_kind}" "${ref_value}"
 }
 
+render_provider_field() {
+    local name="$1"
+    local provider="${PROVIDER_BY_REPO[${name}]:-}"
+
+    if [[ -n "${provider}" ]]; then
+        printf '  provider: %s\n' "${provider}"
+    fi
+}
+
+render_source_fields() {
+    local name="$1"
+    local source_url="${SOURCE_URL_BY_REPO[${name}]:-https://github.com/${ORG}/${name}.git}"
+    local secret_ref="${SECRET_REF_BY_REPO[${name}]:-}"
+
+    if [[ -n "${secret_ref}" ]]; then
+        printf '  secretRef:\n'
+        printf '    name: %s\n' "${secret_ref}"
+    fi
+    printf '  url: %s\n' "${source_url}"
+}
+
+render_gitrepository_spec() {
+    local name="$1"
+
+    printf '  interval: 5m\n'
+    render_provider_field "${name}"
+    printf '  ref:\n'
+    render_git_ref "${name}"
+    render_source_fields "${name}"
+}
+
+render_app_resources() {
+    local name="$1"
+    local secret_ref="${SECRET_REF_BY_REPO[${name}]:-}"
+
+    if [[ -n "${secret_ref}" ]]; then
+        printf '  - %s.sops.yaml\n' "${secret_ref}"
+    fi
+    printf '  - gitrepository.yaml\n'
+    printf '  - kustomization-flux.yaml\n'
+}
+
 render_app() {
     local name="$1"
     local app_dir="${APPS_DIR}/${name}"
+    local source_name="${SOURCE_NAME_BY_REPO[${name}]:-${name}}"
+    local manifest_path="${MANIFEST_PATH_BY_REPO[${name}]:-${MANIFEST_PATH}}"
 
     mkdir -p "${app_dir}"
 
@@ -306,15 +414,12 @@ render_app() {
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
-  name: ${name}
+  name: ${source_name}
   namespace: ${name}
   labels:
     nwarila.io/deploy-repo: "true"
 spec:
-  interval: 5m
-  ref:
-$(render_git_ref "${name}")
-  url: https://github.com/${ORG}/${name}.git
+$(render_gitrepository_spec "${name}")
 EOF
 
     cat > "${app_dir}/kustomization-flux.yaml" <<EOF
@@ -327,7 +432,7 @@ metadata:
     nwarila.io/deploy-repo: "true"
 spec:
   interval: 10m
-  path: ./${MANIFEST_PATH}
+  path: ./${manifest_path}
   prune: true
   wait: true
   timeout: 10m
@@ -335,7 +440,7 @@ spec:
   serviceAccountName: deploy-reconciler
   sourceRef:
     kind: GitRepository
-    name: ${name}
+    name: ${source_name}
 EOF
 
     cat > "${app_dir}/kustomization.yaml" <<EOF
@@ -343,8 +448,7 @@ EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - gitrepository.yaml
-  - kustomization-flux.yaml
+$(render_app_resources "${name}")
 EOF
 }
 
@@ -357,12 +461,26 @@ update_kustomization() {
     local output_entries=()
     local inserted_managed=false
     local entry
+    local managed
+    local managed_entry
     local tmp
     tmp="$(mktemp)"
 
     mapfile -t current_entries < <(read_kustomization_resources "${path}")
     for entry in "${current_entries[@]}"; do
+        managed=false
         if [[ "${entry}" =~ ${NAME_RE} ]]; then
+            managed=true
+        else
+            for managed_entry in "${entries[@]}"; do
+                if [[ "${entry}" == "${managed_entry}" ]]; then
+                    managed=true
+                    break
+                fi
+            done
+        fi
+
+        if [[ "${managed}" == "true" ]]; then
             if [[ "${inserted_managed}" == "false" ]]; then
                 output_entries+=("${entries[@]}")
                 inserted_managed=true
@@ -417,6 +535,8 @@ if [[ -n "${DEPLOY_REPOS:-}" ]]; then
 else
     discover_from_github
 fi
+
+add_explicit_repos
 
 if [[ "${#deploy_repos[@]}" -eq 0 ]]; then
     echo "ERROR: no deploy repositories matched the contract" >&2
