@@ -6,7 +6,7 @@ data:
 kind: Secret
 metadata:
     name: herowars-gitops-source-auth
-    namespace: herowars
+    namespace: hwg-herowars-engine-porter
 sops:
     age:
         - enc: |
