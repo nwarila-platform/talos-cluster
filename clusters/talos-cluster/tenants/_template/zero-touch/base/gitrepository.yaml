@@ -1,0 +1,15 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: source-placeholder
+  namespace: tenant-placeholder
+  labels:
+    nwarila.io/deploy-repo: "true"
+spec:
+  interval: 5m
+  provider: github
+  ref:
+    branch: main
+  secretRef:
+    name: app-auth-placeholder
+  url: https://github.com/org-placeholder/repo-placeholder.git

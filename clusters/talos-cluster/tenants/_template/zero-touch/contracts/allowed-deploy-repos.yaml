@@ -1,0 +1,14 @@
+# Reviewed allowlist for Phase 2 zero-touch tenant template renders.
+#
+# This is not a live registry or generator. It is the source-controlled contract
+# reviewers use to confirm an overlay's org + deployRepo pair before it is
+# rendered. Phase 3 should replace this review-only contract with registry CI.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zero-touch-tenant-allowlist
+  annotations:
+    config.kubernetes.io/local-config: "true"
+data:
+  the-hero-wars-guys: |
+    - deploy-herowars-engine-porter

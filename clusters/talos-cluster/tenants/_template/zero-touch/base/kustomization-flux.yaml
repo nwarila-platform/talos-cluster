@@ -1,0 +1,18 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tenant-placeholder
+  namespace: tenant-placeholder
+  labels:
+    nwarila.io/deploy-repo: "true"
+spec:
+  interval: 10m
+  path: ./kubernetes/overlays/talos-cluster
+  prune: true
+  wait: true
+  timeout: 10m
+  targetNamespace: tenant-placeholder
+  serviceAccountName: deploy-reconciler
+  sourceRef:
+    kind: GitRepository
+    name: source-placeholder

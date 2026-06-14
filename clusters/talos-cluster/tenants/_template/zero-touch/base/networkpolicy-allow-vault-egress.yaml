@@ -1,0 +1,25 @@
+# Pods opt in to Vault API egress with the vault-client: "true" label. This is
+# network plumbing only; Vault Kubernetes auth and ACL policies remain the
+# security boundary.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vault-egress
+  namespace: tenant-placeholder
+spec:
+  podSelector:
+    matchLabels:
+      vault-client: "true"
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: deploy-vault
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
