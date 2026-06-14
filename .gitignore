@@ -104,6 +104,7 @@
 !/clusters/talos-cluster/apps/vault-auth/
 !/clusters/talos-cluster/apps/vault-auth/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-auth/vault-auth-delegator-clusterrolebinding.yaml
+!/clusters/talos-cluster/apps/vault-auth/vault-namespace-reader-rbac.yaml
 !/clusters/talos-cluster/apps/vault-aws-access/
 !/clusters/talos-cluster/apps/vault-aws-access/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-aws-access/README.md
