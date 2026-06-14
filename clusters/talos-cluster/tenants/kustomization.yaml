@@ -7,5 +7,5 @@ resources:
   - arc-runners
   - arc-systems
   - deploy-vault
-  - herowars
+  - hwg-herowars-engine-porter
   - talos-drift

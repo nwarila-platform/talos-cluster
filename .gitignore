@@ -56,11 +56,6 @@
 !/clusters/talos-cluster/apps/deploy-*/gitrepository.yaml
 !/clusters/talos-cluster/apps/deploy-*/kustomization-flux.yaml
 !/clusters/talos-cluster/apps/deploy-*/kustomization.yaml
-!/clusters/talos-cluster/apps/herowars/
-!/clusters/talos-cluster/apps/herowars/herowars-gitops-source-auth.sops.yaml
-!/clusters/talos-cluster/apps/herowars/gitrepository.yaml
-!/clusters/talos-cluster/apps/herowars/kustomization-flux.yaml
-!/clusters/talos-cluster/apps/herowars/kustomization.yaml
 !/clusters/talos-cluster/apps/talos-drift/
 !/clusters/talos-cluster/apps/talos-drift/README.md
 !/clusters/talos-cluster/apps/talos-drift/check.py
@@ -134,12 +129,9 @@
 !/clusters/talos-cluster/tenants/deploy-*/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/tenants/deploy-*/networkpolicy-allow-dns.yaml
 !/clusters/talos-cluster/tenants/deploy-*/flux-reconciler-rbac.yaml
-!/clusters/talos-cluster/tenants/herowars/
-!/clusters/talos-cluster/tenants/herowars/kustomization.yaml
-!/clusters/talos-cluster/tenants/herowars/namespace.yaml
-!/clusters/talos-cluster/tenants/herowars/networkpolicy-default-deny.yaml
-!/clusters/talos-cluster/tenants/herowars/networkpolicy-allow-dns.yaml
-!/clusters/talos-cluster/tenants/herowars/flux-reconciler-rbac.yaml
+!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/
+!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/herowars-gitops-source-auth.sops.yaml
+!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/kustomization.yaml
 !/clusters/talos-cluster/tenants/talos-drift/
 !/clusters/talos-cluster/tenants/talos-drift/ciliumnetworkpolicy-egress.yaml
 !/clusters/talos-cluster/tenants/talos-drift/kustomization.yaml
