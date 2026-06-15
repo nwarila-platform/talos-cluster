@@ -2,7 +2,7 @@ apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
   name: vault
-  namespace: deploy-vault
+  namespace: flux-system
 spec:
   interval: 10m
   path: ./clusters/talos-cluster/apps/vault
@@ -10,14 +10,12 @@ spec:
   wait: true
   timeout: 10m
   targetNamespace: deploy-vault
-  serviceAccountName: deploy-reconciler
   force: false
   dependsOn:
-    - name: deploy-vault
+    - name: flux-system
   sourceRef:
     kind: GitRepository
     name: flux-system
-    namespace: flux-system
   patches:
     - target:
         kind: StatefulSet
