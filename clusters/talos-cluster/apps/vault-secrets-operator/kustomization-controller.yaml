@@ -11,7 +11,7 @@ spec:
   timeout: 10m
   dependsOn:
     - name: vault
-      namespace: deploy-vault
+      namespace: flux-system
   sourceRef:
     kind: GitRepository
     name: flux-system
