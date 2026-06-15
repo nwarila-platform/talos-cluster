@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - ../_template/zero-touch/base
   - herowars-gitops-source-auth.sops.yaml
+  - ghcr-pull.sops.yaml
 configMapGenerator:
   - name: tenant-contract
     literals:

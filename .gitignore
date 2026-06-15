@@ -130,6 +130,7 @@
 !/clusters/talos-cluster/tenants/deploy-*/networkpolicy-allow-dns.yaml
 !/clusters/talos-cluster/tenants/deploy-*/flux-reconciler-rbac.yaml
 !/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/
+!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/ghcr-pull.sops.yaml
 !/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/herowars-gitops-source-auth.sops.yaml
 !/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/kustomization.yaml
 !/clusters/talos-cluster/tenants/talos-drift/
