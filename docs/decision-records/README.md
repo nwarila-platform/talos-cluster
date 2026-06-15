@@ -62,6 +62,13 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0014](repo/0014-use-stage-1-local-backup-server-for-dr.md)    | Use a Stage-1 Local Backup Server for Backup and DR | Accepted | 2026-06-12 | Keep Stage-0 S3 for rebuild-critical secrets, move etcd and Vault Raft snapshots to a local Stage-1 server, and require restore-drill pass criteria. |
 | [0015](repo/0015-use-vault-secrets-operator-for-workload-secrets.md) | Use Vault Secrets Operator for Workload Secrets | Accepted | 2026-06-13 | Install VSO as a cluster capability, use generated tenant auth boundaries plus Vault KV-v2 path scoping, and keep app-specific `VaultStaticSecret` resources in `deploy-*` repos. |
 
+### Imported Vault ADRs
+
+The deploy-vault repository's historical Vault ADRs now live in
+[`repo/vault/`](repo/vault/) with their original numbering preserved. They were
+relocated from `nwarila-platform/deploy-vault/docs/decision-records/repo/`
+after Vault moved into this repository under `clusters/talos-cluster/apps/vault/`.
+
 ## Status Lifecycle
 
 An ADR moves through the following statuses. Every ADR in the Index above shows its current status.

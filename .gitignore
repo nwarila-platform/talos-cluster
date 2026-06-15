@@ -205,7 +205,6 @@
 !/scripts/build-maintenance-iso.sh
 !/scripts/check-firewall-management-ports.py
 !/scripts/check-text-encoding.py
-!/scripts/check-vault-fold-pr2.py
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
 !/scripts/etcd-snapshot.sh
@@ -253,6 +252,8 @@
 !/docs/decision-records/repo/0013-use-dedicated-vault-longhorn-storageclass.md
 !/docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md
 !/docs/decision-records/repo/0015-use-vault-secrets-operator-for-workload-secrets.md
+!/docs/decision-records/repo/vault/
+!/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
 !/docs/decision-records/template/.gitkeep
 !/docs/decision-records/org/0005-keep-github-control-planes-namespace-local.md
