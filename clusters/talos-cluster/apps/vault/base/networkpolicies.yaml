@@ -1,0 +1,110 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-intra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - port: 8200
+          protocol: TCP
+        - port: 8201
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - port: 8200
+          protocol: TCP
+        - port: 8201
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vso-controller-vault-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    # Vault ingress is default-deny by design. Future Vault clients (for
+    # example cert-manager or app workloads via Vault Agent) each need an
+    # analogous explicit API ingress allow.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault-secrets-operator
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: vault-secrets-operator
+              app.kubernetes.io/name: vault-secrets-operator
+              control-plane: controller-manager
+      ports:
+        - port: 8200
+          protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: vault-egress-apiserver
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  egress:
+    - toEntities:
+        - kube-apiserver
+---
+# AWS egress for KMS auto-unseal (ADR-0008; talos-cluster ADR-0012). Vault's
+# awskms seal reaches KMS; the aws-signing-helper sidecar reaches IAM Roles
+# Anywhere + STS. The tenant default-deny blocks all of this otherwise — without
+# this policy every unseal fails closed at the network layer (review risk R1).
+#
+# FQDN-based; relies on the Cilium DNS proxy (toFQDNs). If the DNS proxy is not
+# enabled, replace the toFQDNs rule with a toCIDRSet built from AWS
+# ip-ranges.json (KMS/STS/rolesanywhere) and assign a refresh owner.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: vault-egress-aws
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  egress:
+    # DNS visibility so the Cilium proxy can learn the AWS endpoint IPs.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*.amazonaws.com"
+    # KMS (seal) + STS / Roles Anywhere (sidecar credential vending), TLS only.
+    - toFQDNs:
+        - matchName: kms.us-east-1.amazonaws.com
+        - matchName: sts.us-east-1.amazonaws.com
+        - matchName: rolesanywhere.us-east-1.amazonaws.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

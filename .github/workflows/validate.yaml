@@ -118,6 +118,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout deploy-vault bf7f0e0
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: nwarila-platform/deploy-vault
+          ref: bf7f0e0f9f5b6a66c2ae980fcd2f4d358bed9bd4
+          path: .ci/deploy-vault
+          token: ${{ secrets.DEPLOY_REPO_DISCOVERY_TOKEN || github.token }}
+          persist-credentials: false
+
       - name: Install kubectl (pinned to cluster KUBERNETES_VERSION)
         run: |
           set -euo pipefail
@@ -134,8 +143,29 @@ jobs:
           sudo mv kubectl /usr/local/bin/kubectl
           kubectl version --client=true
 
+      - name: Install YAML parser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml
+
       - name: Render cluster Kustomize tree
         run: kubectl kustomize clusters/talos-cluster >/dev/null
+
+      - name: Check Vault fold PR2 no drift
+        run: |
+          set -euo pipefail
+          cmp --silent \
+            .ci/deploy-vault/kubernetes/base/vault.hcl \
+            clusters/talos-cluster/apps/vault/base/vault.hcl
+
+          old_render="$(mktemp)"
+          new_render="$(mktemp)"
+          kubectl kustomize .ci/deploy-vault/kubernetes/overlays/talos-cluster >"${old_render}"
+          kubectl kustomize clusters/talos-cluster/apps/vault >"${new_render}"
+          python3 scripts/check-vault-fold-pr2.py \
+            --old "${old_render}" \
+            --new "${new_render}" \
+            --flux clusters/talos-cluster/apps/vault-kustomization.yaml
 
       - name: Check rendered resource namespaces
         run: |

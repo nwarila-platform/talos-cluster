@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# All Vault resources reconcile into the deploy-vault tenant namespace.
+namespace: deploy-vault
+
+# Metadata-only labels (NOT injected into selectors — the StatefulSet owns its
+# own immutable selector). Workload-identifying labels live on each resource.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: deploy-vault
+    includeSelectors: false
+
+# Pin the Vault image by DIGEST, never a tag (ADR-0006). The validation
+# workflow fails the build on any tag-pinned image reference.
+images:
+  - name: ghcr.io/nwarila-platform/ubi9-hashicorp-vault
+    digest: sha256:f4c4422b5a8ec5a56db67b937b429e655e5fd73e2c7c9a308e1636520fb5f244
+
+resources:
+  - serviceaccount-rbac.yaml
+  - services.yaml
+  - vault-statefulset.yaml
+  - networkpolicies.yaml
+
+configMapGenerator:
+  - name: vault-config
+    files:
+      - vault.hcl

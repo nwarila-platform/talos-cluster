@@ -105,6 +105,9 @@
 !/clusters/talos-cluster/apps/vault-aws-access/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-aws-access/README.md
 !/clusters/talos-cluster/apps/vault-aws-access/vault-ra-cert.sops.yaml
+!/clusters/talos-cluster/apps/vault-kustomization.yaml
+!/clusters/talos-cluster/apps/vault/
+!/clusters/talos-cluster/apps/vault/**
 !/clusters/talos-cluster/apps/vault-tls/
 !/clusters/talos-cluster/apps/vault-tls/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-tls/vault-serving-cert.sops.yaml
@@ -202,6 +205,7 @@
 !/scripts/build-maintenance-iso.sh
 !/scripts/check-firewall-management-ports.py
 !/scripts/check-text-encoding.py
+!/scripts/check-vault-fold-pr2.py
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
 !/scripts/etcd-snapshot.sh

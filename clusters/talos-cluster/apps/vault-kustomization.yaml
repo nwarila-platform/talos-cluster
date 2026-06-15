@@ -1,0 +1,61 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vault
+  namespace: deploy-vault
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/vault
+  prune: true
+  wait: true
+  timeout: 10m
+  targetNamespace: deploy-vault
+  serviceAccountName: deploy-reconciler
+  force: false
+  dependsOn:
+    - name: deploy-vault
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  patches:
+    - target:
+        kind: StatefulSet
+        name: vault
+      patch: |-
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: vault
+          annotations:
+            kustomize.toolkit.fluxcd.io/prune: disabled
+    - target:
+        kind: Service
+        name: vault
+      patch: |-
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: vault
+          annotations:
+            kustomize.toolkit.fluxcd.io/prune: disabled
+    - target:
+        kind: Service
+        name: vault-internal
+      patch: |-
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: vault-internal
+          annotations:
+            kustomize.toolkit.fluxcd.io/prune: disabled
+    - target:
+        kind: ConfigMap
+        name: vault-config
+      patch: |-
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: vault-config
+          annotations:
+            kustomize.toolkit.fluxcd.io/prune: disabled
