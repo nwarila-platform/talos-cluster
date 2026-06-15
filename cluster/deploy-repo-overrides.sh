@@ -7,12 +7,18 @@
 # Explicit tenants are reviewed, non-convention sources that still use the same
 # generated namespace, Flux source, Flux Kustomization, and tenant RBAC envelope.
 
-PLATFORM_CRITICAL_DEPLOY_REPOS=(
+PLATFORM_CRITICAL_DEPLOY_REPOS=()
+
+# Vault workload ownership has been folded into the platform-owned apps/vault
+# Kustomization. Keep deploy-vault tombstoned so convention discovery cannot
+# recreate the retired app wrapper while the namespace envelope stays applied.
+DEPLOY_REPO_DISCOVERY_TOMBSTONES=(
     deploy-vault
 )
 
-DEPLOY_REPO_REF_KIND_OVERRIDES["deploy-vault"]="commit"
-DEPLOY_REPO_REF_OVERRIDES["deploy-vault"]="bf7f0e0f9f5b6a66c2ae980fcd2f4d358bed9bd4"
+DEPLOY_REPO_RETAINED_TENANTS=(
+    deploy-vault
+)
 
 EXPLICIT_DEPLOY_TENANTS=(
     herowars
