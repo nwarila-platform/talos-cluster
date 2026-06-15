@@ -3,10 +3,8 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - vault-client-serviceaccount.yaml
-  - vault-ca-configmap.yaml
   - networkpolicy-default-deny.yaml
   - networkpolicy-allow-dns.yaml
-  - networkpolicy-allow-dns-visibility.yaml
   - networkpolicy-allow-vault-egress.yaml
   - deploy-reconciler-rbac.yaml
   - gitrepository.yaml
