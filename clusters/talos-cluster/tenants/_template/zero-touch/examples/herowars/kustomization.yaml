@@ -1,5 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: herowars
 resources:
   - ../../base
 configMapGenerator:
@@ -22,35 +23,9 @@ replacements:
       fieldPath: data.tenantId
     targets:
       - select:
-          kind: Namespace
-          name: tenant-placeholder
-        fieldPaths:
-          - metadata.name
-      - select:
-          kind: ServiceAccount
-        fieldPaths:
-          - metadata.namespace
-      - select:
-          kind: NetworkPolicy
-        fieldPaths:
-          - metadata.namespace
-      - select:
-          kind: Role
-        fieldPaths:
-          - metadata.namespace
-      - select:
-          kind: RoleBinding
-        fieldPaths:
-          - metadata.namespace
-      - select:
-          kind: GitRepository
-        fieldPaths:
-          - metadata.namespace
-      - select:
           kind: Kustomization
         fieldPaths:
           - metadata.name
-          - metadata.namespace
           - spec.targetNamespace
   - source:
       kind: ConfigMap
