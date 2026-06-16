@@ -170,8 +170,8 @@ Default convention:
 | Generated VaultAuth name | `vso-kubernetes` |
 | Vault Kubernetes auth mount | `kubernetes-talos/` unless an implementation ADR chooses another name |
 | Vault role | `k8s-<tenant-namespace>-vso` |
-| Vault policy | `kv-<tenant-namespace>-read` |
-| Allowed KV prefix | `kv/<tenant-namespace>/*` |
+| Vault policy | `secret-<tenant-namespace>-read` |
+| Allowed secret prefix | `secret/<tenant-namespace>/*` |
 
 The Vault role must bind both `bound_service_account_names=["vso-sync"]` and
 `bound_service_account_namespaces=["<tenant-namespace>"]`. Do not create a
@@ -180,11 +180,11 @@ shared "all tenants" role or wildcard namespace binding.
 Policy starts read-only:
 
 ```hcl
-path "kv/data/<tenant-namespace>/*" {
+path "secret/data/<tenant-namespace>/*" {
   capabilities = ["read"]
 }
 
-path "kv/metadata/<tenant-namespace>/*" {
+path "secret/metadata/<tenant-namespace>/*" {
   capabilities = ["read"]
 }
 ```
@@ -196,10 +196,10 @@ record why.
 
 ### Secrets Engine and Path Convention
 
-Use a KV-v2 mount named `kv` for ordinary workload secrets unless a later ADR
+Use a KV-v2 mount named `secret` for ordinary workload secrets unless a later ADR
 chooses a more specific mount split. VSO references use:
 
-- `mount: kv`
+- `mount: secret`
 - `type: kv-v2`
 - `path: <tenant-namespace>/<app-or-component>/<secret-name>`
 
@@ -212,7 +212,7 @@ metadata:
   name: app-config
 spec:
   vaultAuthRef: vso-kubernetes
-  mount: kv
+  mount: secret
   type: kv-v2
   path: deploy-keycloak/internal/admin
   refreshAfter: 1h
@@ -286,13 +286,13 @@ or Vault startup path.
    `apps` and `tenants` together, do this after VSO CRDs exist, or split Flux
    Kustomizations with an explicit dependency.
 4. **Vault live ops, owner-gated.** Enable/configure Kubernetes auth, decide the
-   TokenReview reviewer identity, enable or confirm the `kv` KV-v2 mount, and
+   TokenReview reviewer identity, enable or confirm the `secret` KV-v2 mount, and
    create the first namespace role/policy. No raw app values go through Git.
 5. **First consumer PR, owner-gated tenant change.** Add `deploy-vso-smoke` or
    the first approved tenant `VaultStaticSecret` and workload reference. Verify
    the synced Kubernetes Secret before cutting over any real app.
 6. **Expansion.** Add tenants one at a time. Add admission policy that enforces
-   `mount: kv`, the generated `vaultAuthRef`, namespace-prefixed paths, and no
+   `mount: secret`, the generated `vaultAuthRef`, namespace-prefixed paths, and no
    direct core Secret manifests from tenant repos.
 
 ## Pros and Cons of the Options
