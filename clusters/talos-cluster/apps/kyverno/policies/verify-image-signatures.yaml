@@ -136,3 +136,22 @@ spec:
                     subjectRegExp: "^https://github\\.com/nwarila-platform/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
                     rekor:
                       url: "https://rekor.sigstore.dev"
+    - name: verify-herowars-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/the-hero-wars-guys/*"
+          failureAction: Audit
+          mutateDigest: false
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: "^https://github\\.com/the-hero-wars-guys/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
