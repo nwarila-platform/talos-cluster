@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-tenant-vault-api-ingress
+  namespace: deploy-vault
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      app.kubernetes.io/name: vault
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              nwarila.io/tenant: "true"
+          podSelector:
+            matchLabels:
+              vault-client: "true"
+      ports:
+        - port: 8200
+          protocol: TCP

@@ -22,6 +22,7 @@ resources:
   - services.yaml
   - vault-statefulset.yaml
   - networkpolicies.yaml
+  - allow-tenant-vault-api-ingress.yaml
 
 configMapGenerator:
   - name: vault-config
