@@ -23,7 +23,7 @@ spec:
     cleanupOnFail: true
   values:
     githubConfigUrl: https://github.com/nwarila-platform
-    githubConfigSecret: arc-github-app
+    githubConfigSecret: nwarila-runner-registrar
     runnerScaleSetName: nwarila-talos-arc-ci
     minRunners: 0
     maxRunners: 2

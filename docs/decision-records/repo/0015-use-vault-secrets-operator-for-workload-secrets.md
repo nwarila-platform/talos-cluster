@@ -260,7 +260,7 @@ Read-only survey on 2026-06-13 found SOPS files only in `talos-cluster`:
 | `vault-ra-cert` | Vault KMS auto-unseal secret-zero. It is explicitly excluded from VSO. |
 | `vault-serving-cert` | Durable Vault TLS bootstrap Secret. Moving it behind Vault would recreate a cold-start loop. |
 | `talos-reader-talosconfig` | Platform Talos API credential for drift checking, not an ordinary tenant app secret. |
-| `arc-github-app` | Platform CI control-plane credential for runner provisioning, not a low-risk tenant secret. |
+| `nwarila-runner-registrar` | Platform CI control-plane credential for runner provisioning, not a low-risk tenant secret. |
 
 Because none is suitable, the first proof should be a minimal demo tenant such
 as `deploy-vso-smoke`, created only to prove VSO wiring. It should use a
