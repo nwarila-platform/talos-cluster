@@ -149,7 +149,7 @@ spec:
             allowInsecureRegistry: false
             secrets:
               - ghcr-pull
-          failureAction: Audit
+          failureAction: Enforce
           mutateDigest: false
           required: true
           attestors:
