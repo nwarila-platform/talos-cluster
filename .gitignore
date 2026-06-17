@@ -200,8 +200,6 @@
 
 # -- Scripts: automation invoked by the Makefile ------------------------------
 !/scripts/
-!/scripts/agent-loop.ps1
-!/scripts/agent-loop.sh
 !/scripts/apply.sh
 !/scripts/bootstrap.sh
 !/scripts/build-maintenance-iso.sh

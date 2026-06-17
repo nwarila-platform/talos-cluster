@@ -4,7 +4,7 @@
 | -------------- | ----------------------------------------- |
 | Status         | Accepted                                  |
 | Date           | 2026-06-02                                |
-| Authors        | Nick Warila (@NWarila), Claude            |
+| Authors        | Nick Warila (@NWarila)                    |
 | Decision-maker | Nick Warila (sole portfolio maintainer)   |
 | Consulted      | ADR-0008, ADR-0010, ADR-0011, deploy-vault ADR-0008/0009 |
 | Informed       | None.                                     |

@@ -4,7 +4,7 @@
 | -------------- | --------------------------------------- |
 | Status         | Accepted                                |
 | Date           | 2026-06-01                              |
-| Authors        | Nick Warila (@NWarila), Codex           |
+| Authors        | Nick Warila (@NWarila)                  |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
 | Consulted      | ADR-0008, ADR-0010, local Flux manifests |
 | Informed       | None.                                   |

@@ -1,19 +1,18 @@
-# Agent Operating Contract
+# Repository Operating Guidance
 
 This repository is the source of truth for `TDNHQ-TALCL01`, a production Talos
 Kubernetes cluster. Its long-term goal is to become and remain a top 0.1% Talos
 cluster repository by correctness, security posture, operational clarity,
 minimalism, and reviewability.
 
-Every agent working here should treat the repository as resume-grade critical
+Every contributor working here should treat the repository as resume-grade critical
 infrastructure. Optimize for changes that would survive rigorous review by
 industry experts, security-minded infrastructure engineers, and FAANG-level
 hiring reviewers.
 
 ## North Star
 
-Improve the repository incrementally until both Codex and Claude agree that it
-is aligned with:
+Improve the repository incrementally until it is aligned with:
 
 - the organization baseline in `nwarila-platform/.github`;
 - Talos and Kubernetes community best practices;
@@ -43,30 +42,12 @@ governance and style. In particular:
   repository-specific ADR or in the implementing PR when the exception is
   clearly temporary.
 
-## Iterative Improvement Loop
+## Iterative Improvement
 
 Work in one small fixed-scope improvement at a time. Do not batch unrelated
 cleanup into a broad "quality pass."
 
-Use `.\scripts\agent-loop.ps1 run` from Windows PowerShell to execute the loop
-autonomously. The PowerShell supervisor is the primary automation entrypoint:
-it resolves Codex and Claude CLIs directly, captures cycle state, uses
-structured JSON gates, rebounds malformed phase output with bounded retries,
-enforces plan-revision and no-change fuses, and records implementation,
-verification, and retrospectives under `.agent-loop/`. The generated
-`.agent-loop/` directory is local state and must not be committed.
-
-The loop is quality-first by default. It must try the best available Codex
-models first at maximum reasoning effort and run Claude on the best available
-Opus path at maximum effort. Fallback models or lower effort are allowed only
-when the installed CLI or model endpoint rejects the preferred option, and that
-fallback must be visible in the cycle logs.
-
-Operators can inspect the latest loop with `.\scripts\agent-loop.ps1 status`
-or `.\scripts\agent-loop.ps1 monitor`. To stop a long run cleanly, create
-`.agent-loop\autonomous\STOP`; the supervisor exits at the next cycle boundary.
-
-Each improvement cycle is:
+Each improvement should:
 
 1. Perform an adversarial audit of the current repository state.
 2. Identify exactly one deficiency worth fixing next.
@@ -76,19 +57,14 @@ Each improvement cycle is:
    - the proposed files and behavior affected;
    - the verification commands or evidence;
    - any rollback or safety consideration.
-4. Have the other LLM perform an adversarial review of the plan.
-   - If Codex wrote the audit and plan, Claude reviews it.
-   - If Claude wrote the audit and plan, Codex reviews it.
-5. Implement only after both agents agree the plan is sound, or after the plan
-   is revised until the review objections are resolved.
+4. Get independent review before changing production-sensitive behavior.
+5. Implement only after review objections are resolved.
 6. Verify the change with the smallest meaningful validation set.
 7. Record what changed and what remains risky.
-8. On the next cycle, swap roles: the reviewer becomes the auditor/planner and
-   the previous auditor/planner becomes the reviewer.
 
-If the other LLM is unavailable in the current session, stop after producing the
-audit and plan, then ask the user to run or provide the counterpart review. Do
-not silently skip cross-review for production-affecting changes.
+If independent review is unavailable for a production-affecting change, stop
+after producing the audit and plan and ask the maintainer to provide or arrange
+the review. Do not silently skip review for production-affecting changes.
 
 ## Definition of a Good Change
 

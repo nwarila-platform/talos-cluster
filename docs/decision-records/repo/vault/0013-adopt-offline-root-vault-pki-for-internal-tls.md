@@ -4,10 +4,10 @@
 | -------------- | --------------------------------------------------------------------- |
 | Status         | Accepted                                                              |
 | Date           | 2026-06-12                                                            |
-| Authors        | Nick Warila (@NWarila), Codex                                         |
+| Authors        | Nick Warila (@NWarila)                                                |
 | Decision-maker | Nick Warila (sole portfolio maintainer)                               |
 | Consulted      | ADR-0004, ADR-0008, ADR-0009; HashiCorp Vault PKI and listener docs; cert-manager supported-release matrix |
-| Informed       | Claude, future platform operators                                     |
+| Informed       | future platform operators                                             |
 | Reversibility  | Medium                                                                |
 | Review-by      | 2026-09-12                                                            |
 

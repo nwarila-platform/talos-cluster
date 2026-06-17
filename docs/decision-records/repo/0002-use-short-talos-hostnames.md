@@ -17,7 +17,7 @@ Talos hostnames, Kubernetes node names, and per-node patch filenames in this rep
 
 ## Context and Problem Statement
 
-Prior to this ADR, `cluster/config.env` declared `CP_NODES="TDNHQ-TLOMGT01:… TDNHQ-TLOMGT02:…"` and `WORKER_NODES="TDNHQ-TLOWRK01:… TDNHQ-TLOWRK02:…"`. The per-node patch filenames matched (`cluster/patches/TDNHQ-TLOMGT01.yaml`, etc.). [CLAUDE.md](../../../CLAUDE.md) and [README.md](../../../README.md) used the same asset-style names. The live cluster, however, has been running for ≥51 days with Talos hostnames `cp1`, `cp2`, `cp3`, `w1`, `w2`, `w3` — confirmed by `talosctl get hostnamestatus -o jsonpath='{.spec.hostname}'` against all six nodes on 2026-05-25 and by `kubectl get nodes`, which reports those same names as the Kubernetes node identities.
+Prior to this ADR, `cluster/config.env` declared `CP_NODES="TDNHQ-TLOMGT01:… TDNHQ-TLOMGT02:…"` and `WORKER_NODES="TDNHQ-TLOWRK01:… TDNHQ-TLOWRK02:…"`. The per-node patch filenames matched (`cluster/patches/TDNHQ-TLOMGT01.yaml`, etc.). [README.md](../../../README.md) and repository guidance used the same asset-style names. The live cluster, however, has been running for ≥51 days with Talos hostnames `cp1`, `cp2`, `cp3`, `w1`, `w2`, `w3` — confirmed by `talosctl get hostnamestatus -o jsonpath='{.spec.hostname}'` against all six nodes on 2026-05-25 and by `kubectl get nodes`, which reports those same names as the Kubernetes node identities.
 
 The asset-style names in the repo therefore did not match any live node. `scripts/generate.sh` lowercases the patch filename and writes it into `HostnameConfig.hostname`, so a `make apply` from the prior repo state would have renamed every node from `cp1` to `tdnhq-tlomgt01` (and so on), invalidating client kubeconfigs that target nodes by name and cycling every workload's affinity/toleration that names a node. This is a hostname-rename storm masquerading as a routine apply.
 
@@ -116,7 +116,7 @@ None (current).
 
 ## Implementing PRs
 
-The PR that introduces this ADR also renames `cluster/patches/TDNHQ-TLOMGT0N.yaml` → `cluster/patches/cp{1,2,3}.yaml`, renames `cluster/patches/TDNHQ-TLOWRK0N.yaml` → `cluster/patches/w{1,2,3}.yaml`, rewrites `cluster/config.env` `CP_NODES` / `WORKER_NODES` / `BOOTSTRAP_NODE`, updates `cluster/patches/controlplane.yaml` certSANs to include the third CP, and refreshes `CLAUDE.md`, `README.md`, `systems`, and `.gitignore`.
+The PR that introduces this ADR also renames `cluster/patches/TDNHQ-TLOMGT0N.yaml` → `cluster/patches/cp{1,2,3}.yaml`, renames `cluster/patches/TDNHQ-TLOWRK0N.yaml` → `cluster/patches/w{1,2,3}.yaml`, rewrites `cluster/config.env` `CP_NODES` / `WORKER_NODES` / `BOOTSTRAP_NODE`, updates `cluster/patches/controlplane.yaml` certSANs to include the third CP, and refreshes `README.md`, `systems`, and `.gitignore`.
 
 ## Related ADRs
 

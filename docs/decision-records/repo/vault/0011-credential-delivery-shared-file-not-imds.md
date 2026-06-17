@@ -4,7 +4,7 @@
 | -------------- | --------------------------------------- |
 | Status         | Accepted                                |
 | Date           | 2026-06-02                              |
-| Authors        | Nick Warila (@NWarila), Claude          |
+| Authors        | Nick Warila (@NWarila)                  |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
 | Consulted      | ADR-0008; talos-cluster [ADR-0012](../0012-vault-kms-auto-unseal-credential-delivery.md) |
 | Informed       | None.                                   |

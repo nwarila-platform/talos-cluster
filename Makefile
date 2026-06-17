@@ -9,7 +9,7 @@ SHELL := /bin/bash
 # -----------------------------------------------------------------------------
 
 .PHONY: help init generate validate apply apply-insecure bootstrap upgrade \
-        health kubeconfig s3-push s3-pull agent-loop clean reset
+        health kubeconfig s3-push s3-pull clean reset
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -99,11 +99,6 @@ s3-push: ## Push local .s3/ to AWS S3
 
 s3-pull: ## Pull from AWS S3 to local .s3/
 	@bash scripts/s3-sync.sh pull
-
-# -- Agent Improvement Loop ---------------------------------------------------
-
-agent-loop: ## Run agent improvement loop helper (ARGS="status")
-	@bash scripts/agent-loop.sh $(ARGS)
 
 # -- Cleanup ------------------------------------------------------------------
 

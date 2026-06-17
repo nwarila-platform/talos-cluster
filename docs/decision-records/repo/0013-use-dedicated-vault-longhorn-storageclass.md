@@ -4,10 +4,10 @@
 | -------------- | --------------------------------------- |
 | Status         | Accepted                                |
 | Date           | 2026-06-10                              |
-| Authors        | Nick Warila (@NWarila), Codex           |
+| Authors        | Nick Warila (@NWarila)                  |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
 | Consulted      | Longhorn 1.11.2 StorageClass, storage tag, and Node CRD documentation |
-| Informed       | Claude, future reviewers                |
+| Informed       | future reviewers                        |
 | Reversibility  | Medium                                  |
 | Review-by      | N/A (Accepted)                          |
 
