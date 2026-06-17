@@ -4,10 +4,10 @@
 | -------------- | --------------------------------------- |
 | Status         | Accepted                                |
 | Date           | 2026-06-12                              |
-| Authors        | Nick Warila (@NWarila), Codex           |
+| Authors        | Nick Warila (@NWarila)                  |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
 | Consulted      | PLAN section 7, ADR-0006, ADR-0012, deploy-vault TLS and Raft manifests |
-| Informed       | Claude, future reviewers                |
+| Informed       | future reviewers                        |
 | Reversibility  | Medium                                  |
 | Review-by      | N/A (Accepted)                          |
 

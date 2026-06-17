@@ -4,7 +4,7 @@
 | -------------- | --------------------------------------- |
 | Status         | Accepted                                |
 | Date           | 2026-05-27                              |
-| Authors        | Nick Warila (@NWarila), Codex           |
+| Authors        | Nick Warila (@NWarila)                  |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
 | Consulted      | Kyverno upstream documentation          |
 | Informed       | None.                                   |

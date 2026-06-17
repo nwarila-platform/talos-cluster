@@ -21,7 +21,7 @@ The Flux branch is fixed to `main`, the deploy path is fixed to
 `./kubernetes/overlays/talos-cluster`, and the GitHub App secret name is derived
 by convention. A future Phase 3 registry/generator should enforce the allowlist
 mechanically. For Phase 2, the source-controlled allowlist below is the reviewed
-contract Claude audits:
+contract:
 
 - `contracts/allowed-deploy-repos.yaml`
 

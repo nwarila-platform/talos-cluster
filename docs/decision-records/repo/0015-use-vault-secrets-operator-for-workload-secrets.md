@@ -4,10 +4,10 @@
 | -------------- | --------------------------------------- |
 | Status         | Accepted                                |
 | Date           | 2026-06-13                              |
-| Authors        | Nick Warila (@NWarila), Codex           |
+| Authors        | Nick Warila (@NWarila)                  |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
 | Consulted      | Step 66 TASK.md, PLAN trust-root invariant, rancher-terraform-framework ADR-repo/0004, rancher-terraform-framework `vault-secrets.yaml`, deploy-vault ADR-0008/0009/0011/0013 |
-| Informed       | Claude, future deploy-* maintainers, future platform operators |
+| Informed       | future deploy-* maintainers, future platform operators         |
 | Reversibility  | Medium                                  |
 | Review-by      | 2026-12-13                              |
 
