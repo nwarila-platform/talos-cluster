@@ -1,0 +1,87 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hwg-talos-arc-ci
+  namespace: arc-runners
+spec:
+  interval: 10m
+  releaseName: hwg-talos-arc-ci
+  chart:
+    spec:
+      chart: gha-runner-scale-set
+      version: 0.14.2
+      sourceRef:
+        kind: HelmRepository
+        name: actions-runner-controller
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      remediateLastFailure: false
+    cleanupOnFail: true
+  values:
+    githubConfigUrl: https://github.com/the-hero-wars-guys
+    githubConfigSecret: hwg-arc-github-app
+    runnerScaleSetName: talos-arc-ci
+    minRunners: 0
+    maxRunners: 2
+    controllerServiceAccount:
+      namespace: arc-systems
+      name: arc-gha-rs-controller
+    listenerTemplate:
+      metadata:
+        labels:
+          arc.nwarila.io/role: listener
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: listener
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                  - ALL
+              runAsNonRoot: true
+              runAsUser: 1000
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                memory: 256Mi
+    template:
+      metadata:
+        labels:
+          arc.nwarila.io/role: runner
+      spec:
+        restartPolicy: Never
+        automountServiceAccountToken: false
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: runner
+            image: ghcr.io/actions/actions-runner:2.334.0@sha256:b6614fce332517f74d0a76e7c762fb08e4f2ff13dcf333183397c8a5725b6e8e
+            command:
+              - /home/runner/run.sh
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                  - ALL
+              runAsNonRoot: true
+              runAsUser: 1001
+            resources:
+              requests:
+                cpu: 250m
+                memory: 512Mi
+              limits:
+                memory: 1Gi
+  test:
+    enable: false
