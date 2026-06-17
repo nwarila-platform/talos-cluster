@@ -24,7 +24,7 @@ spec:
   values:
     githubConfigUrl: https://github.com/the-hero-wars-guys
     githubConfigSecret: hwg-arc-github-app
-    runnerScaleSetName: talos-arc-ci
+    runnerScaleSetName: hwg-talos-arc-ci
     minRunners: 0
     maxRunners: 2
     controllerServiceAccount:
