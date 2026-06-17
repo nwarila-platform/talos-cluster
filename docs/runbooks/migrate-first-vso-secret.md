@@ -16,7 +16,7 @@ Every encrypted Secret currently in the estate is cluster-owned:
 | `vault-ra-cert` | `clusters/talos-cluster/apps/vault-aws-access/` | Do not migrate. It is Vault's KMS auto-unseal secret-zero. |
 | `vault-serving-cert` | `clusters/talos-cluster/apps/vault-tls/` | Do not migrate. It breaks Vault's TLS cold-start loop and must stay protected-side durable. |
 | `talos-reader-talosconfig` | `clusters/talos-cluster/apps/talos-drift/` | Do not migrate first. It is a platform Talos API credential, not an ordinary tenant app secret. |
-| `arc-github-app` | `clusters/talos-cluster/apps/actions-runner-controller/scale-set/` | Do not migrate first. It controls the GitHub runner control plane. |
+| `nwarila-runner-registrar` | `clusters/talos-cluster/apps/actions-runner-controller/scale-set/` | Do not migrate first. It controls the GitHub runner control plane. |
 
 The first proof should therefore be a minimal tenant demo, for example
 `deploy-vso-smoke`, with a non-production placeholder value. The first real app
