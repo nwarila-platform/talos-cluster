@@ -252,6 +252,7 @@
 !/docs/decision-records/repo/0013-use-dedicated-vault-longhorn-storageclass.md
 !/docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md
 !/docs/decision-records/repo/0015-use-vault-secrets-operator-for-workload-secrets.md
+!/docs/decision-records/repo/0016-deliver-on-cluster-ci-secrets-via-sops-file-mount.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
