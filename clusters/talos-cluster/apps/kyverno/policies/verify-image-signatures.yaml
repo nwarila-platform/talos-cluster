@@ -145,6 +145,10 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/the-hero-wars-guys/*"
+          imageRegistryCredentials:
+            allowInsecureRegistry: false
+            secrets:
+              - ghcr-pull
           failureAction: Audit
           mutateDigest: false
           required: true

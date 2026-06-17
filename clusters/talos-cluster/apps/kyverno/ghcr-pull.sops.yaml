@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: ghcr-pull
+    namespace: kyverno
+type: kubernetes.io/dockerconfigjson
+data:
+    .dockerconfigjson: ENC[AES256_GCM,data:zCSb0/7eE6EiCUl/My4nVQ9VSISLg4xqRxKQ41r5STqDdRAqVbMx0uEMJUtnSSPStgubFADYmPDWaBt6b05DVtPHFgHvYPhaw5fvvA6unfiGhlDiNi3cqtmR6Z9KgDlvja43wAp+68PTsoi5SJEBHfp9FjDSjzW84BDb/m3aEoEi7XxVUxjWpeDno9uST9BWw4WqY5iE8KaKUdXnF80aSAzoQ3Mec2OoySHZTA2gNEOYwm+c5wLfV2NIuooIIvioqFhndZXNbaqP/QZFAJJ8/mxceR5drGxIt+RsPxfz77o8pgkxis/2NRuQteVFYvCIO67oAI/x5qrF78Ndwr1WNA==,iv:Yl0uBqDbKauKHTpBMgvtlOCXzK4FrqfeSdnLukZn9uQ=,tag:Ie4Z1IzfFhjay+yMoOwDIQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBXUEFnV0xNRG9nUWMxNmVG
+            TkZkVmZpaXdIS0ZjZWdmUXpyKzU1T1BTSEFzCjl4RmhnN3lyZnN4Q09ZSHRTb1Jq
+            SXptZ01LNkR5RUZrbzFBV3FpQ3pqWmcKLS0tIDhtbSttNTdPMFFmTWdDUUczeEpy
+            UkdWS25JbDdkUTdrY2dXcE9QZ25yTGcK27W1UEBFZZD/+U2FDqNbnVYWQUDCfhN4
+            E67x2mDHtoU09ykpAMHa9ab6UCd3LDPDxp51WL7QtpGiJX8V22HENA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age15q49wp6ljn007uqrxvpzyes20tumx4e6xej6ksfvfaehvfmmrd4szfaf66
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-17T09:33:40Z"
+    mac: ENC[AES256_GCM,data:vUK7Lvwpu/Isb7r/a7Z2jjbjuOHK75+PAoPeT0ZNKRepSBXSOhnDUOiZ4uxZ6Nf+4SkHzUundPALidj8cnW8dyZQs2+RGRxuI3z+PLyrEmVnbe3wsq5iehNqZtJj6TQO0+YbqN5KURS5qL0LXHeJ+jVt5kZ3BGafeY7wFV5aF7w=,iv:usDFwTpdZKsHc0yDvnT/YKD6H2dODWGOPxTRgv3k+FU=,tag:YDPO4sDqEmOyIwMBb4Ie/A==,type:str]
+    version: 3.13.1
