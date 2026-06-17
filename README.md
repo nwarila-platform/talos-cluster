@@ -747,7 +747,7 @@ Repository-owned GitHub Actions workflows include:
 | Security | `security.yaml` | Runs Gitleaks and the config audit on PRs, weekly schedule, and manual dispatch. |
 | etcd snapshot | `etcd-snapshot.yaml` | Manual-only placeholder pending Stage-1 local backup server retargeting. |
 | Compliance | `kubescape.yaml` | Runs the pinned Kubescape CIS Kubernetes scan and uploads SARIF to GitHub Code Scanning. |
-| ARC smoke | `arc-smoke.yaml` | Manually verifies the `talos-arc-ci` runner scale set can execute a job. |
+| ARC smoke | `arc-smoke.yaml` | Manually verifies the `nwarila-talos-arc-ci` runner scale set can execute a job. |
 | Tenant onboarding | `onboard-tenant.yaml` | Manually scaffolds tenant namespace and network-policy manifests. |
 | Deploy repo sync | `sync-deploy-repos.yaml` | Discovers deployment repositories and refreshes the generated Flux deploy app entries. |
 | Org ADR sync | `org-adr-sync.yaml` | Mirrors organization ADRs into `docs/decision-records/org/` on PRs, schedule, and manual dispatch. |

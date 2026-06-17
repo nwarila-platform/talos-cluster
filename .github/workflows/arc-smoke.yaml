@@ -8,8 +8,8 @@ permissions:
 
 jobs:
   smoke:
-    name: talos-arc-ci
-    runs-on: talos-arc-ci
+    name: nwarila-talos-arc-ci
+    runs-on: nwarila-talos-arc-ci
     timeout-minutes: 5
     steps:
       - name: Show runner context
