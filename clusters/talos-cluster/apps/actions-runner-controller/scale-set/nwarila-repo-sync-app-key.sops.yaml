@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: nwarila-repo-sync-app-key
+    namespace: arc-runners-repo-sync
+stringData:
+    private-key.pem: ENC[AES256_GCM,data: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,iv:UCLOQWSeukcwlcOPozXXRWKdfDFQ+MMpj1C5ZVVH8/k=,tag:pEeqB72IpXea2BIiVBTaTA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBvSzlpNHlBdzNTTC9uSjFY
+            TlVJY2tsRzFDVGY4a2h2RGp6YTk4VEhiZFJrCk83Q1lFalJ1cEswTUhCdkFJUW96
+            Mm1pc1RBVG9Wc3RZQnhGVnVvb1FZc1EKLS0tIExwckZxdXVVaGxrWjlQZWgwVCtx
+            eHhOcDBqa0NTeFRxWENtZ0w1MVl2ckEKvJIfD14vNHhhYtjBUdeBCXfjJM9smXQ8
+            q57MrerYZESyjm4zvKnFPlocYgA12g/kOtVEN0fhBr29kPVody0nGA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age15q49wp6ljn007uqrxvpzyes20tumx4e6xej6ksfvfaehvfmmrd4szfaf66
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-18T11:04:47Z"
+    mac: ENC[AES256_GCM,data:BuIagdOQ7L/0aLbfV6Ys/pqr0be/kb8AD93KrDbpvmiwjxuKborXRR1yHVBY5nv/hoCXyJInLI/T0bCiBCWdZL1CaTdhsS+B6fdFzR02lgzH7BvYZCx8rdj1BDVudH7qvZRellCrWJtrc0ukYBPeGNSif2stSRr6VQ9wpm58qlM=,iv:/LAcBb3zzNZpv2+XLCwFJnF4vQ+b7f21uhpptn+agpM=,tag:NwS6u7rRrs3KUB53qxAJEw==,type:str]
+    version: 3.13.1
