@@ -80,6 +80,7 @@
 !/clusters/talos-cluster/apps/kyverno/namespace.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/
 !/clusters/talos-cluster/apps/kyverno/policies/kustomization.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/protect-repo-sync-namespace.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/protect-vault-client-serviceaccount.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
