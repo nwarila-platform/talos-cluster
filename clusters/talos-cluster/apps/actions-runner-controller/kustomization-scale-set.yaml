@@ -27,3 +27,7 @@ spec:
       kind: HelmRelease
       name: hwg-talos-arc-ci
       namespace: arc-runners
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: nwarila-repo-sync-arc-ci
+      namespace: arc-runners-repo-sync

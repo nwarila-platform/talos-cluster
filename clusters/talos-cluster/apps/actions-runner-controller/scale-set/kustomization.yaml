@@ -8,3 +8,5 @@ resources:
   - helmrepository.yaml
   - helmrelease.yaml
   - helmrelease-hwg.yaml
+  - helmrepository-repo-sync.yaml
+  - helmrelease-repo-sync.yaml

@@ -43,6 +43,8 @@
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrelease.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrelease-hwg.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrepository.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrepository-repo-sync.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrelease-repo-sync.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/
 !/clusters/talos-cluster/apps/vault-secrets-operator/kustomization.yaml

@@ -1,0 +1,11 @@
+# OCI HelmRepository colocated with the repo-sync runner scale set HelmRelease
+# (cluster enforces --no-cross-namespace-refs=true, so each release namespace needs its own).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: actions-runner-controller
+  namespace: arc-runners-repo-sync
+spec:
+  type: oci
+  interval: 1h
+  url: oci://ghcr.io/actions/actions-runner-controller-charts
