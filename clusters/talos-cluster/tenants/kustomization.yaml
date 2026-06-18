@@ -5,6 +5,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - arc-runners
+  - arc-runners-repo-sync
   - arc-systems
   - deploy-vault
   - hwg-herowars-engine-porter
