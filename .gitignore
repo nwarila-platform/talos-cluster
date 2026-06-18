@@ -49,6 +49,7 @@
 !/clusters/talos-cluster/apps/vault-secrets-operator/
 !/clusters/talos-cluster/apps/vault-secrets-operator/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/kustomization-controller.yaml
+!/clusters/talos-cluster/apps/vault-secrets-operator/kustomization-org-pull.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/controller/
 !/clusters/talos-cluster/apps/vault-secrets-operator/controller/ciliumnetworkpolicy-controller-egress.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/controller/helmrelease.yaml
@@ -58,6 +59,9 @@
 !/clusters/talos-cluster/apps/vault-secrets-operator/controller/networkpolicy-allow-dns.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/controller/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/controller/tcn-root-ca-secret.yaml
+!/clusters/talos-cluster/apps/vault-secrets-operator/org-pull/
+!/clusters/talos-cluster/apps/vault-secrets-operator/org-pull/kustomization.yaml
+!/clusters/talos-cluster/apps/vault-secrets-operator/org-pull/vaultauth-org-pull-hwg.yaml
 !/clusters/talos-cluster/apps/deploy-*/
 !/clusters/talos-cluster/apps/deploy-*/gitrepository.yaml
 !/clusters/talos-cluster/apps/deploy-*/kustomization-flux.yaml
@@ -84,8 +88,10 @@
 !/clusters/talos-cluster/apps/kyverno/namespace.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/
 !/clusters/talos-cluster/apps/kyverno/policies/kustomization.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/protect-tenant-label.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/protect-repo-sync-namespace.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/protect-vault-client-serviceaccount.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/restrict-vso-org-pull-secrets.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml

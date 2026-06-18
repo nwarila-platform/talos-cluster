@@ -1,9 +1,10 @@
 # ClusterPolicy: verify-image-signatures (scoped)
 #
 # Scoped cosign keyless signature verification for image families known to
-# publish sigstore signatures via GitHub Actions OIDC. nwarila-platform images
-# are enforced; Flux, Cilium, and Kyverno remain audit-only until they can be
-# enforced without deadlocking GitOps or exceeding Kyverno verifyImages support.
+# publish sigstore signatures via GitHub Actions OIDC. nwarila-platform and
+# the-hero-wars-guys images are enforced; Flux, Cilium, Kyverno, and VSO remain
+# audit-only until they can be enforced without deadlocking GitOps or exceeding
+# Kyverno verifyImages support.
 # Cilium is matched at the image-family level so signed release digest rotation
 # does not require policy churn; known unsigned helper families are skipped
 # explicitly. See ADR-0010.
@@ -14,7 +15,9 @@
 # in imageReferences. Kyverno release images are verified from GHCR because the
 # reg.kyverno.io v1.18.1 mirrors do not expose discoverable cosign signatures.
 # Kyverno component signatures live in the upstream shared signature repository,
-# not co-located with each component image.
+# not co-located with each component image. Vault Secrets Operator is also
+# matched explicitly; its HelmRelease remains digest-pinned, and this audit rule
+# can be promoted after upstream signature discovery is proven.
 #
 # Sigstore reachability was proven during the Step 47 investigation; the
 # remaining Cilium/Kyverno audit posture is a signature-format limitation, not
@@ -32,10 +35,11 @@ metadata:
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Keyless cosign signature verification for Flux, Cilium, Kyverno, and
-      nwarila-platform images. Enforces nwarila-platform signatures while
-      auditing Flux, Cilium, and Kyverno until they can be safely enforced by
-      Kyverno admission.
+      Keyless cosign signature verification for Flux, Cilium, Kyverno, Vault
+      Secrets Operator, nwarila-platform, and the-hero-wars-guys images.
+      Enforces nwarila-platform and the-hero-wars-guys signatures while
+      auditing the other families until they can be safely enforced by Kyverno
+      admission.
 spec:
   validationFailureAction: Audit
   background: true
@@ -115,6 +119,28 @@ spec:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
                     subjectRegExp: "^https://github\\.com/kyverno/kyverno/\\.github/workflows/release\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
+    - name: verify-vault-secrets-operator-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "hashicorp/vault-secrets-operator:*"
+            - "hashicorp/vault-secrets-operator@sha256:*"
+            - "docker.io/hashicorp/vault-secrets-operator:*"
+            - "docker.io/hashicorp/vault-secrets-operator@sha256:*"
+          failureAction: Audit
+          mutateDigest: false
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: "^https://github\\.com/hashicorp/vault-secrets-operator/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
                     rekor:
                       url: "https://rekor.sigstore.dev"
     - name: verify-nwarila-platform-images

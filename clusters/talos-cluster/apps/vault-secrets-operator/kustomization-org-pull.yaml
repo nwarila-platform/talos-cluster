@@ -1,0 +1,20 @@
+# Child Flux Kustomization for platform-owned org-pull VaultAuth resources.
+#
+# Depends on the VSO controller Kustomization so VaultAuth CRDs exist before
+# these auth resources are applied.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vault-secrets-operator-org-pull
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/vault-secrets-operator/org-pull
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: vault-secrets-operator
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
