@@ -1,0 +1,50 @@
+# ClusterPolicy: protect-tenant-label
+#
+# Defense in depth for namespace-scoped Vault auth. Hardened-A binds org
+# access inside Vault on the platform-stamped service account name, but the
+# coarse tenant label should still be immutable outside platform automation.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-tenant-label
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Protect tenant Namespace label
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Namespace
+    policies.kyverno.io/description: >-
+      Blocks non-platform actors from changing the nwarila.io/tenant label on
+      Namespaces after creation.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: deny-non-platform-tenant-label-change
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              operations:
+                - UPDATE
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - clusterRoles:
+              - cluster-admin
+      validate:
+        message: >-
+          The nwarila.io/tenant Namespace label is platform-owned and cannot be
+          changed outside flux-system automation.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.oldObject.metadata.labels.\"nwarila.io/tenant\" || '' }}"
+                operator: NotEquals
+                value: "{{ request.object.metadata.labels.\"nwarila.io/tenant\" || '' }}"
