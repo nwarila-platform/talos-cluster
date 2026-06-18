@@ -3,6 +3,10 @@
 #
 # Discovers nwarila-platform/deploy-* repositories that expose the standard
 # Talos overlay and opens a PR with tenant-scoped Flux wiring.
+#
+# Runs on the dedicated on-cluster repo-sync ARC runner. Mints ephemeral
+# nwarila-repo-sync[bot] tokens from the SOPS/Flux-mounted App PEM (no static
+# credential). See ADR-0016 + _handoff/PLAN.md §7.
 # =============================================================================
 name: Sync Deploy Repositories
 
@@ -11,48 +15,82 @@ on:
     - cron: "17 * * * *"
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   sync:
     name: Sync deploy-* repos
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.DEPLOY_REPO_DISCOVERY_TOKEN || github.token }}
+    runs-on: nwarila-repo-sync-arc-ci # the dedicated repo-sync scale set (runs-on == runnerScaleSetName)
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: main
           persist-credentials: false
 
-      - name: Generate deploy repo manifests
-        run: bash scripts/sync-deploy-repos.sh
-
-      - name: Install kubectl
+      - name: Verify the mounted App key is present and PEM-shaped (no contents printed)
         run: |
           set -euo pipefail
-          KUBERNETES_VERSION=$(grep '^KUBERNETES_VERSION=' cluster/config.env | cut -d'"' -f2)
-          [ -n "${KUBERNETES_VERSION}" ] || { echo "KUBERNETES_VERSION missing from cluster/config.env"; exit 1; }
-          url="https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
-          sums="${url}.sha256"
-          curl --proto '=https' --tlsv1.2 -fsSL -o kubectl "${url}"
-          curl --proto '=https' --tlsv1.2 -fsSL -o kubectl.sha256 "${sums}"
-          expected="$(cat kubectl.sha256)"
-          actual="$(sha256sum kubectl | awk '{print $1}')"
-          [ "${expected}" = "${actual}" ] || { echo "kubectl checksum mismatch: expected=${expected} actual=${actual}"; exit 1; }
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-          kubectl version --client=true
+          KEY=/opt/repo-sync/private-key.pem
+          test -s "$KEY"
+          grep -q "PRIVATE KEY" "$KEY"
+          echo "repo-sync App key present and PEM-shaped"
 
-      - name: Validate rendered Kustomize tree
-        run: kubectl kustomize clusters/talos-cluster >/dev/null
+      - name: Load PEM into a step output (newline-safe heredoc; not echoed)
+        id: readkey
+        run: |
+          set -euo pipefail
+          {
+            echo "pem<<__PEM_EOF__"
+            cat /opt/repo-sync/private-key.pem
+            echo "__PEM_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Mint org-wide READ-ONLY token (deploy-* discovery)
+        id: token_ro
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: "4080021" # nwarila-repo-sync (public identifier, not a secret)
+          private-key: ${{ steps.readkey.outputs.pem }}
+          owner: nwarila-platform # zizmor: ignore[github-app] org-wide read-only token is required for deploy-* discovery
+          permission-contents: read
+          permission-metadata: read
+
+      - name: Mint talos-cluster WRITE token (open/update the PR)
+        id: token_rw
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: "4080021"
+          private-key: ${{ steps.readkey.outputs.pem }}
+          owner: nwarila-platform
+          repositories: talos-cluster # write confined to THIS repo only
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Install gh CLI (pinned + checksum-verified, into RUNNER_TEMP; no sudo)
+        run: |
+          set -euo pipefail
+          GH_VERSION="2.95.0"
+          base="https://github.com/cli/cli/releases/download/v${GH_VERSION}"
+          tar="gh_${GH_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${tar}" "${base}/${tar}"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/gh_checksums.txt" "${base}/gh_${GH_VERSION}_checksums.txt"
+          ( cd "${RUNNER_TEMP}" && grep " ${tar}\$" gh_checksums.txt | sha256sum -c - )
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf "${RUNNER_TEMP}/${tar}" -C "${RUNNER_TEMP}"
+          mv "${RUNNER_TEMP}/gh_${GH_VERSION}_linux_amd64/bin/gh" "${RUNNER_TEMP}/bin/gh"
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/bin/gh" --version
+
+      - name: Generate deploy repo manifests
+        env:
+          GH_TOKEN: ${{ steps.token_ro.outputs.token }}
+        run: bash scripts/sync-deploy-repos.sh
 
       - name: Open or update generated PR
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ github.token }}
+          token: ${{ steps.token_rw.outputs.token }}
           base: main
           branch: automation/deploy-repo-sync
           delete-branch: true
@@ -65,26 +103,21 @@ jobs:
             chore(deploy-repos): sync deploy repository wiring
 
             Regenerate tenant-scoped Flux wiring for deploy-* repositories that expose kubernetes/overlays/talos-cluster/kustomization.yaml.
-
-            Verification: kubectl kustomize clusters/talos-cluster.
-          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: nwarila-repo-sync[bot] <294612239+nwarila-repo-sync[bot]@users.noreply.github.com>
+          author: nwarila-repo-sync[bot] <294612239+nwarila-repo-sync[bot]@users.noreply.github.com>
           title: "chore(deploy-repos): sync deploy repository wiring"
           body: |
             ## Summary
 
             Regenerates tenant-scoped Flux wiring for deploy repositories matching
-            the `deploy-*` contract.
+            the `deploy-*` contract. Opened by the cluster's dedicated
+            `nwarila-repo-sync[bot]` identity from an on-cluster SOPS-mounted key.
 
             ## Contract
 
             - repository is under `nwarila-platform`
             - repository name matches `deploy-*`
             - repository exposes `kubernetes/overlays/talos-cluster/kustomization.yaml`
-
-            ## Verification
-
-            - `kubectl kustomize clusters/talos-cluster`
 
             After merge, Flux reconciles the generated GitRepository and
             Kustomization resources. Future workload/image changes happen in each
