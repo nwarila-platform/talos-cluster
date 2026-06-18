@@ -37,6 +37,8 @@
 !/clusters/talos-cluster/apps/actions-runner-controller/controller/kustomization.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/nwarila-runner-registrar.sops.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/nwarila-runner-registrar-repo-sync.sops.yaml
+!/clusters/talos-cluster/apps/actions-runner-controller/scale-set/nwarila-repo-sync-app-key.sops.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/hwg-arc-github-app.sops.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrelease.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrelease-hwg.yaml

@@ -1,0 +1,25 @@
+apiVersion: v1
+data:
+    github_app_id: ENC[AES256_GCM,data:MlPs0DG1hu36kcGE,iv:NIZn2DhE1LduJ/tZXcVwDfSR6Hxi/qpwEd4RHxt0an8=,tag:MMAQjgpXeOVCwPRe2miu8Q==,type:str]
+    github_app_installation_id: ENC[AES256_GCM,data:RX+xIOnC89QNA0Ug,iv:W7GM+AQEEarLvsZ+ccdOJZinNc+TTHL36sS10DY4o/Y=,tag:cNusikHaWEccQSGXF7S8WA==,type:str]
+    github_app_private_key: ENC[AES256_GCM,data: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,iv:0Pd9W51fuWIKunMjxiBrz+VCJ24YqbrKEhphZKeEVwk=,tag:vpwC32iLMNGXk0umu2yYTA==,type:str]
+kind: Secret
+metadata:
+    creationTimestamp: null
+    name: nwarila-runner-registrar
+    namespace: arc-runners-repo-sync
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBIeE5IaDZGakY1RlhCUFJK
+            ZHpuWXZKWGQxc1FWRWJwVWFjTi9zcUlYMjNNCjMvNytPM0tRVWJZN0hUa3RiU0Ji
+            ZjRZeldCckpVTFRQaE94WWVRT1VRcU0KLS0tIGZNY1NCeWVWY2xxNW9DSC92clNP
+            YW9jYVc3Y2hCMnR0RzVsalhyR0xUbUkKPSarALMuPhDad0ny80LnRgIssouKccsR
+            zC8nlQM3THT2oKx3innzaUy5e8D9VP/WXwrfkuvxokxslD2CJi0ndA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age15q49wp6ljn007uqrxvpzyes20tumx4e6xej6ksfvfaehvfmmrd4szfaf66
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-06-18T11:01:43Z"
+    mac: ENC[AES256_GCM,data:QpSmqjzh5cTuFtBj6D/Y/7UXPRkkzCoWr008RY2QQZOE842joPXsn6VIPZEcElQksyMSwyCU24Eo81xKkRS1aJkhABioGriWe46aY39H5dbq9jrJ/zvuVWHH9C9qGIhgPq5Ky3Kx5lgDOd8pT32ToqF5M6d3ifgzAV24I32nKLc=,iv:E1RyHRtW6jE2qUUmPYiRgAtNBfHYVICC9Y9Ad+MuV78=,tag:NRz7qNX6UNH1aL83jkg7qg==,type:str]
+    version: 3.13.1
