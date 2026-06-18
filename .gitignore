@@ -91,6 +91,16 @@
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
 !/clusters/talos-cluster/apps/kyverno/release/helmrepository.yaml
 !/clusters/talos-cluster/apps/kyverno/release/kustomization.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/
+!/clusters/talos-cluster/apps/kyverno-clone-validation/background-controller-secret-rbac.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/kustomization-policy.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/kustomization.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/policy/
+!/clusters/talos-cluster/apps/kyverno-clone-validation/policy/clone-sops-secret.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/policy/kustomization.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/source-namespace.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/source-secret.sops.yaml
+!/clusters/talos-cluster/apps/kyverno-clone-validation/target-namespace.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/
 !/clusters/talos-cluster/apps/longhorn-vault-storage/kustomization.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/node-tags.yaml

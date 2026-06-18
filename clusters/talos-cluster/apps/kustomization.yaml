@@ -7,6 +7,7 @@ resources:
   - gateway-api
   - kubelet-csr-approver
   - kyverno
+  - kyverno-clone-validation
   - longhorn-vault-storage
   - metrics-server
   - namespace-hardening
