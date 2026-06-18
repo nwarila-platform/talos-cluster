@@ -125,6 +125,7 @@
 !/clusters/talos-cluster/tenants/arc-runners-repo-sync/ciliumnetworkpolicy-runner-egress.yaml
 !/clusters/talos-cluster/tenants/arc-runners-repo-sync/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-runners-repo-sync/namespace.yaml
+!/clusters/talos-cluster/tenants/arc-runners-repo-sync/serviceaccount.yaml
 !/clusters/talos-cluster/tenants/arc-runners-repo-sync/networkpolicy-allow-dns.yaml
 !/clusters/talos-cluster/tenants/arc-runners-repo-sync/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/tenants/arc-systems/
