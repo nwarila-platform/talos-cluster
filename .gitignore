@@ -62,6 +62,7 @@
 !/clusters/talos-cluster/apps/vault-secrets-operator/org-pull/
 !/clusters/talos-cluster/apps/vault-secrets-operator/org-pull/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/org-pull/vaultauth-org-pull-hwg.yaml
+!/clusters/talos-cluster/apps/vault-secrets-operator/org-pull/vaultauth-org-pull-nwp.yaml
 !/clusters/talos-cluster/apps/deploy-*/
 !/clusters/talos-cluster/apps/deploy-*/gitrepository.yaml
 !/clusters/talos-cluster/apps/deploy-*/kustomization-flux.yaml
