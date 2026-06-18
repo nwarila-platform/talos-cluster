@@ -29,6 +29,7 @@ spec:
         - matchName: objects.githubusercontent.com
         - matchName: objects-origin.githubusercontent.com
         - matchName: github-releases.githubusercontent.com
+        - matchName: release-assets.githubusercontent.com
         - matchName: github-registry-files.githubusercontent.com
       toPorts:
         - ports:
