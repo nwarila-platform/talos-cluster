@@ -1,0 +1,108 @@
+# ClusterPolicy: protect-repo-sync-namespace
+#
+# Defense in depth for the dedicated repo-sync ARC runner namespace. The future
+# runner will mount a GitHub App private key as a file, so non-platform actors
+# must not be able to exec/attach into pods or mutate credential/RBAC boundary
+# resources in this namespace.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-repo-sync-namespace
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Protect Repo-Sync Runner Namespace
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod, Secret, ServiceAccount, RoleBinding
+    policies.kyverno.io/minversion: 1.6.0
+    kyverno.io/kyverno-version: "1.18.1"
+    policies.kyverno.io/description: >-
+      Blocks non-platform actors from opening interactive pod subresource
+      connections or mutating credential and RBAC boundary resources in the
+      dedicated repo-sync ARC runner namespace.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: deny-non-platform-runner-interactive-access
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod/exec
+                - Pod/attach
+              namespaces:
+                - arc-runners-repo-sync
+              operations:
+                - CONNECT
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: helm-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: arc-gha-rs-controller
+                namespace: arc-systems
+          - clusterRoles:
+              - cluster-admin
+      validate:
+        message: >-
+          Interactive access to repo-sync runner pods is restricted to platform
+          controllers and break-glass administrators.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: Equals
+                value: CONNECT
+    - name: deny-non-platform-runner-boundary-mutation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Secret
+                - ServiceAccount
+                - RoleBinding
+              namespaces:
+                - arc-runners-repo-sync
+              operations:
+                - CREATE
+                - UPDATE
+                - DELETE
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: helm-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: arc-gha-rs-controller
+                namespace: arc-systems
+          - clusterRoles:
+              - cluster-admin
+      validate:
+        message: >-
+          Credential and RBAC boundary resources in the repo-sync runner
+          namespace are platform-owned.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: AnyIn
+                value:
+                  - CREATE
+                  - UPDATE
+                  - DELETE
