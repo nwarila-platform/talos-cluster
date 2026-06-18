@@ -225,6 +225,7 @@
 !/docs/compliance/
 !/docs/compliance/README.md
 !/docs/runbooks/
+!/docs/runbooks/bootstrap-out-of-band.md
 !/docs/runbooks/migrate-first-vso-secret.md
 !/docs/runbooks/reprovision-secureboot-node.md
 !/docs/runbooks/restore-drill-backup-dr.md
