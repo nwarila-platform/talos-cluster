@@ -175,6 +175,7 @@
 !/.github/workflows/kubescape.yaml
 !/.github/workflows/onboard-tenant.yaml
 !/.github/workflows/arc-smoke.yaml
+!/.github/workflows/repo-sync-runner-smoke.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/sync-deploy-repos.yaml
 !/.github/workflows/validate.yaml

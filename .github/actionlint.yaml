@@ -1,3 +1,4 @@
 self-hosted-runner:
   labels:
     - nwarila-talos-arc-ci
+    - nwarila-repo-sync-arc-ci
