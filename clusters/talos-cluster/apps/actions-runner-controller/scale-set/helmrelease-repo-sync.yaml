@@ -1,0 +1,100 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nwarila-repo-sync-arc-ci
+  namespace: arc-runners-repo-sync
+spec:
+  interval: 10m
+  releaseName: nwarila-repo-sync-arc-ci
+  chart:
+    spec:
+      chart: gha-runner-scale-set
+      version: 0.14.2
+      sourceRef:
+        kind: HelmRepository
+        name: actions-runner-controller          # same-namespace (arc-runners-repo-sync); NO namespace field
+      interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      remediateLastFailure: false
+    cleanupOnFail: true
+  values:
+    githubConfigUrl: https://github.com/nwarila-platform
+    githubConfigSecret: nwarila-runner-registrar  # the step-4 namespace-local copy in arc-runners-repo-sync
+    runnerGroup: nwarila-repo-sync-ci             # <-- CRITICAL ISOLATION (L1). Omitting it registers into "Default". MUST be present.
+    runnerScaleSetName: nwarila-repo-sync-arc-ci
+    minRunners: 0
+    maxRunners: 1
+    controllerServiceAccount:
+      namespace: arc-systems
+      name: arc-gha-rs-controller
+    listenerTemplate:
+      metadata:
+        labels:
+          arc.nwarila.io/role: listener
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: listener
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                  - ALL
+              runAsNonRoot: true
+              runAsUser: 1000
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                memory: 256Mi
+    template:
+      metadata:
+        labels:
+          arc.nwarila.io/role: repo-sync-runner   # <-- CRITICAL: this is the Cilium egress endpointSelector
+                                                  #     (tenants/.../ciliumnetworkpolicy-runner-egress.yaml).
+                                                  #     Without it the pod is default-denied and cannot reach GitHub.
+      spec:
+        restartPolicy: Never
+        serviceAccountName: nwarila-repo-sync-runner   # <-- the step-2 SA (also suppresses the chart's default runner SA)
+        automountServiceAccountToken: false
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumes:
+          - name: repo-sync-app-key
+            secret:
+              secretName: nwarila-repo-sync-app-key    # the step-4 PEM Secret
+              defaultMode: 0444                        # world-readable file; see verification note (renders as decimal 292)
+        containers:
+          - name: runner
+            image: ghcr.io/actions/actions-runner:2.334.0@sha256:b6614fce332517f74d0a76e7c762fb08e4f2ff13dcf333183397c8a5725b6e8e
+            command:
+              - /home/runner/run.sh
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                  - ALL
+              runAsNonRoot: true
+              runAsUser: 1001
+            volumeMounts:
+              - name: repo-sync-app-key
+                mountPath: /opt/repo-sync
+                readOnly: true
+            resources:
+              requests:
+                cpu: 250m
+                memory: 512Mi
+              limits:
+                memory: 1Gi
+  test:
+    enable: false
