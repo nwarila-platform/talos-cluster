@@ -239,6 +239,21 @@ discover_from_github() {
         exit 1
     fi
 
+    local repo_list
+    local enumerated_count
+    repo_list="$(mktemp)"
+    if ! gh repo list "${ORG}" \
+        --limit "${LIMIT}" \
+        --json name,defaultBranchRef,isPrivate,isArchived \
+        --jq '.[] | [.name, (.defaultBranchRef.name // "main"), (.isPrivate|tostring), (.isArchived|tostring)] | @tsv' \
+        > "${repo_list}"; then
+        rm -f "${repo_list}"
+        echo "ERROR: 'gh repo list ${ORG}' failed; refusing to proceed with empty discovery" >&2
+        exit 1
+    fi
+    enumerated_count="$(grep -c . "${repo_list}" || true)"
+    echo "Discovery: enumerated ${enumerated_count} repositories under ${ORG}" >&2
+
     while IFS=$'\t' read -r name branch is_private is_archived; do
         [[ -n "${name}" ]] || continue
         if ! [[ "${name}" =~ ${NAME_RE} ]]; then
@@ -261,12 +276,8 @@ discover_from_github() {
             continue
         fi
         add_repo "${name}" "${branch:-main}"
-    done < <(
-        gh repo list "${ORG}" \
-            --limit "${LIMIT}" \
-            --json name,defaultBranchRef,isPrivate,isArchived \
-            --jq '.[] | [.name, (.defaultBranchRef.name // "main"), (.isPrivate|tostring), (.isArchived|tostring)] | @tsv'
-    )
+    done < "${repo_list}"
+    rm -f "${repo_list}"
 }
 
 add_explicit_repos() {
