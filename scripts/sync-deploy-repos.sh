@@ -607,6 +607,19 @@ replacements:
   - source:
       kind: ConfigMap
       name: tenant-contract
+      fieldPath: data.tenantId
+    targets:
+      - select:
+          kind: VaultStaticSecret
+          name: app-auth-placeholder
+        fieldPaths:
+          - spec.path
+        options:
+          delimiter: '/'
+          index: 0
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
       fieldPath: data.orgPrefix
     targets:
       - select:
@@ -619,6 +632,7 @@ replacements:
           index: 3
       - select:
           kind: VaultStaticSecret
+          name: ghcr-pull
         fieldPaths:
           - spec.path
         options:
@@ -626,6 +640,7 @@ replacements:
           index: 2
       - select:
           kind: VaultStaticSecret
+          name: ghcr-pull
         fieldPaths:
           - spec.vaultAuthRef
         options:
