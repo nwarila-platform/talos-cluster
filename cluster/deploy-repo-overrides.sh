@@ -5,7 +5,12 @@
 # the cluster owns a platform trust decision for them.
 #
 # Explicit tenants are reviewed, non-convention sources that still use the same
-# generated namespace, Flux source, Flux Kustomization, and tenant RBAC envelope.
+# generated zero-touch tenant overlay. Generated tenants are named:
+#
+#   <orgPrefix>-<repo-databaseId>
+#
+# orgPrefix must equal a provisioned org-pull VaultAuth at:
+# clusters/talos-cluster/apps/vault-secrets-operator/org-pull/vaultauth-org-pull-<prefix>.yaml
 
 PLATFORM_CRITICAL_DEPLOY_REPOS=()
 
@@ -20,14 +25,22 @@ DEPLOY_REPO_RETAINED_TENANTS=(
     deploy-vault
 )
 
-EXPLICIT_DEPLOY_TENANTS=(
-    herowars
-)
+EXPLICIT_DEPLOY_TENANTS=()
 
-DEPLOY_REPO_SOURCE_ORG_OVERRIDES["herowars"]="the-hero-wars-guys"
-DEPLOY_REPO_SOURCE_NAME_OVERRIDES["herowars"]="deploy-herowars-engine-porter"
-DEPLOY_REPO_URL_OVERRIDES["herowars"]="https://github.com/the-hero-wars-guys/deploy-herowars-engine-porter.git"
-DEPLOY_REPO_PROVIDER_OVERRIDES["herowars"]="github"
-DEPLOY_REPO_REF_KIND_OVERRIDES["herowars"]="branch"
-DEPLOY_REPO_REF_OVERRIDES["herowars"]="main"
-DEPLOY_REPO_SECRET_REF_OVERRIDES["herowars"]="herowars-gitops-source-auth"
+declare -A DEPLOY_REPO_ORG_PREFIX_OVERRIDES=()
+declare -A DEPLOY_REPO_DATABASE_ID_OVERRIDES=()
+
+# Worked explicit-tenant example for Step 132 (not active in this step):
+#
+# EXPLICIT_DEPLOY_TENANTS+=(herowars)
+# DEPLOY_REPO_SOURCE_ORG_OVERRIDES["herowars"]="the-hero-wars-guys"
+# DEPLOY_REPO_SOURCE_NAME_OVERRIDES["herowars"]="deploy-herowars-engine-porter"
+# DEPLOY_REPO_REF_KIND_OVERRIDES["herowars"]="branch"
+# DEPLOY_REPO_REF_OVERRIDES["herowars"]="main"
+# DEPLOY_REPO_ORG_PREFIX_OVERRIDES["herowars"]="hwg"
+# DEPLOY_REPO_DATABASE_ID_OVERRIDES["herowars"]="1268831311"
+#
+# Convention-discovered repos also require explicit orgPrefix registration:
+#
+# DEPLOY_REPO_ORG_PREFIX_OVERRIDES["deploy-example"]="nwp"
+# DEPLOY_REPO_DATABASE_ID_OVERRIDES["deploy-example"]="1202118418" # optional escape hatch; discovery normally supplies databaseId
