@@ -3,8 +3,9 @@ kind: Kustomization
 namespace: hwg-herowars-engine-porter
 resources:
   - ../_template/zero-touch/base
-  - herowars-gitops-source-auth.sops.yaml
-  - ghcr-pull.sops.yaml
+  - serviceaccount-vso-org-pull-hwg.yaml
+  - vaultstaticsecret-gitops-source-auth.yaml
+  - vaultstaticsecret-ghcr-pull.yaml
 configMapGenerator:
   - name: tenant-contract
     literals:
