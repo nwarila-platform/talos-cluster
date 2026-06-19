@@ -11,9 +11,9 @@ data:
     #!/usr/bin/env python3
     # B-apex source-rotator (INTERIM unsigned-image build). Pure-stdlib: the pinned
     # python image has no openssl/curl/jq. Mints per-repo contents:read GitHub App
-    # tokens for each tenant in the full org label and cas-writes them to the tenant's own
-    # Vault bucket secret/<ns>/provisioned/source-auth. TECH-DEBT: replace with a
-    # signed Go minter image inside verify-image-signatures scope.
+    # tokens for each ORG_LABEL tenant and cas-writes them to the tenant's own Vault
+    # bucket secret/<ns>/provisioned/source-auth. TECH-DEBT: replace with a signed Go
+    # minter image inside verify-image-signatures scope.
     import base64, hashlib, json, os, ssl, sys, time, urllib.request, urllib.error
 
     ORG_LABEL   = os.environ.get("ORG_LABEL", "the-hero-wars-guys")
@@ -25,6 +25,11 @@ data:
     K8S_CA      = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
     SA_TOKEN_F  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
     GH_API      = "https://api.github.com"
+    # GitHub REQUIRES a descriptive User-Agent; the default urllib UA is intermittently
+    # 403'd from datacenter IPs. ORG_LABEL is the FULL GitHub org name (nwarila.io/org
+    # label value, e.g. "the-hero-wars-guys") used to SELECT this org's tenant namespaces
+    # - a DIFFERENT string from the Vault prefix ("hwg") baked into VAULT_ROLE/VAULT_KEY_PATH.
+    USER_AGENT  = "nwarila-source-rotator"
 
     def b64u(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
     def http(method, url, headers=None, body=None, cafile=None, timeout=25):
@@ -60,6 +65,28 @@ data:
         p=b64u(json.dumps({"iat":now-60,"exp":now+540,"iss":str(app_id)}).encode())
         return f"{h}.{p}."+b64u(rs256(f"{h}.{p}".encode(),n,d))
 
+    def mint_repo_token(inst, jwt, repo):
+        # GitHub's secondary rate limit returns 403 (and transient 429/5xx happen).
+        # Retry with backoff (honoring Retry-After), and on final failure raise with
+        # the response body so a real (non-transient) failure is self-diagnosing.
+        url=f"{GH_API}/app/installations/{inst}/access_tokens"
+        hdrs={"Authorization":f"Bearer {jwt}","Accept":"application/vnd.github+json",
+              "User-Agent":USER_AGENT,"X-GitHub-Api-Version":"2022-11-28"}
+        body={"repositories":[repo],"permissions":{"contents":"read"}}
+        for attempt in range(5):
+            try:
+                _,tr=http("POST",url,hdrs,body); return tr["token"]
+            except urllib.error.HTTPError as e:
+                try: ebody=e.read().decode()[:240]
+                except Exception: ebody=""
+                if e.code in (403,429,500,502,503) and attempt<4:
+                    ra=e.headers.get("Retry-After")
+                    wait=int(ra) if (ra and str(ra).isdigit()) else 2**(attempt+1)
+                    print(f"  retry {repo}: GitHub {e.code} attempt {attempt+1}; wait {min(wait,30)}s; body={ebody}",file=sys.stderr)
+                    time.sleep(min(wait,30)); continue
+                raise RuntimeError(f"GitHub {e.code}: {ebody}")
+        raise RuntimeError("GitHub mint exhausted retries")
+
     def main():
         sa=open(SA_TOKEN_F).read().strip()
         _,lr=http("POST",f"{VAULT_ADDR}/v1/auth/kubernetes/login",
@@ -69,10 +96,6 @@ data:
         k=kr["data"]["data"]; app_id=k["githubAppID"]; inst=k["githubAppInstallationID"]; pem=k["githubAppPrivateKey"]
         _,nl=http("GET",f"{K8S_ADDR}/api/v1/namespaces?labelSelector=nwarila.io/tenant%3Dtrue",
                   {"Authorization":f"Bearer {sa}"},cafile=K8S_CA)
-        # ORG_LABEL is the FULL GitHub org name (nwarila.io/org label value, e.g.
-        # "the-hero-wars-guys") used to SELECT this org's tenant namespaces. It is a
-        # DIFFERENT string from the Vault prefix (e.g. "hwg") baked into VAULT_ROLE /
-        # VAULT_KEY_PATH. Do not conflate them - they are two names for the same org.
         tenants=[(it["metadata"]["name"], it["metadata"]["labels"]["nwarila.io/deploy-repo"])
                  for it in nl.get("items",[])
                  if it["metadata"].get("labels",{}).get("nwarila.io/org")==ORG_LABEL
@@ -82,10 +105,7 @@ data:
         jwt=app_jwt(app_id,pem); ok=fail=0
         for ns,repo in tenants:
             try:
-                _,tr=http("POST",f"{GH_API}/app/installations/{inst}/access_tokens",
-                          {"Authorization":f"Bearer {jwt}","Accept":"application/vnd.github+json"},
-                          {"repositories":[repo],"permissions":{"contents":"read"}})
-                tok=tr["token"]
+                tok=mint_repo_token(inst,jwt,repo)
                 try:
                     _,mv=http("GET",f"{VAULT_ADDR}/v1/secret/metadata/{ns}/provisioned/source-auth",vh,cafile=VAULT_CA)
                     ver=mv["data"]["current_version"]
