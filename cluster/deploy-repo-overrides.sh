@@ -30,16 +30,14 @@ EXPLICIT_DEPLOY_TENANTS=()
 declare -A DEPLOY_REPO_ORG_PREFIX_OVERRIDES=()
 declare -A DEPLOY_REPO_DATABASE_ID_OVERRIDES=()
 
-# Worked explicit-tenant example for Step 132 (not active in this step):
-#
-# EXPLICIT_DEPLOY_TENANTS+=(herowars)
-# DEPLOY_REPO_SOURCE_ORG_OVERRIDES["herowars"]="the-hero-wars-guys"
-# DEPLOY_REPO_SOURCE_NAME_OVERRIDES["herowars"]="deploy-herowars-engine-porter"
-# DEPLOY_REPO_REF_KIND_OVERRIDES["herowars"]="branch"
-# DEPLOY_REPO_REF_OVERRIDES["herowars"]="main"
-# DEPLOY_REPO_ORG_PREFIX_OVERRIDES["herowars"]="hwg"
-# DEPLOY_REPO_DATABASE_ID_OVERRIDES["herowars"]="1268831311"
-#
+EXPLICIT_DEPLOY_TENANTS+=(herowars)
+DEPLOY_REPO_SOURCE_ORG_OVERRIDES["herowars"]="the-hero-wars-guys"
+DEPLOY_REPO_SOURCE_NAME_OVERRIDES["herowars"]="deploy-herowars-engine-porter"
+DEPLOY_REPO_REF_KIND_OVERRIDES["herowars"]="branch"
+DEPLOY_REPO_REF_OVERRIDES["herowars"]="main"
+DEPLOY_REPO_ORG_PREFIX_OVERRIDES["herowars"]="hwg"
+DEPLOY_REPO_DATABASE_ID_OVERRIDES["herowars"]="1268831311"
+
 # Convention-discovered repos also require explicit orgPrefix registration:
 #
 # DEPLOY_REPO_ORG_PREFIX_OVERRIDES["deploy-example"]="nwp"

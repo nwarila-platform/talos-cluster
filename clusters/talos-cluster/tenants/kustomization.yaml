@@ -8,5 +8,5 @@ resources:
   - arc-runners-repo-sync
   - arc-systems
   - deploy-vault
-  - hwg-herowars-engine-porter
+  - hwg-1268831311
   - talos-drift
