@@ -36,7 +36,7 @@ vault write auth/kubernetes/role/source-minter-hwg @clusters/talos-cluster/apps/
 |---|---|
 | `policies/vso-org-pull-read-hwg.hcl` | Read-only hwg org-pull credentials policy for VSO |
 | `policies/vso-org-pull-read-nwp.hcl` | Read-only nwp org-pull credentials policy for VSO |
-| `policies/tenant-read.hcl` | Already-applied / DR capture: tenant read access to its own `provisioned/` bucket |
+| `policies/tenant-read.hcl` | Already-applied / DR capture: tenant read access to its own `provisioned/` bucket plus token renew/lookup-self grants |
 | `policies/tenant-write.hcl` | Already-applied / DR capture: tenant write access to its own `state/` bucket |
 | `policies/source-minter-hwg.hcl` | NEW: apply via `vault policy write source-minter-hwg ...` |
 | `auth/kubernetes/roles/vso-org-pull-hwg.json` | Kubernetes auth role for the hwg org-pull VSO service account |
