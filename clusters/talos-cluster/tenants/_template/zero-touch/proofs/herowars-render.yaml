@@ -18,12 +18,22 @@ metadata:
   namespace: herowars
 ---
 apiVersion: v1
+imagePullSecrets:
+- name: ghcr-pull
 kind: ServiceAccount
 metadata:
   labels:
     nwarila.io/platform-owned: "true"
     nwarila.io/vault-client: "true"
   name: vault-client
+  namespace: herowars
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    nwarila.io/platform-owned: "true"
+  name: vso-org-pull-hwg
   namespace: herowars
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -149,6 +159,69 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: deploy-reconciler
+  namespace: herowars
+---
+apiVersion: v1
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIICUzCCAdmgAwIBAgIUX+mBY9dntqZS5zG0FnGyTP2pm44wCgYIKoZIzj0EAwMw
+    VzEwMC4GA1UEAwwnVHJpbml0eSBUZWNobmljYWwgU2VydmljZXMgUm9vdCBDQSAy
+    MDI2MSMwIQYDVQQKDBpUcmluaXR5IFRlY2huaWNhbCBTZXJ2aWNlczAeFw0yNjA2
+    MTIxMjE4MTVaFw00NjA2MDcxMjE4MTVaMFcxMDAuBgNVBAMMJ1RyaW5pdHkgVGVj
+    aG5pY2FsIFNlcnZpY2VzIFJvb3QgQ0EgMjAyNjEjMCEGA1UECgwaVHJpbml0eSBU
+    ZWNobmljYWwgU2VydmljZXMwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAARJ401N4KSw
+    meGTe7jcWJrBQJojtC/d6xzvTG8xA+SUESukNMHqgAAmJLZxmingK6qX8xOTYL7u
+    yL3bZMjIkLLc4xte7ubc+lc9NPR5AegVHqiX3D/UPNwPaBLj3b9KYtCjZjBkMBIG
+    A1UdEwEB/wQIMAYBAf8CAQEwDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBSMRI1q
+    QTKGT/yhu2rtvmPbso6pOzAfBgNVHSMEGDAWgBSMRI1qQTKGT/yhu2rtvmPbso6p
+    OzAKBggqhkjOPQQDAwNoADBlAjEA+aKVWbIhljThidICGNp3IFhBMewrEOpAgJA1
+    r0QgmRUgNKO/97eQh72E/drycrncAjALSZg3PhXytUPGDDIV7laJG8S2jl4Ve8rb
+    mSl2/7jUPJOh5QNinw00f6Da1HYHpLo=
+    -----END CERTIFICATE-----
+    -----BEGIN CERTIFICATE-----
+    MIICszCCAjmgAwIBAgIUfx5/wZVUDAH30qpd9hsv559xpugwCgYIKoZIzj0EAwMw
+    VzEwMC4GA1UEAwwnVHJpbml0eSBUZWNobmljYWwgU2VydmljZXMgUm9vdCBDQSAy
+    MDI2MSMwIQYDVQQKDBpUcmluaXR5IFRlY2huaWNhbCBTZXJ2aWNlczAeFw0yNjA2
+    MTIxNjQ3NThaFw0zNjA2MDkxNjQ3NThaMCwxKjAoBgNVBAMTIVRDTiBJbnRlcm5h
+    bCBJbnRlcm1lZGlhdGUgQ0EgMjAyNjB2MBAGByqGSM49AgEGBSuBBAAiA2IABPdc
+    5mNUq8IaMzjbWWCzl3yTw8LtZrlh9Gxzm/SWVkDN8OpsNHxI3RiN6LrCrrhqeP4z
+    O+V1FbzzYL4f2dLklo3IT6fP3z6RYr8Mv+42+ZkNTSB/+CZTL77/qb06ZKPpXqOB
+    8DCB7TASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4E
+    FgQU52NB4DHk8UWfNAAJ/stkEXqrTuEwHwYDVR0jBBgwFoAUjESNakEyhk/8obtq
+    7b5j27KOqTswgYYGA1UdHgEB/wR8MHqgeDAigiB0Y24udHJpbml0eXRlY2huaWNh
+    bHNlcnZpY2VzLmNvbTAjgiEudGNuLnRyaW5pdHl0ZWNobmljYWxzZXJ2aWNlcy5j
+    b20wD4INY2x1c3Rlci5sb2NhbDAQgg4uY2x1c3Rlci5sb2NhbDAKhwgKRXAA////
+    ADAKBggqhkjOPQQDAwNoADBlAjEAtzNZMgoDiuft+O+1S0w7Rd3NLf+i5lGmbXbs
+    J05ZNzmRrK2a/ns2wxSgQ8a7oJGrAjAx6BEFHAluwxflLhvn7JrBiiNg4SSglbwl
+    mxw50MWX8p/vo4G6HI/0AUCSOUeqQkk=
+    -----END CERTIFICATE-----
+kind: ConfigMap
+metadata:
+  name: vault-ca
+  namespace: herowars
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns-visibility
+  namespace: herowars
+spec:
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        k8s:io.kubernetes.pod.namespace: kube-system
+        k8s:k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+      rules:
+        dns:
+        - matchPattern: '*'
+  endpointSelector: {}
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -225,6 +298,40 @@ spec:
   policyTypes:
   - Ingress
   - Egress
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: ghcr-pull
+  namespace: herowars
+spec:
+  destination:
+    create: true
+    name: ghcr-pull
+    overwrite: true
+    type: kubernetes.io/dockerconfigjson
+  mount: secret
+  path: platform/org-pull/hwg/ghcr-pull
+  refreshAfter: 1h
+  type: kv-v2
+  vaultAuthRef: vault-secrets-operator/org-pull-hwg
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: herowars-gitops-source-auth
+  namespace: herowars
+spec:
+  destination:
+    create: true
+    name: herowars-gitops-source-auth
+    overwrite: true
+    type: Opaque
+  mount: secret
+  path: platform/org-pull/hwg/gitops-source-auth
+  refreshAfter: 1h
+  type: kv-v2
+  vaultAuthRef: vault-secrets-operator/org-pull-hwg
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository

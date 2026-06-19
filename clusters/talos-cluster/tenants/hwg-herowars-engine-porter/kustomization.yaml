@@ -3,13 +3,11 @@ kind: Kustomization
 namespace: hwg-herowars-engine-porter
 resources:
   - ../_template/zero-touch/base
-  - serviceaccount-vso-org-pull-hwg.yaml
-  - vaultstaticsecret-gitops-source-auth.yaml
-  - vaultstaticsecret-ghcr-pull.yaml
 configMapGenerator:
   - name: tenant-contract
     literals:
       - tenantId=hwg-herowars-engine-porter
+      - orgPrefix=hwg
       - org=the-hero-wars-guys
       - deployRepo=deploy-herowars-engine-porter
       - deployRepoGit=deploy-herowars-engine-porter.git
@@ -77,3 +75,37 @@ replacements:
           kind: GitRepository
         fieldPaths:
           - spec.secretRef.name
+      - select:
+          kind: VaultStaticSecret
+          name: app-auth-placeholder
+        fieldPaths:
+          - metadata.name
+          - spec.destination.name
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.orgPrefix
+    targets:
+      - select:
+          kind: ServiceAccount
+          name: vso-org-pull-placeholder
+        fieldPaths:
+          - metadata.name
+        options:
+          delimiter: '-'
+          index: 3
+      - select:
+          kind: VaultStaticSecret
+        fieldPaths:
+          - spec.path
+        options:
+          delimiter: '/'
+          index: 2
+      - select:
+          kind: VaultStaticSecret
+        fieldPaths:
+          - spec.vaultAuthRef
+        options:
+          delimiter: '-'
+          # vaultAuthRef slash-collapse: operator/org is one segment; placeholder is index 4, not 2.
+          index: 4

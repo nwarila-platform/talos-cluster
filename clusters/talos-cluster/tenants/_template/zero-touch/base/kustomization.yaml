@@ -11,3 +11,6 @@ resources:
   - deploy-reconciler-rbac.yaml
   - gitrepository.yaml
   - kustomization-flux.yaml
+  - serviceaccount-vso-org-pull.yaml
+  - vaultstaticsecret-gitops-source-auth.yaml
+  - vaultstaticsecret-ghcr-pull.yaml

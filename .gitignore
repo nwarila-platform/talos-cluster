@@ -154,9 +154,6 @@
 !/clusters/talos-cluster/tenants/deploy-*/networkpolicy-allow-dns.yaml
 !/clusters/talos-cluster/tenants/deploy-*/flux-reconciler-rbac.yaml
 !/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/
-!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/serviceaccount-vso-org-pull-hwg.yaml
-!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/vaultstaticsecret-gitops-source-auth.yaml
-!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/vaultstaticsecret-ghcr-pull.yaml
 !/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/kustomization.yaml
 !/clusters/talos-cluster/tenants/talos-drift/
 !/clusters/talos-cluster/tenants/talos-drift/ciliumnetworkpolicy-egress.yaml
