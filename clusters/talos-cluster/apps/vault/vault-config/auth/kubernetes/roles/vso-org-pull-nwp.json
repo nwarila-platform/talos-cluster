@@ -1,0 +1,8 @@
+{
+  "bound_service_account_names": "vso-org-pull-nwp",
+  "bound_service_account_namespace_selector": "{\"matchLabels\":{\"nwarila.io/tenant\":\"true\"}}",
+  "token_policies": "vso-org-pull-read-nwp",
+  "token_no_default_policy": true,
+  "audience": "vault",
+  "ttl": "15m"
+}
