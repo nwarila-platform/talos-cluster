@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: source-rotator-hwg-script
+  namespace: source-rotator
+  labels:
+    app.kubernetes.io/name: source-rotator
+    app.kubernetes.io/component: source-token-minter
+data:
+  minter.py: |
+    #!/usr/bin/env python3
+    # B-apex source-rotator (INTERIM unsigned-image build). Pure-stdlib: the pinned
+    # python image has no openssl/curl/jq. Mints per-repo contents:read GitHub App
+    # tokens for each <ORG_PREFIX> tenant and cas-writes them to the tenant's own
+    # Vault bucket secret/<ns>/provisioned/source-auth. TECH-DEBT: replace with a
+    # signed Go minter image inside verify-image-signatures scope.
+    import base64, hashlib, json, os, ssl, sys, time, urllib.request, urllib.error
+
+    ORG_PREFIX  = os.environ.get("ORG_PREFIX", "hwg")
+    VAULT_ADDR  = os.environ["VAULT_ADDR"]
+    VAULT_ROLE  = os.environ.get("VAULT_ROLE", "source-minter-hwg")
+    KEY_PATH    = os.environ.get("VAULT_KEY_PATH", "secret/data/platform/org-pull/hwg/gitops-source-auth")
+    VAULT_CA    = os.environ.get("VAULT_CACERT", "/etc/vault-ca/ca.crt")
+    K8S_ADDR    = "https://kubernetes.default.svc"
+    K8S_CA      = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    SA_TOKEN_F  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    GH_API      = "https://api.github.com"
+
+    def b64u(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    def http(method, url, headers=None, body=None, cafile=None, timeout=25):
+        data = json.dumps(body).encode() if body is not None else None
+        ctx = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
+        req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as r:
+            return r.status, json.loads(r.read() or "null")
+    def _rdlen(d,i):
+        n=d[i]; i+=1
+        if n<0x80: return n,i
+        k=n&0x7f; return int.from_bytes(d[i:i+k],"big"), i+k
+    def _items(seq):
+        out=[]; i=0
+        while i<len(seq):
+            t=seq[i]; i+=1; ln,i=_rdlen(seq,i); out.append((t,seq[i:i+ln])); i+=ln
+        return out
+    def pem_to_nd(pem):
+        body="".join(l for l in pem.splitlines() if "BEGIN" not in l and "END" not in l)
+        der=base64.b64decode(body); assert der[0]==0x30; ln,i=_rdlen(der,1); items=_items(der[i:i+ln])
+        if items and items[0][0]==0x02 and len(items)>=3 and items[1][0]==0x30 and items[2][0]==0x04:
+            inner=items[2][1]; assert inner[0]==0x30; ln2,j=_rdlen(inner,1); items=_items(inner[j:j+ln2])
+        ints=[int.from_bytes(v,"big") for (t,v) in items if t==0x02]
+        return ints[1], ints[3]
+    def rs256(msg,n,d):
+        h=hashlib.sha256(msg).digest()
+        t=bytes.fromhex("3031300d060960864801650304020105000420")+h
+        k=(n.bit_length()+7)//8; em=b"\x00\x01"+b"\xff"*(k-len(t)-3)+b"\x00"+t
+        return pow(int.from_bytes(em,"big"),d,n).to_bytes(k,"big")
+    def app_jwt(app_id, pem):
+        n,d=pem_to_nd(pem); now=int(time.time())
+        h=b64u(json.dumps({"alg":"RS256","typ":"JWT"}).encode())
+        p=b64u(json.dumps({"iat":now-60,"exp":now+540,"iss":str(app_id)}).encode())
+        return f"{h}.{p}."+b64u(rs256(f"{h}.{p}".encode(),n,d))
+
+    def main():
+        sa=open(SA_TOKEN_F).read().strip()
+        _,lr=http("POST",f"{VAULT_ADDR}/v1/auth/kubernetes/login",
+                  {"Content-Type":"application/json"},{"role":VAULT_ROLE,"jwt":sa},cafile=VAULT_CA)
+        vh={"X-Vault-Token":lr["auth"]["client_token"]}
+        _,kr=http("GET",f"{VAULT_ADDR}/v1/{KEY_PATH}",vh,cafile=VAULT_CA)
+        k=kr["data"]["data"]; app_id=k["githubAppID"]; inst=k["githubAppInstallationID"]; pem=k["githubAppPrivateKey"]
+        _,nl=http("GET",f"{K8S_ADDR}/api/v1/namespaces?labelSelector=nwarila.io/tenant%3Dtrue",
+                  {"Authorization":f"Bearer {sa}"},cafile=K8S_CA)
+        tenants=[(it["metadata"]["name"], it["metadata"]["labels"]["nwarila.io/deploy-repo"])
+                 for it in nl.get("items",[])
+                 if it["metadata"].get("labels",{}).get("nwarila.io/org")==ORG_PREFIX
+                 and it["metadata"].get("labels",{}).get("nwarila.io/deploy-repo")]
+        if not tenants:
+            print(f"no tenants for org {ORG_PREFIX}"); return 0
+        jwt=app_jwt(app_id,pem); ok=fail=0
+        for ns,repo in tenants:
+            try:
+                _,tr=http("POST",f"{GH_API}/app/installations/{inst}/access_tokens",
+                          {"Authorization":f"Bearer {jwt}","Accept":"application/vnd.github+json"},
+                          {"repositories":[repo],"permissions":{"contents":"read"}})
+                tok=tr["token"]
+                try:
+                    _,mv=http("GET",f"{VAULT_ADDR}/v1/secret/metadata/{ns}/provisioned/source-auth",vh,cafile=VAULT_CA)
+                    ver=mv["data"]["current_version"]
+                except urllib.error.HTTPError as e:
+                    if e.code==404: ver=0
+                    else: raise
+                http("POST",f"{VAULT_ADDR}/v1/secret/data/{ns}/provisioned/source-auth",
+                     {**vh,"Content-Type":"application/json"},
+                     {"data":{"username":"x-access-token","password":tok},"options":{"cas":ver}},cafile=VAULT_CA)
+                print(f"OK {ns} -> {repo} (cas {ver})"); ok+=1
+            except Exception as e:
+                print(f"FAIL {ns} -> {repo}: {type(e).__name__}: {e}", file=sys.stderr); fail+=1
+        print(f"rotation complete: ok={ok} fail={fail}")
+        return 1 if (ok==0 and fail>0) else 0
+
+    if __name__=="__main__":
+        sys.exit(main())
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-ca
+  namespace: source-rotator
+  labels:
+    app.kubernetes.io/name: source-rotator
+    app.kubernetes.io/component: source-token-minter
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIICUzCCAdmgAwIBAgIUX+mBY9dntqZS5zG0FnGyTP2pm44wCgYIKoZIzj0EAwMw
+    VzEwMC4GA1UEAwwnVHJpbml0eSBUZWNobmljYWwgU2VydmljZXMgUm9vdCBDQSAy
+    MDI2MSMwIQYDVQQKDBpUcmluaXR5IFRlY2huaWNhbCBTZXJ2aWNlczAeFw0yNjA2
+    MTIxMjE4MTVaFw00NjA2MDcxMjE4MTVaMFcxMDAuBgNVBAMMJ1RyaW5pdHkgVGVj
+    aG5pY2FsIFNlcnZpY2VzIFJvb3QgQ0EgMjAyNjEjMCEGA1UECgwaVHJpbml0eSBU
+    ZWNobmljYWwgU2VydmljZXMwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAARJ401N4KSw
+    meGTe7jcWJrBQJojtC/d6xzvTG8xA+SUESukNMHqgAAmJLZxmingK6qX8xOTYL7u
+    yL3bZMjIkLLc4xte7ubc+lc9NPR5AegVHqiX3D/UPNwPaBLj3b9KYtCjZjBkMBIG
+    A1UdEwEB/wQIMAYBAf8CAQEwDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBSMRI1q
+    QTKGT/yhu2rtvmPbso6pOzAfBgNVHSMEGDAWgBSMRI1qQTKGT/yhu2rtvmPbso6p
+    OzAKBggqhkjOPQQDAwNoADBlAjEA+aKVWbIhljThidICGNp3IFhBMewrEOpAgJA1
+    r0QgmRUgNKO/97eQh72E/drycrncAjALSZg3PhXytUPGDDIV7laJG8S2jl4Ve8rb
+    mSl2/7jUPJOh5QNinw00f6Da1HYHpLo=
+    -----END CERTIFICATE-----
