@@ -117,7 +117,11 @@ data:
                      {"data":{"username":"x-access-token","password":tok},"options":{"cas":ver}},cafile=VAULT_CA)
                 print(f"OK {ns} -> {repo} (cas {ver})"); ok+=1
             except Exception as e:
-                print(f"FAIL {ns} -> {repo}: {type(e).__name__}: {e}", file=sys.stderr); fail+=1
+                detail=""
+                if isinstance(e, urllib.error.HTTPError):
+                    try: detail=" body="+e.read().decode()[:240]
+                    except Exception: pass
+                print(f"FAIL {ns} -> {repo}: {type(e).__name__}: {e}{detail}", file=sys.stderr); fail+=1
         print(f"rotation complete: ok={ok} fail={fail}")
         return 1 if (ok==0 and fail>0) else 0
 
