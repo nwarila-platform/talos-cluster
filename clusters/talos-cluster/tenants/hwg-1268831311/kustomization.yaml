@@ -1,22 +1,36 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: hwg-herowars-engine-porter
+namespace: hwg-1268831311
 resources:
   - ../_template/zero-touch/base
 configMapGenerator:
   - name: tenant-contract
     literals:
-      - tenantId=hwg-herowars-engine-porter
+      - tenantId=hwg-1268831311
       - orgPrefix=hwg
       - org=the-hero-wars-guys
       - deployRepo=deploy-herowars-engine-porter
       - deployRepoGit=deploy-herowars-engine-porter.git
       - sourceName=deploy-herowars-engine-porter
-      - appAuthSecret=herowars-gitops-source-auth
+      - appAuthSecret=hwg-1268831311-gitops-source-auth
+      - repoId=1268831311
 generatorOptions:
   disableNameSuffixHash: true
   annotations:
     config.kubernetes.io/local-config: "true"
+patches:
+  - target:
+      kind: Namespace
+    patch: |-
+      - op: add
+        path: /metadata/labels/nwarila.io~1deploy-repo
+        value: "deploy-herowars-engine-porter"
+      - op: add
+        path: /metadata/labels/nwarila.io~1repo-id
+        value: "1268831311"
+      - op: add
+        path: /metadata/labels/nwarila.io~1org
+        value: "the-hero-wars-guys"
 replacements:
   - source:
       kind: ConfigMap

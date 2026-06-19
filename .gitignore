@@ -155,8 +155,6 @@
 !/clusters/talos-cluster/tenants/deploy-*/flux-reconciler-rbac.yaml
 !/clusters/talos-cluster/tenants/*-[0-9]*/
 !/clusters/talos-cluster/tenants/*-[0-9]*/kustomization.yaml
-!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/
-!/clusters/talos-cluster/tenants/hwg-herowars-engine-porter/kustomization.yaml
 !/clusters/talos-cluster/tenants/talos-drift/
 !/clusters/talos-cluster/tenants/talos-drift/ciliumnetworkpolicy-egress.yaml
 !/clusters/talos-cluster/tenants/talos-drift/kustomization.yaml
