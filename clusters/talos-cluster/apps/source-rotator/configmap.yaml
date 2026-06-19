@@ -11,12 +11,12 @@ data:
     #!/usr/bin/env python3
     # B-apex source-rotator (INTERIM unsigned-image build). Pure-stdlib: the pinned
     # python image has no openssl/curl/jq. Mints per-repo contents:read GitHub App
-    # tokens for each <ORG_PREFIX> tenant and cas-writes them to the tenant's own
+    # tokens for each tenant in the full org label and cas-writes them to the tenant's own
     # Vault bucket secret/<ns>/provisioned/source-auth. TECH-DEBT: replace with a
     # signed Go minter image inside verify-image-signatures scope.
     import base64, hashlib, json, os, ssl, sys, time, urllib.request, urllib.error
 
-    ORG_PREFIX  = os.environ.get("ORG_PREFIX", "hwg")
+    ORG_LABEL   = os.environ.get("ORG_LABEL", "the-hero-wars-guys")
     VAULT_ADDR  = os.environ["VAULT_ADDR"]
     VAULT_ROLE  = os.environ.get("VAULT_ROLE", "source-minter-hwg")
     KEY_PATH    = os.environ.get("VAULT_KEY_PATH", "secret/data/platform/org-pull/hwg/gitops-source-auth")
@@ -69,12 +69,16 @@ data:
         k=kr["data"]["data"]; app_id=k["githubAppID"]; inst=k["githubAppInstallationID"]; pem=k["githubAppPrivateKey"]
         _,nl=http("GET",f"{K8S_ADDR}/api/v1/namespaces?labelSelector=nwarila.io/tenant%3Dtrue",
                   {"Authorization":f"Bearer {sa}"},cafile=K8S_CA)
+        # ORG_LABEL is the FULL GitHub org name (nwarila.io/org label value, e.g.
+        # "the-hero-wars-guys") used to SELECT this org's tenant namespaces. It is a
+        # DIFFERENT string from the Vault prefix (e.g. "hwg") baked into VAULT_ROLE /
+        # VAULT_KEY_PATH. Do not conflate them - they are two names for the same org.
         tenants=[(it["metadata"]["name"], it["metadata"]["labels"]["nwarila.io/deploy-repo"])
                  for it in nl.get("items",[])
-                 if it["metadata"].get("labels",{}).get("nwarila.io/org")==ORG_PREFIX
+                 if it["metadata"].get("labels",{}).get("nwarila.io/org")==ORG_LABEL
                  and it["metadata"].get("labels",{}).get("nwarila.io/deploy-repo")]
         if not tenants:
-            print(f"no tenants for org {ORG_PREFIX}"); return 0
+            print(f"no tenants for org {ORG_LABEL}"); return 0
         jwt=app_jwt(app_id,pem); ok=fail=0
         for ns,repo in tenants:
             try:
