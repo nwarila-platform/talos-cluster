@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sync-deploy-repos.sh - Generate Flux wiring for deploy-* repositories.
+# sync-deploy-repos.sh - Generate zero-touch tenant overlays for deploy-* repos.
 #
 # Convention-discovered repositories are admitted only when all of these are true:
 #   1. name matches deploy-*
 #   2. repository is not archived
 #   3. repository exposes kubernetes/overlays/talos-cluster/kustomization.yaml
+#   4. cluster/deploy-repo-overrides.sh registers an orgPrefix for the repo
+#
 # Explicit tenants in cluster/deploy-repo-overrides.sh use the same renderer for
 # reviewed cross-org or private sources that cannot be discovered by convention.
+# Generated tenants are named <orgPrefix>-<repo-databaseId>; the human repo name,
+# source org, and databaseId are carried as Namespace labels.
 #
 # By default, discovery uses the GitHub CLI. For deterministic local tests, set
-# DEPLOY_REPOS to a comma or whitespace separated list of repository names.
+# DEPLOY_REPOS to a comma or whitespace separated list of repository names and
+# provide DEPLOY_REPO_DATABASE_ID_OVERRIDES plus DEPLOY_REPO_ORG_PREFIX_OVERRIDES.
 # =============================================================================
 set -euo pipefail
 
@@ -23,27 +28,30 @@ MANIFEST_PATH="${DEPLOY_REPO_PATH:-kubernetes/overlays/talos-cluster}"
 LIMIT="${DEPLOY_REPO_LIMIT:-1000}"
 INCLUDE_PRIVATE="${DEPLOY_REPO_INCLUDE_PRIVATE:-false}"
 
-APPS_DIR="${DEPLOY_APPS_DIR:-${ROOT_DIR}/clusters/talos-cluster/apps}"
 TENANTS_DIR="${DEPLOY_TENANTS_DIR:-${ROOT_DIR}/clusters/talos-cluster/tenants}"
 TENANT_TEMPLATE_DIR="${DEPLOY_TENANT_TEMPLATE_DIR:-${TENANTS_DIR}/_template}"
-APPS_KUSTOMIZATION="${DEPLOY_APPS_KUSTOMIZATION:-${APPS_DIR}/kustomization.yaml}"
+ZERO_TOUCH_BASE_DIR="${TENANT_TEMPLATE_DIR}/zero-touch/base"
 TENANTS_KUSTOMIZATION="${DEPLOY_TENANTS_KUSTOMIZATION:-${TENANTS_DIR}/kustomization.yaml}"
 OVERRIDES_FILE="${DEPLOY_REPO_OVERRIDES_FILE:-${ROOT_DIR}/cluster/deploy-repo-overrides.sh}"
+ORG_PULL_AUTH_DIR="${DEPLOY_ORG_PULL_AUTH_DIR:-${ROOT_DIR}/clusters/talos-cluster/apps/vault-secrets-operator/org-pull}"
 
 NAME_RE="^${PREFIX}[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
 TENANT_RE="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+GENERATED_TENANT_RE="^[a-z0-9]([-a-z0-9]*[a-z0-9])?-[0-9]+$"
+ORG_PREFIX_RE="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
 COMMIT_RE="^[0-9a-f]{40}$"
+DATABASE_ID_RE="^[0-9]+$"
 
+# Defaults only. cluster/deploy-repo-overrides.sh may replace or append to them.
 declare -a EXPLICIT_DEPLOY_TENANTS=()
 declare -A DEPLOY_REPO_BRANCH_OVERRIDES=()
 declare -A DEPLOY_REPO_SOURCE_ORG_OVERRIDES=()
 declare -A DEPLOY_REPO_SOURCE_NAME_OVERRIDES=()
-declare -A DEPLOY_REPO_URL_OVERRIDES=()
 declare -A DEPLOY_REPO_MANIFEST_PATH_OVERRIDES=()
-declare -A DEPLOY_REPO_PROVIDER_OVERRIDES=()
-declare -A DEPLOY_REPO_SECRET_REF_OVERRIDES=()
 declare -A DEPLOY_REPO_REF_KIND_OVERRIDES=()
 declare -A DEPLOY_REPO_REF_OVERRIDES=()
+declare -A DEPLOY_REPO_ORG_PREFIX_OVERRIDES=()
+declare -A DEPLOY_REPO_DATABASE_ID_OVERRIDES=()
 declare -a PLATFORM_CRITICAL_DEPLOY_REPOS=()
 declare -a DEPLOY_REPO_DISCOVERY_TOMBSTONES=()
 declare -a DEPLOY_REPO_RETAINED_TENANTS=()
@@ -56,42 +64,18 @@ elif [[ -n "${DEPLOY_REPO_OVERRIDES_FILE:-}" ]]; then
     exit 1
 fi
 
-for repo in "${PLATFORM_CRITICAL_DEPLOY_REPOS[@]}"; do
-    if ! [[ "${repo}" =~ ${NAME_RE} ]]; then
-        echo "ERROR: platform-critical deploy repo name does not match ${NAME_RE}: ${repo}" >&2
-        exit 1
-    fi
+array_contains() {
+    local needle="$1"
+    shift
+    local item
 
-    ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${repo}]:-}"
-    ref_value="${DEPLOY_REPO_REF_OVERRIDES[${repo}]:-}"
-
-    if [[ -z "${ref_kind}" || -z "${ref_value}" ]]; then
-        echo "ERROR: platform-critical deploy repo ${repo} must set an immutable ref override" >&2
-        exit 1
-    fi
-    if [[ "${ref_kind}" != "commit" && "${ref_kind}" != "tag" ]]; then
-        echo "ERROR: platform-critical deploy repo ${repo} must use ref kind commit or tag" >&2
-        exit 1
-    fi
-    if [[ "${ref_kind}" == "commit" && ! "${ref_value}" =~ ${COMMIT_RE} ]]; then
-        echo "ERROR: platform-critical deploy repo ${repo} commit ref must be a 40-character SHA" >&2
-        exit 1
-    fi
-done
-
-for repo in "${DEPLOY_REPO_DISCOVERY_TOMBSTONES[@]}"; do
-    if ! [[ "${repo}" =~ ${NAME_RE} ]]; then
-        echo "ERROR: deploy repo discovery tombstone does not match ${NAME_RE}: ${repo}" >&2
-        exit 1
-    fi
-done
-
-for tenant in "${DEPLOY_REPO_RETAINED_TENANTS[@]}"; do
-    if ! [[ "${tenant}" =~ ${NAME_RE} ]]; then
-        echo "ERROR: retained deploy tenant does not match ${NAME_RE}: ${tenant}" >&2
-        exit 1
-    fi
-done
+    for item in "$@"; do
+        if [[ "${item}" == "${needle}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
 require_file() {
     local path="$1"
@@ -109,60 +93,150 @@ require_dir() {
     fi
 }
 
-require_dir "${APPS_DIR}"
-require_dir "${TENANTS_DIR}"
-require_dir "${TENANT_TEMPLATE_DIR}"
-require_file "${APPS_KUSTOMIZATION}"
-require_file "${TENANTS_KUSTOMIZATION}"
-require_file "${TENANT_TEMPLATE_DIR}/namespace.yaml.tmpl"
-require_file "${TENANT_TEMPLATE_DIR}/networkpolicy-default-deny.yaml.tmpl"
-require_file "${TENANT_TEMPLATE_DIR}/networkpolicy-allow-dns.yaml.tmpl"
-
-if [[ "${INCLUDE_PRIVATE}" != "true" && "${INCLUDE_PRIVATE}" != "false" ]]; then
-    echo "ERROR: DEPLOY_REPO_INCLUDE_PRIVATE must be true or false" >&2
-    exit 1
-fi
-
-declare -A BRANCH_BY_REPO=()
-declare -A REF_KIND_BY_REPO=()
-declare -A REF_VALUE_BY_REPO=()
-declare -A SOURCE_NAME_BY_REPO=()
-declare -A SOURCE_URL_BY_REPO=()
-declare -A MANIFEST_PATH_BY_REPO=()
-declare -A PROVIDER_BY_REPO=()
-declare -A SECRET_REF_BY_REPO=()
-deploy_repos=()
-
-array_contains() {
-    local needle="$1"
-    shift
-    local item
-
-    for item in "$@"; do
-        if [[ "${item}" == "${needle}" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
 is_discovery_tombstoned() {
     local name="$1"
 
     array_contains "${name}" "${DEPLOY_REPO_DISCOVERY_TOMBSTONES[@]}"
 }
 
-generated_paths_are_trackable() {
-    local name="$1"
-    local app_path="clusters/talos-cluster/apps/${name}/kustomization.yaml"
-    local tenant_path="clusters/talos-cluster/tenants/${name}/kustomization.yaml"
+is_retained_tenant() {
+    local tenant="$1"
 
-    if ! git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    array_contains "${tenant}" "${DEPLOY_REPO_RETAINED_TENANTS[@]}"
+}
+
+is_managed_tenant_entry() {
+    local entry="$1"
+
+    if [[ "${entry}" =~ ${GENERATED_TENANT_RE} ]]; then
         return 0
     fi
+    if [[ "${entry}" =~ ${NAME_RE} ]] && ! is_retained_tenant "${entry}"; then
+        return 0
+    fi
+    return 1
+}
 
-    if git -C "${ROOT_DIR}" check-ignore -q -- "${app_path}"; then
-        return 1
+validate_ref() {
+    local name="$1"
+    local ref_kind="$2"
+    local ref_value="$3"
+
+    if [[ "${ref_kind}" != "branch" && "${ref_kind}" != "tag" && "${ref_kind}" != "commit" ]]; then
+        echo "ERROR: unsupported GitRepository ref kind for ${name}: ${ref_kind}" >&2
+        exit 1
+    fi
+    if [[ -z "${ref_value}" ]]; then
+        echo "ERROR: GitRepository ref value for ${name} must not be empty" >&2
+        exit 1
+    fi
+    if [[ "${ref_kind}" == "commit" && ! "${ref_value}" =~ ${COMMIT_RE} ]]; then
+        echo "ERROR: commit ref for ${name} must be a 40-character SHA: ${ref_value}" >&2
+        exit 1
+    fi
+}
+
+validate_platform_critical_overrides() {
+    local repo
+    local ref_kind
+    local ref_value
+
+    for repo in "${PLATFORM_CRITICAL_DEPLOY_REPOS[@]}"; do
+        if ! [[ "${repo}" =~ ${TENANT_RE} ]]; then
+            echo "ERROR: platform-critical deploy repo key does not match ${TENANT_RE}: ${repo}" >&2
+            exit 1
+        fi
+
+        ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${repo}]:-}"
+        ref_value="${DEPLOY_REPO_REF_OVERRIDES[${repo}]:-}"
+
+        if [[ -z "${ref_kind}" || -z "${ref_value}" ]]; then
+            echo "ERROR: platform-critical deploy repo ${repo} must set an immutable ref override" >&2
+            exit 1
+        fi
+        if [[ "${ref_kind}" != "commit" && "${ref_kind}" != "tag" ]]; then
+            echo "ERROR: platform-critical deploy repo ${repo} must use ref kind commit or tag" >&2
+            exit 1
+        fi
+        validate_ref "${repo}" "${ref_kind}" "${ref_value}"
+    done
+}
+
+validate_override_lists() {
+    local repo
+    local tenant
+
+    for repo in "${DEPLOY_REPO_DISCOVERY_TOMBSTONES[@]}"; do
+        if ! [[ "${repo}" =~ ${NAME_RE} ]]; then
+            echo "ERROR: deploy repo discovery tombstone does not match ${NAME_RE}: ${repo}" >&2
+            exit 1
+        fi
+    done
+
+    for tenant in "${DEPLOY_REPO_RETAINED_TENANTS[@]}"; do
+        if ! [[ "${tenant}" =~ ${TENANT_RE} ]]; then
+            echo "ERROR: retained deploy tenant does not match ${TENANT_RE}: ${tenant}" >&2
+            exit 1
+        fi
+    done
+}
+
+validate_org_prefix() {
+    local name="$1"
+    local org_prefix="$2"
+    local auth_path
+
+    if [[ -z "${org_prefix}" ]]; then
+        echo "ERROR: deploy repo ${name} must set DEPLOY_REPO_ORG_PREFIX_OVERRIDES[${name}]" >&2
+        exit 1
+    fi
+    if ! [[ "${org_prefix}" =~ ${ORG_PREFIX_RE} ]]; then
+        echo "ERROR: orgPrefix for ${name} must match ${ORG_PREFIX_RE}: ${org_prefix}" >&2
+        exit 1
+    fi
+
+    auth_path="${ORG_PULL_AUTH_DIR}/vaultauth-org-pull-${org_prefix}.yaml"
+    if [[ ! -f "${auth_path}" ]]; then
+        echo "ERROR: unprovisioned orgPrefix for ${name}: ${org_prefix}; missing ${auth_path}" >&2
+        exit 1
+    fi
+}
+
+resolve_database_id() {
+    local name="$1"
+    local source_org="$2"
+    local source_name="$3"
+    local discovered_database_id="$4"
+    local database_id="${DEPLOY_REPO_DATABASE_ID_OVERRIDES[${name}]:-${discovered_database_id}}"
+
+    if [[ -z "${database_id}" ]]; then
+        if ! command -v gh >/dev/null 2>&1; then
+            echo "ERROR: databaseId for ${name} is unresolved and gh is unavailable; set DEPLOY_REPO_DATABASE_ID_OVERRIDES[${name}]" >&2
+            exit 1
+        fi
+        if ! database_id="$(gh api "repos/${source_org}/${source_name}" --jq '.id')"; then
+            echo "ERROR: failed to resolve databaseId for ${source_org}/${source_name}; set DEPLOY_REPO_DATABASE_ID_OVERRIDES[${name}]" >&2
+            exit 1
+        fi
+    fi
+
+    if ! [[ "${database_id}" =~ ${DATABASE_ID_RE} ]]; then
+        echo "ERROR: databaseId for ${name} must be all digits: ${database_id}" >&2
+        exit 1
+    fi
+    printf '%s\n' "${database_id}"
+}
+
+generated_path_is_trackable() {
+    local tenant_id="$1"
+    local default_tenants_dir="${ROOT_DIR}/clusters/talos-cluster/tenants"
+    local tenant_path="clusters/talos-cluster/tenants/${tenant_id}/kustomization.yaml"
+
+    if [[ "${TENANTS_DIR}" != "${default_tenants_dir}" ]]; then
+        return 0
+    fi
+    if ! git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 0
     fi
     if git -C "${ROOT_DIR}" check-ignore -q -- "${tenant_path}"; then
         return 1
@@ -170,50 +244,94 @@ generated_paths_are_trackable() {
     return 0
 }
 
+require_dir "${TENANTS_DIR}"
+require_dir "${ZERO_TOUCH_BASE_DIR}"
+require_dir "${ORG_PULL_AUTH_DIR}"
+require_file "${TENANTS_KUSTOMIZATION}"
+
+if [[ "${INCLUDE_PRIVATE}" != "true" && "${INCLUDE_PRIVATE}" != "false" ]]; then
+    echo "ERROR: DEPLOY_REPO_INCLUDE_PRIVATE must be true or false" >&2
+    exit 1
+fi
+
+validate_platform_critical_overrides
+validate_override_lists
+
+declare -A REF_KIND_BY_REPO=()
+declare -A REF_VALUE_BY_REPO=()
+declare -A SOURCE_ORG_BY_REPO=()
+declare -A SOURCE_NAME_BY_REPO=()
+declare -A MANIFEST_PATH_BY_REPO=()
+declare -A ORG_PREFIX_BY_REPO=()
+declare -A DATABASE_ID_BY_REPO=()
+declare -A TENANT_ID_BY_REPO=()
+declare -A REPO_BY_TENANT_ID=()
+deploy_repos=()
+
 add_repo() {
     local name="$1"
     local branch="${2:-main}"
     local source_org="${3:-${ORG}}"
     local source_name="${4:-${name}}"
     local manifest_path="${5:-${MANIFEST_PATH}}"
-    local source_url="${6:-}"
-    local provider="${7:-}"
-    local secret_ref="${8:-}"
-    local admission_mode="${9:-convention}"
+    local discovered_database_id="${6:-}"
+    local admission_mode="${7:-convention}"
     local ref_kind="${DEPLOY_REPO_REF_KIND_OVERRIDES[${name}]:-branch}"
     local ref_value="${DEPLOY_REPO_REF_OVERRIDES[${name}]:-${branch:-main}}"
+    local org_prefix="${DEPLOY_REPO_ORG_PREFIX_OVERRIDES[${name}]:-}"
+    local database_id
+    local tenant_id
 
     if [[ "${admission_mode}" == "convention" ]] && ! [[ "${name}" =~ ${NAME_RE} ]]; then
         echo "ERROR: deploy repo name does not match ${NAME_RE}: ${name}" >&2
         exit 1
     fi
     if [[ "${admission_mode}" == "explicit" ]] && ! [[ "${name}" =~ ${TENANT_RE} ]]; then
-        echo "ERROR: explicit tenant name does not match ${TENANT_RE}: ${name}" >&2
+        echo "ERROR: explicit tenant key does not match ${TENANT_RE}: ${name}" >&2
         exit 1
     fi
-    if [[ "${ref_kind}" != "branch" && "${ref_kind}" != "tag" && "${ref_kind}" != "commit" ]]; then
-        echo "ERROR: unsupported GitRepository ref kind for ${name}: ${ref_kind}" >&2
-        exit 1
-    fi
-    if [[ "${ref_kind}" == "commit" && ! "${ref_value}" =~ ${COMMIT_RE} ]]; then
-        echo "ERROR: commit ref for ${name} must be a 40-character SHA: ${ref_value}" >&2
+    if ! [[ "${source_name}" =~ ${NAME_RE} ]]; then
+        echo "ERROR: source deploy repo name for ${name} does not match ${NAME_RE}: ${source_name}" >&2
         exit 1
     fi
 
-    BRANCH_BY_REPO["${name}"]="${branch:-main}"
+    validate_ref "${name}" "${ref_kind}" "${ref_value}"
+    validate_org_prefix "${name}" "${org_prefix}"
+    database_id="$(resolve_database_id "${name}" "${source_org}" "${source_name}" "${discovered_database_id}")"
+    tenant_id="${org_prefix}-${database_id}"
+
+    if ! [[ "${tenant_id}" =~ ${GENERATED_TENANT_RE} ]]; then
+        echo "ERROR: generated tenant id for ${name} is invalid: ${tenant_id}" >&2
+        exit 1
+    fi
+    if ! generated_path_is_trackable "${tenant_id}"; then
+        echo "ERROR: generated tenant path is ignored by .gitignore: clusters/talos-cluster/tenants/${tenant_id}/kustomization.yaml" >&2
+        exit 1
+    fi
+    if [[ -n "${REPO_BY_TENANT_ID[${tenant_id}]:-}" && "${REPO_BY_TENANT_ID[${tenant_id}]}" != "${name}" ]]; then
+        echo "ERROR: duplicate generated tenant id ${tenant_id} for ${name} and ${REPO_BY_TENANT_ID[${tenant_id}]}" >&2
+        exit 1
+    fi
+
     REF_KIND_BY_REPO["${name}"]="${ref_kind}"
     REF_VALUE_BY_REPO["${name}"]="${ref_value}"
+    SOURCE_ORG_BY_REPO["${name}"]="${source_org}"
     SOURCE_NAME_BY_REPO["${name}"]="${source_name}"
-    SOURCE_URL_BY_REPO["${name}"]="${source_url:-https://github.com/${source_org}/${source_name}.git}"
     MANIFEST_PATH_BY_REPO["${name}"]="${manifest_path}"
-    PROVIDER_BY_REPO["${name}"]="${provider}"
-    SECRET_REF_BY_REPO["${name}"]="${secret_ref}"
+    ORG_PREFIX_BY_REPO["${name}"]="${org_prefix}"
+    DATABASE_ID_BY_REPO["${name}"]="${database_id}"
+    TENANT_ID_BY_REPO["${name}"]="${tenant_id}"
+    REPO_BY_TENANT_ID["${tenant_id}"]="${name}"
     deploy_repos+=("${name}")
 }
 
 discover_from_env() {
     local raw="${DEPLOY_REPOS:-}"
     local item
+    local branch
+    local source_org
+    local source_name
+    local manifest_path
 
     raw="${raw//,/ }"
     for item in ${raw}; do
@@ -221,15 +339,23 @@ discover_from_env() {
             echo "Skipping tombstoned deploy repo: ${item}" >&2
             continue
         fi
-        add_repo "${item}" "main"
+
+        branch="${DEPLOY_REPO_BRANCH_OVERRIDES[${item}]:-main}"
+        source_org="${DEPLOY_REPO_SOURCE_ORG_OVERRIDES[${item}]:-${ORG}}"
+        source_name="${DEPLOY_REPO_SOURCE_NAME_OVERRIDES[${item}]:-${item}}"
+        manifest_path="${DEPLOY_REPO_MANIFEST_PATH_OVERRIDES[${item}]:-${MANIFEST_PATH}}"
+        add_repo "${item}" "${branch}" "${source_org}" "${source_name}" "${manifest_path}" "" "convention"
     done
 }
 
 manifest_exists() {
-    local name="$1"
-    local branch="$2"
+    local source_org="$1"
+    local source_name="$2"
+    local branch="$3"
+    local manifest_path="$4"
+
     gh api \
-        "repos/${ORG}/${name}/contents/${MANIFEST_PATH}/kustomization.yaml?ref=${branch}" \
+        "repos/${source_org}/${source_name}/contents/${manifest_path}/kustomization.yaml?ref=${branch}" \
         --jq '.type' >/dev/null 2>&1
 }
 
@@ -241,6 +367,10 @@ discover_from_github() {
 
     local repo_list
     local enumerated_count
+    local name
+    local branch
+    local is_private
+    local is_archived
     repo_list="$(mktemp)"
     if ! gh repo list "${ORG}" \
         --limit "${LIMIT}" \
@@ -271,11 +401,11 @@ discover_from_github() {
             echo "Skipping private deploy repo without private-source support: ${name}" >&2
             continue
         fi
-        if ! manifest_exists "${name}" "${branch:-main}"; then
+        if ! manifest_exists "${ORG}" "${name}" "${branch:-main}" "${MANIFEST_PATH}"; then
             echo "Skipping deploy repo without ${MANIFEST_PATH}/kustomization.yaml: ${name}" >&2
             continue
         fi
-        add_repo "${name}" "${branch:-main}"
+        add_repo "${name}" "${branch:-main}" "${ORG}" "${name}" "${MANIFEST_PATH}" "" "convention"
     done < "${repo_list}"
     rm -f "${repo_list}"
 }
@@ -286,17 +416,10 @@ add_explicit_repos() {
     local source_org
     local source_name
     local manifest_path
-    local source_url
-    local provider
-    local secret_ref
 
     for name in "${EXPLICIT_DEPLOY_TENANTS[@]}"; do
         if is_discovery_tombstoned "${name}"; then
             echo "Skipping tombstoned explicit deploy repo: ${name}" >&2
-            continue
-        fi
-        if ! generated_paths_are_trackable "${name}"; then
-            echo "Skipping explicit deploy repo with ignored generated paths: ${name}" >&2
             continue
         fi
 
@@ -304,9 +427,6 @@ add_explicit_repos() {
         source_org="${DEPLOY_REPO_SOURCE_ORG_OVERRIDES[${name}]:-${ORG}}"
         source_name="${DEPLOY_REPO_SOURCE_NAME_OVERRIDES[${name}]:-${name}}"
         manifest_path="${DEPLOY_REPO_MANIFEST_PATH_OVERRIDES[${name}]:-${MANIFEST_PATH}}"
-        source_url="${DEPLOY_REPO_URL_OVERRIDES[${name}]:-}"
-        provider="${DEPLOY_REPO_PROVIDER_OVERRIDES[${name}]:-}"
-        secret_ref="${DEPLOY_REPO_SECRET_REF_OVERRIDES[${name}]:-}"
 
         add_repo \
             "${name}" \
@@ -314,226 +434,225 @@ add_explicit_repos() {
             "${source_org}" \
             "${source_name}" \
             "${manifest_path}" \
-            "${source_url}" \
-            "${provider}" \
-            "${secret_ref}" \
+            "" \
             "explicit"
     done
 }
 
-render_template() {
-    local source="$1"
-    local target="$2"
-    local tenant="$3"
+render_optional_patches() {
+    local name="$1"
+    local source_name="${SOURCE_NAME_BY_REPO[${name}]}"
+    local source_org="${SOURCE_ORG_BY_REPO[${name}]}"
+    local database_id="${DATABASE_ID_BY_REPO[${name}]}"
+    local ref_kind="${REF_KIND_BY_REPO[${name}]}"
+    local ref_value="${REF_VALUE_BY_REPO[${name}]}"
+    local manifest_path="${MANIFEST_PATH_BY_REPO[${name}]}"
 
-    sed "s/__TENANT_NAMESPACE__/${tenant}/g" "${source}" > "${target}"
-}
-
-render_reconciler_rbac_default() {
-    local tenant="$1"
-    local target="$2"
-
-    cat > "${target}" <<EOF
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: deploy-reconciler
-  namespace: ${tenant}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: deploy-reconciler
-  namespace: ${tenant}
-rules:
-  - apiGroups: [""]
-    resources:
-      - configmaps
-      - endpoints
-      - events
-      - persistentvolumeclaims
-      - pods
-      - pods/log
-      - serviceaccounts
-      - services
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources:
-      - controllerrevisions
-      - daemonsets
-      - deployments
-      - replicasets
-      - statefulsets
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["batch"]
-    resources:
-      - cronjobs
-      - jobs
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["networking.k8s.io"]
-    resources:
-      - ingresses
-      - networkpolicies
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["cilium.io"]
-    resources:
-      - ciliumnetworkpolicies
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["policy"]
-    resources:
-      - poddisruptionbudgets
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["autoscaling"]
-    resources:
-      - horizontalpodautoscalers
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: deploy-reconciler
-  namespace: ${tenant}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: deploy-reconciler
-subjects:
-  - kind: ServiceAccount
-    name: deploy-reconciler
-    namespace: ${tenant}
+    cat <<EOF
+patches:
+  - target:
+      kind: Namespace
+    patch: |-
+      - op: add
+        path: /metadata/labels/nwarila.io~1deploy-repo
+        value: "${source_name}"
+      - op: add
+        path: /metadata/labels/nwarila.io~1repo-id
+        value: "${database_id}"
+      - op: add
+        path: /metadata/labels/nwarila.io~1org
+        value: "${source_org}"
 EOF
+
+    if [[ "${ref_kind}" == "branch" && "${ref_value}" == "main" ]]; then
+        :
+    elif [[ "${ref_kind}" == "branch" ]]; then
+        cat <<EOF
+  - target:
+      kind: GitRepository
+    patch: |-
+      - op: replace
+        path: /spec/ref/branch
+        value: "${ref_value}"
+EOF
+    else
+        cat <<EOF
+  - target:
+      kind: GitRepository
+    patch: |-
+      - op: remove
+        path: /spec/ref/branch
+      - op: add
+        path: /spec/ref/${ref_kind}
+        value: "${ref_value}"
+EOF
+    fi
+
+    if [[ "${manifest_path}" != "${MANIFEST_PATH}" ]]; then
+        cat <<EOF
+  - target:
+      kind: Kustomization
+    patch: |-
+      - op: replace
+        path: /spec/path
+        value: "./${manifest_path#./}"
+EOF
+    fi
 }
 
-render_reconciler_rbac() {
-    local tenant="$1"
-    local target="$2"
-
-    render_reconciler_rbac_default "${tenant}" "${target}"
-}
-
-render_tenant() {
-    local tenant="$1"
-    local tenant_dir="${TENANTS_DIR}/${tenant}"
+render_overlay() {
+    local name="$1"
+    local tenant_id="${TENANT_ID_BY_REPO[${name}]}"
+    local org_prefix="${ORG_PREFIX_BY_REPO[${name}]}"
+    local source_org="${SOURCE_ORG_BY_REPO[${name}]}"
+    local source_name="${SOURCE_NAME_BY_REPO[${name}]}"
+    local database_id="${DATABASE_ID_BY_REPO[${name}]}"
+    local app_auth_secret="${tenant_id}-gitops-source-auth"
+    local tenant_dir="${TENANTS_DIR}/${tenant_id}"
 
     mkdir -p "${tenant_dir}"
-    render_template "${TENANT_TEMPLATE_DIR}/namespace.yaml.tmpl" "${tenant_dir}/namespace.yaml" "${tenant}"
-    render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-default-deny.yaml.tmpl" "${tenant_dir}/networkpolicy-default-deny.yaml" "${tenant}"
-    render_template "${TENANT_TEMPLATE_DIR}/networkpolicy-allow-dns.yaml.tmpl" "${tenant_dir}/networkpolicy-allow-dns.yaml" "${tenant}"
-    render_reconciler_rbac "${tenant}" "${tenant_dir}/flux-reconciler-rbac.yaml"
-
     cat > "${tenant_dir}/kustomization.yaml" <<EOF
-# Generated by scripts/sync-deploy-repos.sh.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: ${tenant_id}
 resources:
-  - namespace.yaml
-  - networkpolicy-default-deny.yaml
-  - networkpolicy-allow-dns.yaml
-  - flux-reconciler-rbac.yaml
+  - ../_template/zero-touch/base
+configMapGenerator:
+  - name: tenant-contract
+    literals:
+      - tenantId=${tenant_id}
+      - orgPrefix=${org_prefix}
+      - org=${source_org}
+      - deployRepo=${source_name}
+      - deployRepoGit=${source_name}.git
+      - sourceName=${source_name}
+      - appAuthSecret=${app_auth_secret}
+      - repoId=${database_id}
+generatorOptions:
+  disableNameSuffixHash: true
+  annotations:
+    config.kubernetes.io/local-config: "true"
+$(render_optional_patches "${name}")
+replacements:
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.tenantId
+    targets:
+      - select:
+          kind: Kustomization
+        fieldPaths:
+          - metadata.name
+          - spec.targetNamespace
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.sourceName
+    targets:
+      - select:
+          kind: GitRepository
+          name: source-placeholder
+        fieldPaths:
+          - metadata.name
+      - select:
+          kind: Kustomization
+        fieldPaths:
+          - spec.sourceRef.name
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.org
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.url
+        options:
+          delimiter: /
+          index: 3
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.deployRepoGit
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.url
+        options:
+          delimiter: /
+          index: 4
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.appAuthSecret
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.secretRef.name
+      - select:
+          kind: VaultStaticSecret
+          name: app-auth-placeholder
+        fieldPaths:
+          - metadata.name
+          - spec.destination.name
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.orgPrefix
+    targets:
+      - select:
+          kind: ServiceAccount
+          name: vso-org-pull-placeholder
+        fieldPaths:
+          - metadata.name
+        options:
+          delimiter: '-'
+          index: 3
+      - select:
+          kind: VaultStaticSecret
+        fieldPaths:
+          - spec.path
+        options:
+          delimiter: '/'
+          index: 2
+      - select:
+          kind: VaultStaticSecret
+        fieldPaths:
+          - spec.vaultAuthRef
+        options:
+          delimiter: '-'
+          # vaultAuthRef slash-collapse: operator/org is one segment; placeholder is index 4, not 2.
+          index: 4
 EOF
 }
 
-render_git_ref() {
-    local name="$1"
-    local ref_kind="${REF_KIND_BY_REPO[${name}]:-branch}"
-    local ref_value="${REF_VALUE_BY_REPO[${name}]:-${BRANCH_BY_REPO[${name}]:-main}}"
+read_kustomization_resources() {
+    local path="$1"
 
-    printf '    %s: %s\n' "${ref_kind}" "${ref_value}"
+    awk '
+        $0 ~ /^resources:[[:space:]]*$/ {
+            in_resources = 1
+            next
+        }
+        in_resources && $0 ~ /^[[:space:]]*-[[:space:]]+/ {
+            entry = $0
+            sub(/^[[:space:]]*-[[:space:]]*/, "", entry)
+            sub(/[[:space:]]+#.*$/, "", entry)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", entry)
+            if (entry != "") {
+                print entry
+            }
+            next
+        }
+        in_resources && $0 !~ /^[[:space:]]*($|#)/ {
+            in_resources = 0
+        }
+    ' "${path}"
 }
 
-render_provider_field() {
-    local name="$1"
-    local provider="${PROVIDER_BY_REPO[${name}]:-}"
-
-    if [[ -n "${provider}" ]]; then
-        printf '  provider: %s\n' "${provider}"
-    fi
-}
-
-render_source_fields() {
-    local name="$1"
-    local source_url="${SOURCE_URL_BY_REPO[${name}]:-https://github.com/${ORG}/${name}.git}"
-    local secret_ref="${SECRET_REF_BY_REPO[${name}]:-}"
-
-    if [[ -n "${secret_ref}" ]]; then
-        printf '  secretRef:\n'
-        printf '    name: %s\n' "${secret_ref}"
-    fi
-    printf '  url: %s\n' "${source_url}"
-}
-
-render_gitrepository_spec() {
-    local name="$1"
-
-    printf '  interval: 5m\n'
-    render_provider_field "${name}"
-    printf '  ref:\n'
-    render_git_ref "${name}"
-    render_source_fields "${name}"
-}
-
-render_app_resources() {
-    local name="$1"
-    local secret_ref="${SECRET_REF_BY_REPO[${name}]:-}"
-
-    if [[ -n "${secret_ref}" ]]; then
-        printf '  - %s.sops.yaml\n' "${secret_ref}"
-    fi
-    printf '  - gitrepository.yaml\n'
-    printf '  - kustomization-flux.yaml\n'
-}
-
-render_app() {
-    local name="$1"
-    local app_dir="${APPS_DIR}/${name}"
-    local source_name="${SOURCE_NAME_BY_REPO[${name}]:-${name}}"
-    local manifest_path="${MANIFEST_PATH_BY_REPO[${name}]:-${MANIFEST_PATH}}"
-
-    mkdir -p "${app_dir}"
-
-    cat > "${app_dir}/gitrepository.yaml" <<EOF
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: ${source_name}
-  namespace: ${name}
-  labels:
-    nwarila.io/deploy-repo: "true"
-spec:
-$(render_gitrepository_spec "${name}")
-EOF
-
-    cat > "${app_dir}/kustomization-flux.yaml" <<EOF
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: ${name}
-  namespace: ${name}
-  labels:
-    nwarila.io/deploy-repo: "true"
-spec:
-  interval: 10m
-  path: ./${manifest_path}
-  prune: true
-  wait: true
-  timeout: 10m
-  targetNamespace: ${name}
-  serviceAccountName: deploy-reconciler
-  sourceRef:
-    kind: GitRepository
-    name: ${source_name}
-EOF
-
-    cat > "${app_dir}/kustomization.yaml" <<EOF
-# Generated by scripts/sync-deploy-repos.sh.
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-$(render_app_resources "${name}")
-EOF
-}
-
-update_kustomization() {
+update_tenants_kustomization() {
     local path="$1"
     local header="$2"
     shift 2
@@ -542,19 +661,19 @@ update_kustomization() {
     local output_entries=()
     local inserted_managed=false
     local entry
+    local desired_entry
     local managed
-    local managed_entry
     local tmp
     tmp="$(mktemp)"
 
     mapfile -t current_entries < <(read_kustomization_resources "${path}")
     for entry in "${current_entries[@]}"; do
         managed=false
-        if [[ "${entry}" =~ ${NAME_RE} ]]; then
+        if is_managed_tenant_entry "${entry}"; then
             managed=true
         else
-            for managed_entry in "${entries[@]}"; do
-                if [[ "${entry}" == "${managed_entry}" ]]; then
+            for desired_entry in "${entries[@]}"; do
+                if [[ "${entry}" == "${desired_entry}" ]]; then
                     managed=true
                     break
                 fi
@@ -587,30 +706,6 @@ update_kustomization() {
     mv "${tmp}" "${path}"
 }
 
-read_kustomization_resources() {
-    local path="$1"
-
-    awk '
-        $0 ~ /^resources:[[:space:]]*$/ {
-            in_resources = 1
-            next
-        }
-        in_resources && $0 ~ /^[[:space:]]*-[[:space:]]+/ {
-            entry = $0
-            sub(/^[[:space:]]*-[[:space:]]*/, "", entry)
-            sub(/[[:space:]]+#.*$/, "", entry)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", entry)
-            if (entry != "") {
-                print entry
-            }
-            next
-        }
-        in_resources && $0 !~ /^[[:space:]]*($|#)/ {
-            in_resources = 0
-        }
-    ' "${path}"
-}
-
 if [[ -n "${DEPLOY_REPOS:-}" ]]; then
     discover_from_env
 else
@@ -632,31 +727,32 @@ for tenant in "${DEPLOY_REPO_RETAINED_TENANTS[@]}"; do
     require_dir "${TENANTS_DIR}/${tenant}"
 done
 
-tenant_entries=("${deploy_repos[@]}" "${DEPLOY_REPO_RETAINED_TENANTS[@]}")
-mapfile -t tenant_entries < <(printf '%s\n' "${tenant_entries[@]}" | sort -u)
-
 for repo in "${deploy_repos[@]}"; do
-    render_tenant "${repo}"
-    render_app "${repo}"
+    render_overlay "${repo}"
 done
 
-update_kustomization \
-    "${APPS_KUSTOMIZATION}" \
-    "# Kustomize index aggregating every app under this cluster.
-# deploy-* entries are generated by scripts/sync-deploy-repos.sh." \
-    "${deploy_repos[@]}"
+tenant_entries=()
+for repo in "${deploy_repos[@]}"; do
+    tenant_entries+=("${TENANT_ID_BY_REPO[${repo}]}")
+done
+tenant_entries+=("${DEPLOY_REPO_RETAINED_TENANTS[@]}")
+mapfile -t tenant_entries < <(printf '%s\n' "${tenant_entries[@]}" | sort -u)
 
-update_kustomization \
+update_tenants_kustomization \
     "${TENANTS_KUSTOMIZATION}" \
     "# Kustomize index for onboarded tenant security envelopes.
 #
-# deploy-* entries are generated by scripts/sync-deploy-repos.sh." \
+# Generated tenant entries are managed by scripts/sync-deploy-repos.sh." \
     "${tenant_entries[@]}"
 
 if [[ "${#deploy_repos[@]}" -gt 0 ]]; then
-    echo "Synchronized deploy repositories: ${deploy_repos[*]}"
+    generated_tenant_ids=()
+    for repo in "${deploy_repos[@]}"; do
+        generated_tenant_ids+=("${TENANT_ID_BY_REPO[${repo}]}")
+    done
+    echo "Synchronized deploy tenants: ${generated_tenant_ids[*]}"
 else
-    echo "Synchronized deploy repositories: (none)"
+    echo "Synchronized deploy tenants: (none)"
 fi
 if [[ "${#DEPLOY_REPO_RETAINED_TENANTS[@]}" -gt 0 ]]; then
     echo "Retained deploy tenants: ${DEPLOY_REPO_RETAINED_TENANTS[*]}"
