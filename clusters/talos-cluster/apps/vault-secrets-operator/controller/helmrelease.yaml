@@ -23,7 +23,7 @@ spec:
     cleanupOnFail: true
   values:
     controller:
-      replicas: 1
+      replicas: 2
       extraLabels:
         vault-client: "true"
       strategy:

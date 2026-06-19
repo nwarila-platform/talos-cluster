@@ -16,6 +16,8 @@
 # By default, discovery uses the GitHub CLI. For deterministic local tests, set
 # DEPLOY_REPOS to a comma or whitespace separated list of repository names and
 # provide DEPLOY_REPO_DATABASE_ID_OVERRIDES plus DEPLOY_REPO_ORG_PREFIX_OVERRIDES.
+# Set DEPLOY_REPO_EXPLICIT_ONLY=true to render only explicit tenants and skip
+# both convention discovery and the GitHub scan.
 # =============================================================================
 set -euo pipefail
 
@@ -27,6 +29,7 @@ PREFIX="${DEPLOY_REPO_PREFIX:-deploy-}"
 MANIFEST_PATH="${DEPLOY_REPO_PATH:-kubernetes/overlays/talos-cluster}"
 LIMIT="${DEPLOY_REPO_LIMIT:-1000}"
 INCLUDE_PRIVATE="${DEPLOY_REPO_INCLUDE_PRIVATE:-false}"
+EXPLICIT_ONLY="${DEPLOY_REPO_EXPLICIT_ONLY:-false}"
 
 TENANTS_DIR="${DEPLOY_TENANTS_DIR:-${ROOT_DIR}/clusters/talos-cluster/tenants}"
 TENANT_TEMPLATE_DIR="${DEPLOY_TENANT_TEMPLATE_DIR:-${TENANTS_DIR}/_template}"
@@ -251,6 +254,10 @@ require_file "${TENANTS_KUSTOMIZATION}"
 
 if [[ "${INCLUDE_PRIVATE}" != "true" && "${INCLUDE_PRIVATE}" != "false" ]]; then
     echo "ERROR: DEPLOY_REPO_INCLUDE_PRIVATE must be true or false" >&2
+    exit 1
+fi
+if [[ "${EXPLICIT_ONLY}" != "true" && "${EXPLICIT_ONLY}" != "false" ]]; then
+    echo "ERROR: DEPLOY_REPO_EXPLICIT_ONLY must be true or false" >&2
     exit 1
 fi
 
@@ -706,7 +713,9 @@ update_tenants_kustomization() {
     mv "${tmp}" "${path}"
 }
 
-if [[ -n "${DEPLOY_REPOS:-}" ]]; then
+if [[ "${EXPLICIT_ONLY}" == "true" ]]; then
+    :
+elif [[ -n "${DEPLOY_REPOS:-}" ]]; then
     discover_from_env
 else
     discover_from_github
