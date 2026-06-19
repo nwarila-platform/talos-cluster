@@ -1,0 +1,19 @@
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: tenant
+  namespace: vault-secrets-operator
+spec:
+  vaultConnectionRef: default
+  method: kubernetes
+  mount: kubernetes
+  # VSO mints the vault-client SA token from the consuming tenant namespace.
+  # Vault's tenant role accepts only SA vault-client in a tenant-labeled ns and
+  # scopes reads to that ns's own secret/<ns>/provisioned/* bucket.
+  allowedNamespaces:
+    - "*"
+  kubernetes:
+    role: tenant
+    serviceAccount: vault-client
+    audiences:
+      - vault

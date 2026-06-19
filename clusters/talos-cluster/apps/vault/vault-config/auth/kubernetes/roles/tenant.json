@@ -1,0 +1,9 @@
+{
+  "bound_service_account_names": ["vault-client"],
+  "bound_service_account_namespace_selector": "{\"matchLabels\":{\"nwarila.io/tenant\":\"true\"}}",
+  "token_policies": ["tenant-read", "tenant-write"],
+  "token_no_default_policy": true,
+  "token_ttl": 3600,
+  "token_max_ttl": 14400,
+  "alias_name_source": "serviceaccount_uid"
+}
