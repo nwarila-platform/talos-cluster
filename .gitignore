@@ -231,6 +231,7 @@
 !/scripts/kubescape-scan.sh
 !/scripts/kubescape-json-to-sarif.py
 !/scripts/health.sh
+!/scripts/check-no-placeholder-leak.sh
 !/scripts/onboard-tenant.sh
 !/scripts/sync-deploy-repos.sh
 !/scripts/s3-sync.sh

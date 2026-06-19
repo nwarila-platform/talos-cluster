@@ -142,6 +142,9 @@ jobs:
       - name: Render cluster Kustomize tree
         run: kubectl kustomize clusters/talos-cluster >/dev/null
 
+      - name: "Guard: no template placeholder leak"
+        run: bash scripts/check-no-placeholder-leak.sh
+
       - name: Check rendered resource namespaces
         run: |
           set -euo pipefail
