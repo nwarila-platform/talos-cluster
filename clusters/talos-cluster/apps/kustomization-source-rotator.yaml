@@ -1,0 +1,18 @@
+# Child Flux Kustomization for the source-token minter CronJob.
+#
+# The child owns the source-rotator workload tree without taking a dependency on
+# Vault or VSO readiness; failed jobs remain explicit runtime signals.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: source-rotator
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/source-rotator
+  prune: true
+  wait: true
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

@@ -10,6 +10,7 @@ resources:
   - longhorn-vault-storage
   - metrics-server
   - namespace-hardening
+  - kustomization-source-rotator.yaml
   - talos-drift
   - vault-auth
   - vault-aws-access

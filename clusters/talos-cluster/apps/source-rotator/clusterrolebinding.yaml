@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: source-rotator-hwg
+  labels:
+    app.kubernetes.io/name: source-rotator
+    app.kubernetes.io/component: source-token-minter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: source-rotator-hwg
+subjects:
+  - kind: ServiceAccount
+    name: source-rotator-hwg
+    namespace: source-rotator
