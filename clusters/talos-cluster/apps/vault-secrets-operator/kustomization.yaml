@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - kustomization-controller.yaml
   - kustomization-org-pull.yaml
+  - kustomization-tenant.yaml

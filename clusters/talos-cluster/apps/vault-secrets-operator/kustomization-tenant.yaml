@@ -1,0 +1,20 @@
+# Child Flux Kustomization for the platform-owned tenant VaultAuth resource.
+#
+# Depends on the VSO controller Kustomization so VaultAuth CRDs exist before
+# this auth resource is applied.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vault-secrets-operator-tenant
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/vault-secrets-operator/tenant
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: vault-secrets-operator
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

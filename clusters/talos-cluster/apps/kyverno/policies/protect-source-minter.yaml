@@ -1,0 +1,137 @@
+# ClusterPolicy: protect-source-minter
+#
+# Defense in depth for the B-apex source rotator boundary. The protected
+# workload arrives in a later step; this policy is inert until those objects
+# exist, then only Flux may create, mutate, or delete them.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-source-minter
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Protect Source Minter Boundary
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: ServiceAccount,ClusterRole,ClusterRoleBinding,CronJob,ConfigMap
+    policies.kyverno.io/description: >-
+      Blocks non-platform actors from creating, mutating, or deleting the
+      B-apex hwg source rotator identity, RBAC, schedule, or script.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: deny-non-platform-source-minter-serviceaccount-mutation
+      match:
+        any:
+          - resources:
+              kinds:
+                - ServiceAccount
+              names:
+                - source-rotator-hwg
+              namespaces:
+                - source-rotator
+              operations:
+                - CREATE
+                - UPDATE
+                - DELETE
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - clusterRoles:
+              - cluster-admin
+      validate:
+        message: >-
+          The source-rotator-hwg ServiceAccount is platform-owned.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: AnyIn
+                value:
+                  - CREATE
+                  - UPDATE
+                  - DELETE
+    - name: deny-non-platform-source-minter-workload-mutation
+      match:
+        any:
+          - resources:
+              kinds:
+                - CronJob
+              names:
+                - source-rotator-hwg
+              namespaces:
+                - source-rotator
+              operations:
+                - CREATE
+                - UPDATE
+                - DELETE
+          - resources:
+              kinds:
+                - ConfigMap
+              names:
+                - source-rotator-hwg-script
+              namespaces:
+                - source-rotator
+              operations:
+                - CREATE
+                - UPDATE
+                - DELETE
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - clusterRoles:
+              - cluster-admin
+      validate:
+        message: >-
+          The source-minter workload and script are platform-owned.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: AnyIn
+                value:
+                  - CREATE
+                  - UPDATE
+                  - DELETE
+    - name: deny-non-platform-source-minter-rbac-mutation
+      match:
+        any:
+          - resources:
+              kinds:
+                - ClusterRole
+                - ClusterRoleBinding
+              names:
+                - source-rotator-hwg
+              operations:
+                - CREATE
+                - UPDATE
+                - DELETE
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - clusterRoles:
+              - cluster-admin
+      validate:
+        message: >-
+          The source-minter ClusterRole and ClusterRoleBinding are
+          platform-owned.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: AnyIn
+                value:
+                  - CREATE
+                  - UPDATE
+                  - DELETE
