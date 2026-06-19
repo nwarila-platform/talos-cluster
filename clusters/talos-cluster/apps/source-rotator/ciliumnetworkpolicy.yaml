@@ -30,8 +30,14 @@ spec:
         - ports:
             - port: "8200"
               protocol: TCP
-    - toFQDNs:
-        - matchName: api.github.com
+    # GitHub API published CIDRs (GET /meta .api). Maintenance point: GitHub updates ranges rarely; re-pull if egress to api.github.com starts failing.
+    - toCIDRSet:
+        - cidr: 192.30.252.0/22
+        - cidr: 185.199.108.0/22
+        - cidr: 140.82.112.0/20
+        - cidr: 143.55.64.0/20
+        - cidr: 2a0a:a440::/29
+        - cidr: 2606:50c0::/32
       toPorts:
         - ports:
             - port: "443"

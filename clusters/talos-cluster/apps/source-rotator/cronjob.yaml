@@ -41,12 +41,13 @@ spec:
                 - python3
                 - /script/minter.py
               env:
+                # Org label selects tenant namespaces; Vault role/key path keep the hwg prefix.
                 - name: PYTHONDONTWRITEBYTECODE
                   value: "1"
-                - name: ORG_PREFIX
-                  value: hwg
+                - name: ORG_LABEL
+                  value: the-hero-wars-guys
                 - name: VAULT_ADDR
-                  value: https://vault.deploy-vault.svc:8200
+                  value: https://vault.deploy-vault.svc.cluster.local:8200
                 - name: VAULT_ROLE
                   value: source-minter-hwg
                 - name: VAULT_KEY_PATH
