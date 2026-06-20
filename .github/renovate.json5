@@ -18,6 +18,16 @@
   prConcurrentLimit: 5,
   minimumReleaseAge: "7 days",
   internalChecksFilter: "strict",
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^cluster/config\\.env$/"],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\w+=\"?(?<currentValue>[^\"\\s]+)\"?",
+      ],
+      versioningTemplate: "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}",
+    },
+  ],
   packageRules: [
     {
       matchManagers: ["github-actions"],
