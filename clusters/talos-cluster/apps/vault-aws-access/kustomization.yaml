@@ -11,7 +11,8 @@
 #     deploy-reconciler ServiceAccount and has no decryption configured.
 #   - This directory name does not start with "_", so scripts/sync-deploy-repos.sh
 #     re-indexes it on the next sync and never overwrites it (unlike the
-#     generated apps/deploy-vault and tenants/deploy-vault trees).
+#     generated tenants/deploy-vault namespace envelope or the apps/vault
+#     workload tree).
 #
 # See deploy-vault ADR-0008 (auto-unseal) and ADR-0009 (escrow + ceremony).
 apiVersion: kustomize.config.k8s.io/v1beta1

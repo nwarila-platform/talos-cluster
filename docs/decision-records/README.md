@@ -62,6 +62,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0014](repo/0014-use-stage-1-local-backup-server-for-dr.md)    | Use a Stage-1 Local Backup Server for Backup and DR | Accepted | 2026-06-12 | Keep Stage-0 S3 for rebuild-critical secrets, move etcd and Vault Raft snapshots to a local Stage-1 server, and require restore-drill pass criteria. |
 | [0015](repo/0015-use-vault-secrets-operator-for-workload-secrets.md) | Use Vault Secrets Operator for Workload Secrets | Accepted | 2026-06-13 | Install VSO as a cluster capability, use generated tenant auth boundaries plus Vault KV-v2 path scoping, and keep app-specific `VaultStaticSecret` resources in `deploy-*` repos. |
 | [0016](repo/0016-deliver-on-cluster-ci-secrets-via-sops-file-mount.md) | Deliver On-Cluster CI Secrets via SOPS File Mount | Accepted | 2026-06-17 | Deliver the repo-sync GitHub App key to a dedicated on-cluster ARC runner via a SOPS-backed read-only file mount, staged toward future Vault token minting. |
+| [0017](repo/0017-fold-vault-into-talos-cluster-as-a-platform-service.md) | Fold Vault into talos-cluster as a platform service | Accepted | 2026-06-15 | Fold Vault out of the retired `deploy-vault` deploy repo and into `apps/vault` while retaining the `deploy-vault` namespace envelope. |
 
 ### Imported Vault ADRs
 

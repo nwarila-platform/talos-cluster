@@ -11,6 +11,15 @@
 | Reversibility  | Medium                                  |
 | Review-by      | N/A (Accepted)                          |
 
+> **2026-06-15 update:** Vault was folded into this repository as a platform
+> service at `clusters/talos-cluster/apps/vault/`, reconciled into the
+> `deploy-vault` namespace. The separate `deploy-vault` deploy-repo delivery
+> path was retired and discovery-tombstoned. The auto-discovery mechanism this
+> ADR decides is unchanged and remains in force for real deploy repositories
+> such as `herowars`; the `deploy-vault` references below are retained as the
+> original worked example only. See
+> [ADR-0017](0017-fold-vault-into-talos-cluster-as-a-platform-service.md).
+
 ## TL;DR
 
 `deploy-*` repositories under `nwarila-platform` are the app deployment surface.
@@ -104,7 +113,9 @@ default Role's removal of `secrets`, `roles`, and `rolebindings` is universal
 defense-in-depth, not a Vault-specific exception. RBAC alone is not the primary
 control: a permitted workload update could still mount an existing namespace
 Secret. The immutable ref is therefore the load-bearing review gate for this
-secret-zero boundary.
+secret-zero boundary. *(Historical example: superseded by the 2026-06-15 Vault
+fold; see
+[ADR-0017](0017-fold-vault-into-talos-cluster-as-a-platform-service.md).)*
 
 Direct scheduled writes to `main` are intentionally not enabled in this ADR.
 They can be added only by a superseding or implementing decision that explicitly
@@ -154,12 +165,17 @@ This decision is confirmed when:
 
 1. `scripts/sync-deploy-repos.sh` admits `deploy-vault` and skips deploy repos
    that are archived, private without configured support, or missing the Talos
-   overlay.
+   overlay. *(Historical example: superseded by the 2026-06-15 Vault fold; see
+   [ADR-0017](0017-fold-vault-into-talos-cluster-as-a-platform-service.md).)*
 2. `kubectl kustomize clusters/talos-cluster` renders after generated resources
    are present.
 3. Flux reconciles the generated tenant `GitRepository` and `Kustomization`.
+   *(Historical example: superseded by the 2026-06-15 Vault fold; see
+   [ADR-0017](0017-fold-vault-into-talos-cluster-as-a-platform-service.md).)*
 4. A future workload/image change in `deploy-vault` deploys by changing only the
-   `deploy-vault` repository.
+   `deploy-vault` repository. *(Historical example: superseded by the
+   2026-06-15 Vault fold; see
+   [ADR-0017](0017-fold-vault-into-talos-cluster-as-a-platform-service.md).)*
 
 ## Consequences
 
@@ -219,7 +235,9 @@ None (current).
 
 - The PR that adds `scripts/sync-deploy-repos.sh`,
   `.github/workflows/sync-deploy-repos.yaml`, and generated `deploy-vault`
-  wiring implements the first pass.
+  wiring implements the first pass. *(Historical example: superseded by the
+  2026-06-15 Vault fold; see
+  [ADR-0017](0017-fold-vault-into-talos-cluster-as-a-platform-service.md).)*
 
 ## Related ADRs
 
