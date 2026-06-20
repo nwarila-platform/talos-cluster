@@ -248,6 +248,7 @@
 !/scripts/kubescape-json-to-sarif.py
 !/scripts/health.sh
 !/scripts/check-no-placeholder-leak.sh
+!/scripts/check-vault-fold-invariants.sh
 !/scripts/onboard-tenant.sh
 !/scripts/sync-deploy-repos.sh
 !/scripts/s3-sync.sh
@@ -288,6 +289,7 @@
 !/docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md
 !/docs/decision-records/repo/0015-use-vault-secrets-operator-for-workload-secrets.md
 !/docs/decision-records/repo/0016-deliver-on-cluster-ci-secrets-via-sops-file-mount.md
+!/docs/decision-records/repo/0017-fold-vault-into-talos-cluster-as-a-platform-service.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
