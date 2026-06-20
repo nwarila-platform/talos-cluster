@@ -139,6 +139,24 @@ ingress:
   - subnet: 10.69.112.0/24
 
 ---
+# Cilium WireGuard transparent encryption - cilium_wg0 endpoint (51871/udp).
+# Each node terminates peer WireGuard tunnels here; ALL nodes must reach every
+# other node on this port or cross-node pod traffic fails to encrypt/decrypt.
+# In VXLAN tunnel mode this is the OUTER encapsulation (wraps 8472/udp), so the
+# source is always the peer NODE IP (10.69.112.0/24). 10.69.12.0/24 kept per the
+# file convention so talosctl management survives.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-cilium-wireguard
+portSelector:
+  ports:
+    - 51871
+  protocol: udp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24
+
+---
 # Hubble Peer (gRPC) - Hubble Relay pod queries each cilium-agent's Peer
 # service on 4244 to aggregate flow logs across the cluster.
 apiVersion: v1alpha1
@@ -170,3 +188,4 @@ ingress:
 # Note: ICMP allow rules were not added because Talos NetworkRuleConfig schema
 # requires portSelector.ports even for ICMP. Pod-to-pod ICMP via Cilium overlay
 # is unaffected by this host ingress firewall.
+
