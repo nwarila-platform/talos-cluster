@@ -36,3 +36,11 @@ securityContext:
       - NET_ADMIN
       - SYS_ADMIN
       - SYS_RESOURCE
+
+# Gateway API: the `cilium` GatewayClass is owned by Flux (apps/gateway-api/),
+# NOT this chart. Default `create: auto` makes the chart try to adopt the
+# Flux-owned GatewayClass and every `helm upgrade` then fails the ownership
+# check. Force the chart to never manage it; Flux remains sole owner.
+gatewayAPI:
+  gatewayClass:
+    create: "false"

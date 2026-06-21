@@ -188,4 +188,3 @@ ingress:
 # Note: ICMP allow rules were not added because Talos NetworkRuleConfig schema
 # requires portSelector.ports even for ICMP. Pod-to-pod ICMP via Cilium overlay
 # is unaffected by this host ingress firewall.
-
