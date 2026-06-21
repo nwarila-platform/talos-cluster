@@ -44,3 +44,20 @@ securityContext:
 gatewayAPI:
   gatewayClass:
     create: "false"
+
+# -----------------------------------------------------------------------------
+# Transparent encryption — WireGuard (Cilium 1.19.4), pod-to-pod only.
+# WireGuard wraps the VXLAN-encapsulated payload (double encap on a 1500 underlay).
+# cilium_wg0 (UDP 51871, opened in the Talos firewall Step 140) is created + keyed
+# per node at agent startup. nodeEncryption:false — host-plane traffic stays
+# cleartext (already firewalled to the node subnet); `true` is beta w/ an MTU bug.
+# MTU 1380: 1500 - 50 (VXLAN) - 60 (WireGuard) = 1390; 1380 for margin. New pods
+# get 1380; existing pods keep 1500 + rely on Cilium TCP MSS clamping — don't bounce them.
+# NOTE: enable-wireguard/mtu apply only at agent STARTUP, so a `kubectl rollout
+# restart ds/cilium` after the helm upgrade is REQUIRED (Step 143 lesson).
+# -----------------------------------------------------------------------------
+encryption:
+  enabled: true
+  type: wireguard
+  nodeEncryption: false
+MTU: 1380
