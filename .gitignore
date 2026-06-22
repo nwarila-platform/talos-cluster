@@ -251,6 +251,8 @@
 !/scripts/check-no-placeholder-leak.sh
 !/scripts/check-vault-fold-invariants.sh
 !/scripts/onboard-tenant.sh
+!/scripts/dr/
+!/scripts/dr/*
 !/scripts/sync-deploy-repos.sh
 !/scripts/s3-sync.sh
 !/scripts/test-talos-drift-readonly.py
@@ -262,6 +264,7 @@
 !/docs/compliance/
 !/docs/compliance/README.md
 !/docs/runbooks/
+!/docs/runbooks/dr-stage1-backup.md
 !/docs/runbooks/migrate-first-vso-secret.md
 !/docs/runbooks/reprovision-secureboot-node.md
 !/docs/runbooks/restore-drill-backup-dr.md
