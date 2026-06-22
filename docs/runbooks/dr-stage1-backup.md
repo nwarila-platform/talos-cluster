@@ -191,6 +191,16 @@ Vault PVC as a first move.
 8. For a production emergency, get owner approval for the exact backup
    timestamp and the target PVC cutover plan before replacing anything.
 
+### Restore Drill Log
+
+2026-06-22 Vault restore drill: PASS.
+
+- Backup used: `backup-vault-0-dr-stage-1-20260622155753` for live PVC `data-vault-0` / Longhorn volume `pvc-b92dcad8-4461-4952-9c9c-9822eda6d673`.
+- Restore target: new throwaway Longhorn volume `vault-restore-drill` with `spec.fromBackup` set to the selected backup URL and `numberOfReplicas: 1`.
+- Restore completion: after creation, Longhorn reported `state=detached`, `restoreRequired=false`, and `actualSize=299892736`; Longhorn reported `robustness=unknown` while detached, then `state=attached`, `robustness=healthy`, `restore=false`, and `actualSize=299999232` when the scratch verifier pod mounted the restored volume.
+- Read-only verification: scratch namespace `vault-restore-drill` was PSA `restricted`; static PV `vault-restore-drill-pv` used CSI `readOnly: true`; pod `vault-restore-reader` mounted the PVC read-only at `/restored`. Restored data contained `raft/raft.db` and `vault.db`. Restored sizes were `/restored/raft/raft.db` 32.0M, `/restored/vault.db` 16.0M, and `du -sh /restored` 19.3M. Live read-only comparison on `vault-0` was `/vault/data/raft/raft.db` 33M, `/vault/data/vault.db` 17M, and `du -sh /vault/data` 20M.
+- Cleanup: deleted scratch namespace `vault-restore-drill`, static PV `vault-restore-drill-pv`, and throwaway Longhorn volume `vault-restore-drill`. Post-cleanup checks showed the drill namespace, PV, and volume absent; the three live Vault Longhorn volumes remained attached and healthy, and live Vault pods stayed `2/2 Running`.
+
 ## Vault-Level Restore Outline
 
 Vault data is seal-protected and operationally sensitive. A restored Longhorn
