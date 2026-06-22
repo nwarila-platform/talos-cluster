@@ -1,0 +1,16 @@
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: vault-daily-backup
+  namespace: longhorn-system
+spec:
+  name: vault-daily-backup
+  task: backup
+  cron: "17 8 * * *"
+  retain: 14
+  concurrency: 1
+  groups:
+    - default
+  labels:
+    backup.nwarila.io/workload: vault
+    backup.nwarila.io/stage: dr-stage-1

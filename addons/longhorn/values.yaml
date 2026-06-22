@@ -44,6 +44,14 @@ defaultSettings:
   # Chart default is 0 (disabled).
   concurrentAutomaticEngineUpgradePerNodeLimit: 1
 
+defaultBackupStore:
+  # Interim DR Stage 1 backup target: an NFS server on the owner's workstation
+  # (WSL), reachable at 10.69.12.11:2049 (NFSv4). Credential-free (NFS export is
+  # IP-scoped to the node subnet). TRACKED: migrate this URL to the Synology NAS
+  # when it's live (same protocol -> just the IP/URL changes). See PLAN.md §10 2026-06-22.
+  backupTarget: "nfs://10.69.12.11:/srv/nfs/backup"
+  backupTargetCredentialSecret: ""
+
 # Tolerate the control-plane NoSchedule taint on every Longhorn component
 # that needs to run on every node. This is what lets cp1/cp2/cp3 also
 # contribute Longhorn storage. Without these tolerations Longhorn would
