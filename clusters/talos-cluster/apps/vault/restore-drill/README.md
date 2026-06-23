@@ -17,16 +17,22 @@ independent layers, so it can never discover, reach, or join the live Raft:
 
 1. **Storage layer** — `vault-drill.hcl` has **zero `retry_join`** blocks. With no
    join targets it bootstraps a brand-new single-member Raft of itself.
-2. **Network layer (authoritative, CNI-independent)** — a native Kubernetes
-   `default-deny` NetworkPolicy (Ingress+Egress) plus a single egress allow:
-   HTTPS/443 to `0.0.0.0/0` **except every in-cluster CIDR** (pods
-   `10.244.0.0/16`, services `10.96.0.0/12`, nodes `10.69.112.0/24`). The drill
-   therefore has no L4 route to any in-cluster address on any port — including
-   the live Vault pods and ClusterIP.
-3. **DNS layer (tightening)** — a `CiliumNetworkPolicy` permits DNS only for the
-   exact AWS endpoint names (`matchName` kms/sts/rolesanywhere.us-east-1.
-   amazonaws.com) via the L7 DNS proxy, and 443 only to those FQDNs. The drill
-   cannot even **resolve** the live Vault's cluster-internal name.
+2. **Network layer (authoritative, CNI-independent DENY)** — a native Kubernetes
+   `default-deny` NetworkPolicy (Ingress+Egress) with **no native egress allow**.
+   This is the deny floor: with the CNI bypassed the drill egresses **nothing**
+   (fail-closed — it cannot reach the public internet, AWS, or any in-cluster
+   address). The drill therefore has no L4 route to any in-cluster address on any
+   port — including the live Vault pods and ClusterIP. *(Prior to Step 152a-fix
+   this layer also carried a `0.0.0.0/0:443`-except-cluster allow; because native
+   and Cilium policies are additive, that left :443 open to the whole public
+   internet, so it was removed — see `networkpolicies.yaml`.)*
+3. **DNS + egress allow layer (the sole egress path)** — a `CiliumNetworkPolicy`
+   is the **only** thing that opens egress through the default-deny floor: DNS
+   only for the exact AWS endpoint names (`matchName` kms/sts/rolesanywhere.
+   us-east-1.amazonaws.com) via the L7 DNS proxy, and TCP/443 only to those same
+   FQDNs (`toFQDNs`). Effective egress is therefore **AWS-only**; the drill
+   cannot even **resolve** the live Vault's cluster-internal name, and the public
+   internet is unreachable on :443.
 
 Identity hygiene: the namespace is **never** labeled `nwarila.io/tenant=true` and
 the pod is **never** labeled `vault-client=true`. Either would make the live
@@ -51,7 +57,7 @@ The listener uses `tls_disable=1` because the drill is reached **only** via
 | `serviceaccount.yaml` | SA with token automount disabled (drill needs no API access) |
 | `vault-drill.hcl` | Vault config: KMS seal, single-node Raft, **no retry_join**, `tls_disable` |
 | `services.yaml` | headless `vault-drill-internal` + ClusterIP `vault-drill` (port-forward target) |
-| `networkpolicies.yaml` | native default-deny + native HTTPS-egress-except-cluster + Cilium AWS DNS/FQDN allow |
+| `networkpolicies.yaml` | native default-deny (deny floor) + Cilium AWS DNS/FQDN allow (sole egress: kube-dns + :443 to the 3 AWS endpoints, AWS-only) |
 | `statefulset.yaml` | single-replica Vault, signing-helper sidecar+bootstrap, RA-cert mount, `ndots:1` |
 | `kustomization.yaml` | self-contained; **never** referenced by any Flux Kustomization |
 | `guard.sh` | PRE-APPLY GUARD — refuses to apply unless every isolation invariant holds |

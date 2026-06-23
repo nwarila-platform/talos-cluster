@@ -30,12 +30,14 @@ spec:
       terminationGracePeriodSeconds: 30
       # ndots:1 so fully-qualified AWS names (kms/sts/rolesanywhere.
       # us-east-1.amazonaws.com — 3 dots) are queried ABSOLUTE first rather than
-      # via the cluster search domains. With the strict Cilium L7 DNS proxy
-      # (matchPattern *.amazonaws.com), the default ndots:5 makes the resolver
-      # try search-domain expansions first; the proxy REFUSES those non-AWS
+      # via the cluster search domains. The Cilium L7 DNS proxy allow-lists the
+      # three endpoints by EXACT matchName (not matchPattern — Cilium's `*` does
+      # not span dots, so `*.amazonaws.com` would not match a 3-label regional
+      # endpoint; see networkpolicies.yaml). With the default ndots:5 the resolver
+      # tries search-domain expansions first; the proxy REFUSES those non-AWS
       # names and the Go resolver aborts on REFUSED ("server misbehaving")
       # before reaching the absolute name. ndots:1 sends the AWS lookups
-      # straight through (they match the pattern) while the live Vault's
+      # straight through (they match a matchName entry) while the live Vault's
       # cluster-internal name stays REFUSED → DNS-BLOCKED, preserving isolation.
       dnsConfig:
         options:
