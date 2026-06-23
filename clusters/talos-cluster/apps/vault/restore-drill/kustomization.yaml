@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# DRILL HARNESS — applied with `kubectl apply -k`, NEVER reconciled by Flux.
+# This directory is intentionally absent from apps/vault/kustomization.yaml
+# (which lists only `base`), so no Flux Kustomization builds or prunes it.
+# Do NOT add this path to any parent kustomization.
+
+namespace: vault-drill
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - services.yaml
+  - networkpolicies.yaml
+  - statefulset.yaml
+
+configMapGenerator:
+  - name: vault-drill-config
+    files:
+      - vault-drill.hcl
+
+# Keep the ConfigMap name stable (no content hash) so the runbook/guard can
+# reference it deterministically.
+generatorOptions:
+  disableNameSuffixHash: true
