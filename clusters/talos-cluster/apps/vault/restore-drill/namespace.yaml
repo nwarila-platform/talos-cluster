@@ -1,0 +1,27 @@
+# Scratch namespace for the Vault recovery DRILL (Step 152a/b).
+#
+# ISOLATION-CRITICAL LABELLING:
+#   * Pod Security Standards: restricted enforce/audit/warn (same bar as every
+#     tenant; the drill Vault pod runs non-root, drops ALL caps, RO rootfs).
+#   * This namespace MUST NOT carry `nwarila.io/tenant: "true"`. The live
+#     `allow-tenant-vault-api-ingress` NetworkPolicy in deploy-vault admits
+#     ingress FROM any namespace bearing that label whose pods carry
+#     `vault-client: "true"`. Withholding the tenant label keeps the drill
+#     outside that allow-list — the scratch Vault is not, and must never be,
+#     recognised as a Vault client of the live cluster.
+#   * `nwarila.io/ephemeral: "true"` marks this as throwaway drill scaffolding.
+#
+# NOT Flux-reconciled: applied/removed with kubectl during the drill only.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vault-drill
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    app.kubernetes.io/part-of: vault-restore-drill
+    nwarila.io/ephemeral: "true"

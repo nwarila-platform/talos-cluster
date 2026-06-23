@@ -1,0 +1,39 @@
+# Headless service backing the StatefulSet (stable per-pod DNS) and a ClusterIP
+# service used only as a port-forward target. Both select the drill pod by its
+# DISTINCT name label (app.kubernetes.io/name: vault-drill) so they can never
+# select, or be selected by, the live `app.kubernetes.io/name: vault` workload.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-drill-internal
+  labels:
+    app.kubernetes.io/name: vault-drill
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: vault-drill
+    app.kubernetes.io/component: server
+  ports:
+    - name: api
+      port: 8200
+      targetPort: 8200
+    - name: cluster
+      port: 8201
+      targetPort: 8201
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-drill
+  labels:
+    app.kubernetes.io/name: vault-drill
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vault-drill
+    app.kubernetes.io/component: server
+  ports:
+    - name: api
+      port: 8200
+      targetPort: 8200

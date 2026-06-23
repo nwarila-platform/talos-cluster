@@ -1,0 +1,117 @@
+# ============================================================================
+# DRILL VAULT NETWORK ISOLATION
+# ----------------------------------------------------------------------------
+# Defence in depth, two layers:
+#
+#   1. NATIVE Kubernetes NetworkPolicy (this is the AUTHORITATIVE deny and the
+#      CNI-independent L3/L4 guarantee):
+#        * default-deny-all      — Ingress AND Egress denied for every pod.
+#        * allow-https-egress-ext — the ONLY native egress allow: TCP/443 to
+#          0.0.0.0/0 EXCEPT every in-cluster CIDR (pods, services, nodes). The
+#          scratch Vault therefore has NO L4 path to ANY in-cluster address on
+#          ANY port — which includes the live deploy-vault pods (10.244.0.0/16)
+#          and the live Vault ClusterIP (10.96.0.0/12). It can reach only public
+#          internet :443 (AWS KMS / STS / Roles Anywhere). This holds even if
+#          Cilium is bypassed or misconfigured.
+#
+#   2. Cilium CiliumNetworkPolicy (an ALLOW-LIST that TIGHTENS, never the deny):
+#        * vault-drill-egress-aws — egress DNS to kube-dns is permitted ONLY for
+#          names matching *.amazonaws.com (L7 DNS proxy), and TCP/443 only to the
+#          three AWS FQDNs. Because DNS is allow-listed to AWS names, the drill
+#          pod CANNOT resolve the live Vault's cluster-internal name
+#          (vault-0.vault-internal.deploy-vault.svc.cluster.local) at all
+#          (DNS-BLOCKED), and has no toFQDNs entry for anything in-cluster.
+#
+# Ingress is fully denied (no allow rule): the drill is reached only via
+# `kubectl port-forward`, which originates from the API server / kubelet on the
+# host and is not subject to pod NetworkPolicy.
+#
+# There is deliberately NO egress allow to deploy-vault, to vault-internal, to
+# the Kubernetes API server, or to any in-cluster endpoint.
+# ============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-drill-default-deny
+  namespace: vault-drill
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Native L4 egress allow: HTTPS to the public internet ONLY. The `except` list
+# carves out every in-cluster CIDR so there is provably no L4 route to any
+# cluster-internal address (live Vault pods/ClusterIP/headless endpoints) — on
+# 443 or, combined with default-deny, on any other port. CIDRs verified live
+# 2026-06-23: pods 10.244.0.0/16, services 10.96.0.0/12, nodes 10.69.112.0/24.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-drill-allow-https-egress-ext
+  namespace: vault-drill
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault-drill
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.244.0.0/16   # pod CIDR (live Vault pods live here)
+              - 10.96.0.0/12    # service CIDR (live Vault ClusterIP lives here)
+              - 10.69.112.0/24  # node CIDR
+      ports:
+        - port: 443
+          protocol: TCP
+---
+# Cilium allow-list: the ONLY DNS path (L7-filtered to *.amazonaws.com) plus
+# 443 pinned to the AWS endpoints. This is what makes the live Vault name
+# DNS-BLOCKED while AWS endpoints still resolve for the KMS unseal. It adds no
+# deny; the deny is the native default-deny above.
+#
+# Depends on the Cilium DNS proxy (toFQDNs) — the same mechanism the live
+# vault-egress-aws policy relies on. If the DNS proxy were disabled, DNS would
+# fail closed (drill cannot unseal) rather than fail open.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: vault-drill-egress-aws
+  namespace: vault-drill
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault-drill
+  egress:
+    # DNS restricted to the EXACT AWS endpoint names (matchName), so the proxy
+    # learns only those IPs and REFUSES everything else — including the live
+    # Vault cluster-internal name (DNS-BLOCKED). matchName (not matchPattern)
+    # because Cilium's matchPattern `*` does not span dots, so "*.amazonaws.com"
+    # would not match the 3-label regional endpoints. Verified empirically in
+    # this drill (2026-06-23): the pattern form left the signing helper unable
+    # to resolve rolesanywhere.us-east-1.amazonaws.com.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchName: kms.us-east-1.amazonaws.com
+              - matchName: sts.us-east-1.amazonaws.com
+              - matchName: rolesanywhere.us-east-1.amazonaws.com
+    # KMS (seal) + STS / Roles Anywhere (sidecar credential vending), TLS only.
+    - toFQDNs:
+        - matchName: kms.us-east-1.amazonaws.com
+        - matchName: sts.us-east-1.amazonaws.com
+        - matchName: rolesanywhere.us-east-1.amazonaws.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
