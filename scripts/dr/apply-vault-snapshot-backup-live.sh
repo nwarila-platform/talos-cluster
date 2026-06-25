@@ -2,20 +2,26 @@
 set -Eeuo pipefail
 set +x
 
+# Requires a short-TTL minted Vault admin token, preferably via VAULT_TOKEN.
+# Do not use a standing root token. Revoke the token after the proof; set
+# REVOKE_TOKEN_AFTER=true to opt into `vault token revoke -self` on success.
+
 export MSYS_NO_PATHCONV=1
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 POLICY_FILE="${REPO_ROOT}/clusters/talos-cluster/apps/vault/vault-config/policies/vault-snapshot-backup.hcl"
 ROLE_FILE="${REPO_ROOT}/clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/vault-snapshot-backup.json"
 DR_APP_DIR="${REPO_ROOT}/clusters/talos-cluster/apps/dr-backup"
+VAULT_CA_CONFIGMAP="${DR_APP_DIR}/vault-ca-configmap.yaml"
 TOKEN_FILE_DEFAULT="${REPO_ROOT}/../admin-token.json"
-VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY:-true}"
+VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY:-false}"
 if [[ -z "${KUBECONFIG:-}" && -f "${REPO_ROOT}/.s3/configs/kubeconfig" ]]; then
   export KUBECONFIG="${REPO_ROOT}/.s3/configs/kubeconfig"
 fi
 
 TMPDIR="$(mktemp -d)"
 PF_PID=""
+VAULT_CA_FILE="${TMPDIR}/vault-ca.crt"
 
 cleanup() {
   kubectl delete job -n dr-backup vault-snapshot-backup-proof --ignore-not-found --wait=false >/dev/null 2>&1 || true
@@ -76,6 +82,35 @@ raise SystemExit("token not found in token file")
 PY
 }
 
+write_vault_ca_file() {
+  python - "$(cygpath -w "${VAULT_CA_CONFIGMAP}")" "$(cygpath -w "${VAULT_CA_FILE}")" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+lines = source.read_text(encoding="utf-8").splitlines()
+
+for idx, line in enumerate(lines):
+    if line.strip() != "ca.crt: |":
+        continue
+    indent = len(line) - len(line.lstrip())
+    cert_lines = []
+    for child in lines[idx + 1:]:
+        if not child.strip():
+            cert_lines.append("")
+            continue
+        child_indent = len(child) - len(child.lstrip())
+        if child_indent <= indent:
+            break
+        cert_lines.append(child[indent + 2:])
+    target.write_text("\n".join(cert_lines).rstrip() + "\n", encoding="utf-8")
+    raise SystemExit(0)
+
+raise SystemExit(f"ca.crt not found in {source}")
+PY
+}
+
 pick_port() {
   python - <<'PY'
 import socket
@@ -92,6 +127,7 @@ vault_api() {
   VAULT_ADDR="https://127.0.0.1:${PF_PORT}" \
   VAULT_TOKEN="${ADMIN_TOKEN}" \
   VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY}" \
+  VAULT_CACERT="$(cygpath -w "${VAULT_CA_FILE}")" \
   python - "${method}" "${path}" "${payload_file}" <<'PY'
 import json
 import os
@@ -113,35 +149,57 @@ if payload_file:
     else:
         data = pathlib.Path(payload_file).read_bytes()
     headers["Content-Type"] = "application/json"
-ctx = ssl._create_unverified_context() if os.environ.get("VAULT_SKIP_VERIFY", "").lower() == "true" else ssl.create_default_context()
+if os.environ.get("VAULT_SKIP_VERIFY", "").lower() == "true":
+    ctx = ssl._create_unverified_context()
+else:
+    ctx = ssl.create_default_context(cafile=os.environ["VAULT_CACERT"])
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_REQUIRED
 req = urllib.request.Request(url, data=data, headers=headers, method=method)
 with urllib.request.urlopen(req, context=ctx, timeout=15) as response:
     sys.stdout.buffer.write(response.read())
 PY
 }
 
-check_403_script='
-check_for_403() {
-  label="$1"
-  shift
-  rm -f "/tmp/${label}.out" "/tmp/${label}.err"
-  if "$@" >"/tmp/${label}.out" 2>"/tmp/${label}.err"; then
-    echo "${label}_UNEXPECTED_SUCCESS"
-    rm -f "/tmp/${label}.out" "/tmp/${label}.err"
-    return 1
+self_revoke_admin_token() {
+  if [[ "${REVOKE_TOKEN_AFTER:-false}" != "true" ]]; then
+    return
   fi
-  if grep -qiE "permission denied|403|preflight capability check returned 403" "/tmp/${label}.out" "/tmp/${label}.err"; then
-    echo "${label}_403_OK"
-    rm -f "/tmp/${label}.out" "/tmp/${label}.err"
-    return 0
-  fi
-  echo "${label}_NOT_403"
-  rm -f "/tmp/${label}.out" "/tmp/${label}.err"
+
+  VAULT_ADDR="https://127.0.0.1:${PF_PORT}" \
+  VAULT_TOKEN="${ADMIN_TOKEN}" \
+  VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY}" \
+  VAULT_CACERT="$(cygpath -w "${VAULT_CA_FILE}")" \
+  VAULT_TLS_SERVER_NAME="vault.deploy-vault.svc.cluster.local" \
+  vault token revoke -self >/dev/null
+  echo "ADMIN_TOKEN_REVOKED_OK"
+}
+
+wait_for_proof_job() {
+  local deadline=$((SECONDS + 300))
+  local status succeeded failed
+
+  while (( SECONDS < deadline )); do
+    status="$(kubectl -n dr-backup get job vault-snapshot-backup-proof -o jsonpath='{.status.succeeded}{"|"}{.status.failed}' 2>/dev/null || true)"
+    IFS='|' read -r succeeded failed <<<"${status}"
+    if [[ "${succeeded:-0}" == "1" ]]; then
+      return 0
+    fi
+    if [[ "${failed:-0}" =~ ^[0-9]+$ ]] && (( failed > 0 )); then
+      echo "PROOF_JOB_FAILED"
+      kubectl -n dr-backup logs job/vault-snapshot-backup-proof --all-containers=true || true
+      return 1
+    fi
+    sleep 2
+  done
+
+  echo "PROOF_JOB_TIMEOUT"
+  kubectl -n dr-backup logs job/vault-snapshot-backup-proof --all-containers=true || true
   return 1
 }
-'
 
 ADMIN_TOKEN="$(read_admin_token)"
+write_vault_ca_file
 PF_PORT="$(pick_port)"
 
 kubectl -n deploy-vault port-forward svc/vault "${PF_PORT}:8200" >"${TMPDIR}/port-forward.log" 2>&1 &
@@ -193,6 +251,13 @@ spec:
       serviceAccountName: dr-backup
       automountServiceAccountToken: true
       restartPolicy: Never
+      # Cilium L7 DNS matchName only allows the exact FQDN. Keep ndots:1 here
+      # and on the future standing backup Job so resolv.conf does not try
+      # search-domain expansions that the proxy correctly refuses.
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       securityContext:
         runAsNonRoot: true
         runAsUser: 100
@@ -213,6 +278,7 @@ spec:
               import os
               import ssl
               import sys
+              import time
               import urllib.error
               import urllib.request
 
@@ -220,6 +286,26 @@ spec:
               VAULT_CA = "/etc/vault-ca/ca.crt"
               SA_TOKEN = "/var/run/secrets/kubernetes.io/serviceaccount/token"
               CTX = ssl.create_default_context(cafile=VAULT_CA)
+
+              class NoRedirect(urllib.request.HTTPRedirectHandler):
+                  def redirect_request(self, req, fp, code, msg, headers, newurl):
+                      return None
+
+              OPENER = urllib.request.build_opener(urllib.request.HTTPSHandler(context=CTX), NoRedirect)
+              REDIRECT_CODES = {301, 302, 303, 307, 308}
+
+              def open_vault(req):
+                  # Keep DNS pinned to the one allowed service name instead of following
+                  # standby redirects to pod-internal names the DNS proxy refuses.
+                  for attempt in range(30):
+                      try:
+                          return OPENER.open(req, timeout=120)
+                      except urllib.error.HTTPError as exc:
+                          if exc.code in REDIRECT_CODES and attempt < 29:
+                              exc.close()
+                              time.sleep(1)
+                              continue
+                          raise
 
               def vault(method, path, token=None, body=None, stream_to=None):
                   headers = {}
@@ -231,7 +317,7 @@ spec:
                       headers["Content-Type"] = "application/json"
                   url = f"{VAULT_ADDR}/v1/{path.lstrip('/')}"
                   req = urllib.request.Request(url, data=data, headers=headers, method=method)
-                  with urllib.request.urlopen(req, context=CTX, timeout=120) as response:
+                  with open_vault(req) as response:
                       if stream_to:
                           with open(stream_to, "wb") as fh:
                               while True:
@@ -302,7 +388,7 @@ spec:
           emptyDir: {}
 YAML
 
-kubectl -n dr-backup wait --for=condition=complete job/vault-snapshot-backup-proof --timeout=300s >/dev/null
+wait_for_proof_job
 kubectl -n dr-backup logs job/vault-snapshot-backup-proof >"${TMPDIR}/proof.log"
 
 kubectl -n deploy-vault get pods \
@@ -353,4 +439,5 @@ PY
 cat "${TMPDIR}/proof.log"
 echo "PROOF_JOB_DELETING"
 kubectl delete job -n dr-backup vault-snapshot-backup-proof --ignore-not-found --wait=true >/dev/null
+self_revoke_admin_token
 echo "PROOF_COMPLETE_OK"

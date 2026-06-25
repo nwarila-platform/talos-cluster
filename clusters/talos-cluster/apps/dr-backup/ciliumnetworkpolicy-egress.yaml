@@ -19,7 +19,7 @@ spec:
               protocol: ANY
           rules:
             dns:
-              - matchPattern: "*"
+              - matchName: vault.deploy-vault.svc.cluster.local
     - toServices:
         - k8sService:
             serviceName: vault

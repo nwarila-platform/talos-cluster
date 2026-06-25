@@ -40,6 +40,11 @@ Raft snapshot read plus token lookup/renew-self, and is applied live by:
 scripts/dr/apply-vault-snapshot-backup-live.sh
 ```
 
+Run the live apply with a short-TTL minted admin token, preferably supplied in
+`VAULT_TOKEN`, not a standing root token. Revoke that operator token after the
+apply/proof with `vault token revoke`, or set `REVOKE_TOKEN_AFTER=true` to have
+the script run `vault token revoke -self` after a successful proof.
+
 ## Files
 
 | Path | Purpose |
