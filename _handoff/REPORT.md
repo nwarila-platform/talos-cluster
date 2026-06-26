@@ -3,7 +3,7 @@
 Branch: codex/vault-snapshot-backup-dr-foundation
 PR: #208 updated on the existing branch; no new PR opened; not merged.
 Executor: Codex
-Date: 2026-06-25
+Date: 2026-06-26
 
 ## Fixes
 
@@ -42,7 +42,7 @@ VAULT_POD vault-0 phase=Running ready=1/1 restarts_before=1 restarts_after=1 unc
 VAULT_POD vault-1 phase=Running ready=1/1 restarts_before=0 restarts_after=0 unchanged=true
 VAULT_POD vault-2 phase=Running ready=1/1 restarts_before=1 restarts_after=1 unchanged=true
 VAULT_UNDISTURBED_OK
-SNAPSHOT_OK size_bytes=115534
+SNAPSHOT_OK size_bytes=112833
 SECRET_READ_403_OK
 POLICY_LIST_403_OK
 TOKEN_CREATE_403_OK
@@ -50,14 +50,14 @@ PROOF_JOB_DELETING
 PROOF_COMPLETE_OK
 ```
 
-Result: PASS under `matchName` DNS policy plus proof pod `ndots:1`. Snapshot size was nonzero; snapshot contents were not printed or stored in the report.
+Result: PASS on 2026-06-26 under `matchName` DNS policy plus proof pod `ndots:1`. Snapshot size was nonzero; snapshot contents were not printed or stored in the report.
 
 ## Static Verification
 
 - `git diff --check`: PASS
 - `kubectl kustomize clusters/talos-cluster/apps/dr-backup`: PASS
 - `kubectl kustomize clusters/talos-cluster/apps`: PASS
-- `bash -n scripts/dr/apply-vault-snapshot-backup-live.sh`: PASS
+- `C:\Program Files\Git\bin\bash.exe -n scripts/dr/apply-vault-snapshot-backup-live.sh`: PASS
 
 ## Forward-tracked Items
 
@@ -69,5 +69,7 @@ Result: PASS under `matchName` DNS policy plus proof pod `ndots:1`. Snapshot siz
 
 - Fix commit: `b6ce81981147f66b951abb7db037e2f53f1e4c64` (`Harden vault snapshot backup proof`)
 - Signature: `Good "git" signature for 33955773+NWarila@users.noreply.github.com with ECDSA key SHA256:UAsMtOhQwpR/duoYjPY3LSw4a905Dx29QPGGXCTkhGY`
+- Report commit before this refresh: `67f00a27829405671dfea69a183f2fa3ae343e07` (`Report vault snapshot backup hardening`)
+- Signature: `Good "git" signature for 33955773+NWarila@users.noreply.github.com with ECDSA key SHA256:UAsMtOhQwpR/duoYjPY3LSw4a905Dx29QPGGXCTkhGY`
 
-This report is committed separately after the fix commit so it can record the signed fix SHA without a self-referential hash.
+This refreshed report is committed separately after the fix commit so it can record the signed fix SHA without a self-referential hash. The executor will report the refreshed-report commit SHA after signing and pushing it to PR #208.
