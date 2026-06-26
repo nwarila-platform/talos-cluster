@@ -1,0 +1,36 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: dr-backup-egress
+  namespace: dr-backup
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: dr-backup
+      app.kubernetes.io/component: backup
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchName: vault.deploy-vault.svc.cluster.local
+    - toServices:
+        - k8sService:
+            serviceName: vault
+            namespace: deploy-vault
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    - toCIDRSet:
+        - cidr: 10.69.12.11/32
+      toPorts:
+        - ports:
+            - port: "2049"
+              protocol: TCP

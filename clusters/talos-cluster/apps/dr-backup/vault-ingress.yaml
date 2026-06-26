@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dr-backup-vault-api-ingress
+  namespace: deploy-vault
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      app.kubernetes.io/name: vault
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dr-backup
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dr-backup
+              app.kubernetes.io/component: backup
+      ports:
+        - port: 8200
+          protocol: TCP
