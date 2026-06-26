@@ -72,4 +72,4 @@ Result: PASS on 2026-06-26 under `matchName` DNS policy plus proof pod `ndots:1`
 - Report commit before this refresh: `67f00a27829405671dfea69a183f2fa3ae343e07` (`Report vault snapshot backup hardening`)
 - Signature: `Good "git" signature for 33955773+NWarila@users.noreply.github.com with ECDSA key SHA256:UAsMtOhQwpR/duoYjPY3LSw4a905Dx29QPGGXCTkhGY`
 
-This refreshed report is committed separately after the fix commit so it can record the signed fix SHA without a self-referential hash. The executor will report the refreshed-report commit SHA after signing and pushing it to PR #208.
+This refreshed report was committed separately after the fix commit so it could record the signed fix SHA without a self-referential hash. The 2026-06-26 proof-refresh commit is `bd96675975d3d340451d1d8d2a92524f6b95731f` (`Refresh vault snapshot backup proof report`), with the same Good `git` SSH signature shown above. This final metadata update is also signed; verify the branch HEAD with `git show --show-signature -1`.
