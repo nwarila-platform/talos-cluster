@@ -302,6 +302,8 @@
 !/docs/decision-records/repo/0015-use-vault-secrets-operator-for-workload-secrets.md
 !/docs/decision-records/repo/0016-deliver-on-cluster-ci-secrets-via-sops-file-mount.md
 !/docs/decision-records/repo/0017-fold-vault-into-talos-cluster-as-a-platform-service.md
+!/docs/decision-records/repo/0018-encrypt-pod-to-pod-traffic-with-cilium-wireguard.md
+!/docs/decision-records/repo/0019-enable-tokenless-vault-generate-root.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/

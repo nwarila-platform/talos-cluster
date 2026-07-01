@@ -215,6 +215,35 @@ Vault PVC as a first move.
 Vault data is seal-protected and operationally sensitive. A restored Longhorn
 volume is only usable if Vault can come up with the same KMS auto-unseal model.
 
+### Vault generate-root break-glass prerequisite
+
+Vault 2.x authenticates `sys/generate-root/*` unless the server config opts the
+endpoint family into unauthenticated handling. Any scratch, replacement, or
+production recovery-time Vault config used to open a restored Raft snapshot MUST
+include this top-level HCL setting before Vault starts:
+
+```hcl
+enable_unauthenticated_access = ["generate-root"]
+```
+
+Do not substitute a captured root token or short-TTL token for this requirement.
+`snapshot-force` replaces the token store, and a delayed restore can happen after
+any captured token has expired. The durable recovery credential is the recovery-
+key quorum. With the directive present, use the quorum to complete
+`sys/generate-root` and mint a fresh root only on the isolated scratch or during
+an owner-approved real recovery.
+
+For live production verification after the config is merged, never supply a
+recovery share. The live check is only: no-token `POST sys/generate-root/attempt`
+returns not-403 with a nonce, then immediately `DELETE sys/generate-root/attempt`
+to cancel. Completing generate-root against live is an emergency recovery action,
+not a routine validation step.
+
+Step 156 proved this path on `vault-drill`: token-less `generate-root` completed
+from the scratch recovery key, the generated scratch root read `sys/mounts`, the
+generated root was revoked, and the scratch PVC was wiped and reinitialized
+empty afterward. See
+[ADR-0019](../decision-records/repo/0019-enable-tokenless-vault-generate-root.md).
 For a scratch restore:
 
 1. Deploy an isolated Vault instance or StatefulSet that will not receive
