@@ -272,6 +272,7 @@
 !/docs/compliance/
 !/docs/compliance/README.md
 !/docs/runbooks/
+!/docs/runbooks/dr-generate-root-breakglass.md
 !/docs/runbooks/dr-stage1-backup.md
 !/docs/runbooks/migrate-first-vso-secret.md
 !/docs/runbooks/reprovision-secureboot-node.md
