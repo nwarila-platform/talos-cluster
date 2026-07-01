@@ -1,4 +1,4 @@
-# ADR-0019: Enable token-less Vault generate-root for recovery-key break-glass
+# ADR-0019: Keep token-less Vault generate-root in recovery configs only
 
 | Field          | Value                                   |
 | -------------- | --------------------------------------- |
@@ -13,19 +13,24 @@
 
 ## TL;DR
 
-Enable Vault 2.x `enable_unauthenticated_access = ["generate-root"]` in both
-production Vault config and the isolated `vault-drill` scratch config. Vault 2.x
-gates `sys/generate-root/*` by default; a restored Raft snapshot replaces the
-token store, so recovery cannot depend on any token captured before the restore.
-The durable credential is the escrowed recovery-key quorum, and generate-root
-must remain reachable without a token for that quorum to mint a new root during
-break-glass recovery.
+Keep Vault 2.x `enable_unauthenticated_access = ["generate-root"]` out of the
+production Vault base config. Carry it only in isolated scratch or recovery
+configs, including `vault-drill` and any replacement StatefulSet recovery config
+used to open a restored Raft snapshot.
 
-This does not expose a root token by itself. An unauthenticated caller can start
-or cancel a generate-root attempt and submit shares, but cannot complete the flow
-without the recovery-key quorum. The accepted exposure is a bounded denial-of-
-service surface, mitigated by Vault network isolation and owner-gated
-port-forward access.
+Vault 2.x gates `sys/generate-root/*` by default. A restored Raft snapshot
+replaces the token store, so recovery cannot depend on any token captured before
+the restore. The durable credential is the escrowed recovery-key quorum, and the
+recovery Vault must let that quorum reach `generate-root` without a preexisting
+token. The automated disaster-recovery pipeline can apply that recovery config
+every run, so live Vault does not need a standing unauthenticated endpoint
+family.
+
+This setting does not expose a root token by itself. An unauthenticated caller
+can start or cancel a generate-root attempt and submit shares, but cannot
+complete the flow without the recovery-key quorum. That is still a bounded
+denial-of-service surface, so defense-in-depth keeps it off the live service and
+confines it to isolated recovery workloads.
 
 ## Context and Problem Statement
 
@@ -68,54 +73,61 @@ Vault 2.x docs, and source at the exact running commit:
 
 ## Decision
 
-Add the following top-level Vault HCL setting to both the scratch restore-drill
-config and live Vault config:
+Set placement to scratch/recovery-config-only.
+
+The following top-level Vault HCL setting is allowed in the isolated restore
+harness at `clusters/talos-cluster/apps/vault/restore-drill/vault-drill.hcl` and
+in future replacement StatefulSet recovery configs that are deployed only for a
+specific disaster-recovery run:
 
 ```hcl
 enable_unauthenticated_access = ["generate-root"]
 ```
 
-This setting is part of the recovery baseline. Any recovery-time Vault config,
-replacement StatefulSet, or scratch restore harness that may need to recover a
-restored Raft snapshot must carry the same directive before the restored Vault is
-started. Otherwise, a token-less restored Vault may be sealed open but still
-operationally inaccessible.
+The setting is not allowed in `clusters/talos-cluster/apps/vault/base/vault.hcl`
+or in the rendered live Vault ConfigMap. The live base must stay hardened. A
+monitored invariant now enforces that boundary through both source-controlled
+Kyverno policy and CI validation of the rendered live Vault ConfigMap.
 
-The production rollout is owner-gated through the normal GitOps merge path. The
-post-merge verification must restart Vault in a controlled rolling manner and
-verify every pod re-unseals through KMS, Raft still has three peers and one
-leader, all pods are `2/2 Ready`, and existing auth still works. Live directive
-verification is non-mutating only: start `sys/generate-root/attempt` with no
-token, confirm it is not 403 and returns a nonce, then immediately cancel the
-attempt. No recovery share is ever supplied to live as part of verification.
+Break-glass recovery standardizes on a replacement StatefulSet path: bring up a
+fresh isolated Vault workload with the recovery config already present, restore
+the snapshot there, let it auto-unseal through the KMS seal path, and use the
+recovery-key quorum to complete `generate-root` on that recovery workload. Do
+not depend on an in-place live StatefulSet edit that temporarily enables the
+unauthenticated family. A real disaster is exactly when an operator is most
+likely to forget a cleanup step; the safer invariant is that live base never
+carries the directive.
 
 ## Consequences
 
 ### Positive
 
-- A restored Vault whose token store has been replaced can still mint a fresh
-  root token from the recovery-key quorum.
-- The restore drill now proves the real delayed-recovery credential path instead
-  of relying on a token that may not exist when disaster recovery happens.
-- The scratch harness permanently carries the same recovery-critical config as
-  production, preventing false-positive restore drills.
+- Live Vault has no standing unauthenticated `generate-root` endpoint family,
+  reducing the production attack and denial-of-service surface.
+- The restore drill still proves the real delayed-recovery credential path
+  instead of relying on a token that may not exist when disaster recovery
+  happens.
+- The recovery directive lives where automation can apply it every run: the
+  scratch or replacement StatefulSet recovery config.
+- CI and Kyverno guard against accidentally reintroducing the directive to the
+  rendered live Vault ConfigMap.
 
 ### Negative
 
-- Unauthenticated clients that can reach Vault can start or cancel a generate-
-  root attempt. That is a denial-of-service surface for the break-glass workflow
-  because concurrent attempts can interfere with operators until cancelled.
-- The setting is easy to forget in ad hoc recovery configs. Omitting it can make
-  an otherwise successfully restored Vault inaccessible.
+- Recovery automation must reliably apply the recovery config before starting a
+  restored Vault. Omitting the directive from that recovery config can make an
+  otherwise successfully restored Vault inaccessible.
+- The replacement StatefulSet path is slightly more explicit than editing the
+  existing live StatefulSet, but that explicitness is the safety property.
 
 ### Neutral
 
 - The setting does not let an unauthenticated caller mint a root token without
   the recovery-key quorum.
 - Production Vault remains internal-only behind Kubernetes NetworkPolicy,
-  service scoping, and operator-controlled port-forward paths. No Gateway or
-  public exposure is introduced by this decision.
-- The setting can be removed and Vault restarted if a future Vault version
+  service scoping, and operator-controlled port-forward paths. This decision
+  does not add a Gateway or public exposure.
+- The setting can be removed from recovery configs if a future Vault version
   changes the recovery endpoint model or if the owner chooses a different
   break-glass design.
 
@@ -127,26 +139,35 @@ attempt. No recovery share is ever supplied to live as part of verification.
    wall-clock time. This can pass a same-day drill while failing the real delayed
    disaster-recovery scenario.
 
-2. Enable unauthenticated `rekey` or `generate-operation-token` too.
+2. Keep token-less generate-root enabled on live Vault.
+
+   Rejected. The unauthenticated family creates a bounded denial-of-service
+   surface even though it cannot mint a root token without the recovery-key
+   quorum. Because recovery automation can apply the directive to an isolated
+   recovery workload every time, keeping the surface permanently enabled on live
+   Vault is unnecessary.
+
+3. Temporarily edit the live StatefulSet during break-glass.
+
+   Rejected. In-place live edits create a cleanup dependency at the worst time.
+   The replacement StatefulSet path makes the recovery surface explicit,
+   isolated, and naturally disposable.
+
+4. Enable unauthenticated `rekey` or `generate-operation-token` too.
 
    Rejected. Step 156 only needs standard `generate-root`. Widening the
-   unauthenticated family list would add DoS surface without solving the restore
-   gate.
+   unauthenticated family list would add denial-of-service surface without
+   solving the restore gate.
 
-3. Use Vault recovery mode and raw storage manipulation.
+5. Use Vault recovery mode and raw storage manipulation.
 
    Rejected for this recovery path. Recovery mode is a last-resort storage
    surgery tool, not the ordinary restored-Vault access path. The desired
    operator workflow is recovery-key quorum to new root, then normal Vault APIs.
 
-4. Defer the directive and document the limitation.
-
-   Rejected. Step 155 already proved the limitation blocks real recovery. A
-   documented dead end is not an acceptable backup posture.
-
 ## Verification
 
-Step 156 verified the directive before any live config edit:
+Step 156 verified the directive mechanism before this live-base hardening:
 
 1. Running binary: `Vault v2.0.1`, commit
    `1a56927a170e2c67fa60a71158a3607d072a58a7`.
@@ -168,9 +189,20 @@ Step 156 verified the directive before any live config edit:
    DNS was blocked, AWS KMS DNS resolved, and TCP to the live Vault ClusterIP was
    blocked.
 
-Live rollout verification is intentionally deferred until the owner merges and
-lets GitOps reconcile the production config. The required post-merge evidence is
-recorded in the runbook and the Step 156 report.
+This PR's placement verification is source-only and non-mutating:
+
+1. The live base `vault.hcl` does not contain
+   `enable_unauthenticated_access`.
+2. The isolated `vault-drill` config retains
+   `enable_unauthenticated_access = ["generate-root"]`.
+3. `scripts/check-live-vault-config-invariants.sh` renders
+   `clusters/talos-cluster/apps/vault/base` and fails if the live Vault
+   ConfigMap data contains `enable_unauthenticated_access`.
+4. Kyverno policy `protect-live-vault-config` denies CREATE/UPDATE of a live
+   `vault-config` ConfigMap containing that directive.
+
+No live Vault rollout, rolling restart, or generate-root execution is part of
+this decision.
 
 ## Related
 
@@ -193,5 +225,5 @@ recorded in the runbook and the Step 156 report.
 | --- | --- | --- |
 | NIST SP 800-53 Rev. 5 | CP-10 | Preserves a viable system recovery path when Vault tokens are unavailable after restore. |
 | NIST SP 800-53 Rev. 5 | IA-5 | Keeps root-token creation gated by the recovery-key quorum instead of stored bearer tokens. |
-| NIST SP 800-53 Rev. 5 | SC-7 | Accepts the unauthenticated endpoint only within Vault's internal network boundary and operator port-forward model. |
-| NIST SP 800-53 Rev. 5 | CM-2 | Records the recovery-critical Vault configuration baseline in source-controlled ADR and runbook text. |
+| NIST SP 800-53 Rev. 5 | SC-7 | Avoids a standing unauthenticated endpoint family on live Vault while allowing it only in isolated recovery configs. |
+| NIST SP 800-53 Rev. 5 | CM-2 | Records and validates the live/recovery Vault configuration boundary in source-controlled artifacts. |

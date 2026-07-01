@@ -1,11 +1,6 @@
 disable_mlock = true
 ui            = true
 
-# Vault 2.x gates generate-root by default. Keep this break-glass family
-# token-less so a restored Vault whose token store has been replaced can still
-# be recovered from the recovery-key quorum.
-enable_unauthenticated_access = ["generate-root"]
-
 # AWS KMS auto-unseal (ADR-0008). The key is referenced by alias; region and
 # credentials come from the environment / the aws-signing-helper sidecar
 # (AWS_REGION + AWS_SHARED_CREDENTIALS_FILE; the helper refreshes that file —

@@ -5,5 +5,6 @@ resources:
   - protect-repo-sync-namespace.yaml
   - protect-source-minter.yaml
   - protect-vault-client-serviceaccount.yaml
+  - protect-live-vault-config.yaml
   - restrict-vso-org-pull-secrets.yaml
   - verify-image-signatures.yaml
