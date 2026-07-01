@@ -71,6 +71,8 @@ Stop before touching live or scratch if any item is false:
 
 - Independent review of this runbook and the exact restore harness is complete.
 - The latest live snapshot source and scratch target are named in the review.
+- The live `vault-snapshot-backup` Kubernetes auth role remains the existing
+  least-privilege snapshot-read role; do not modify the live role for S0.
 - `clusters/talos-cluster/apps/vault/restore-drill/guard.sh` passes before
   any scratch apply.
 - The scratch network proof blocks live Vault DNS and TCP while preserving AWS
@@ -156,24 +158,51 @@ ceremony.
 
 ```bash
 export MSYS_NO_PATHCONV=1
-export KUBECONFIG="${KUBECONFIG:-.s3/configs/kubeconfig}"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+export KUBECONFIG="${KUBECONFIG:-${REPO_ROOT}/.s3/configs/kubeconfig}"
 export VAULT_DRILL_WORK_DIR="${VAULT_DRILL_WORK_DIR:-C:/tmp/vault-drill-s0}"
 
-cd clusters/talos-cluster/apps/vault/restore-drill
+cd "${REPO_ROOT}/clusters/talos-cluster/apps/vault/restore-drill"
 bash guard.sh
+bash s0-restore-generate-root.sh
 ```
 
-The reviewed restore harness must then:
+For S0, run only `s0-restore-generate-root.sh`. Do not use
+`restore-run.sh`; that driver belongs to the Step-155 canary restore-validation
+path and depends on live canary seeding that is outside this zero-live-mutation
+ceremony.
 
-1. Stand up only the isolated `vault-drill` scratch workload.
-2. Copy only the runtime material needed for KMS auto-unseal.
-3. Capture or select the owner-approved latest live snapshot.
-4. Restore that snapshot into the scratch Vault PVC.
-5. Confirm scratch Vault is initialized, auto-unsealed, active, and isolated.
+The S0 restore driver must:
+
+1. Wipe any preexisting `vault-drill` StatefulSet/PVC, then reinitialize an
+   empty scratch Vault for a clean start.
+2. Prove the empty scratch has only default mounts and passes the existing
+   isolation guard.
+3. Capture a fresh latest live Raft snapshot through the read-only
+   `vault-snapshot-backup` role. If that login returns a service token or other
+   non-batch token, warn and proceed: the capture token is least-privilege,
+   short-lived, and inert on the throwaway scratch used for the S0
+   generate-root proof.
+4. Restore that snapshot into the scratch Vault PVC with `snapshot-force`.
+5. Confirm the restored scratch Vault is initialized, auto-unsealed, active
+   (`sealed=false`, `standby=false`, `is_self=true`), and still isolated.
 6. Confirm live Vault pods remain healthy and are not modified.
+7. Remove the local snapshot and empty-scratch init transients, then stop with
+   the restored scratch still running for the owner-interactive generate-root
+   ceremony.
 
-Record the snapshot identifier, scratch namespace, scratch service, Vault
-version, and guard output in the ceremony notes. Do not record secrets.
+Record `SNAPSHOT_START_UTC`, `LIVE_ACTIVE_POD`, snapshot byte size,
+scratch namespace, scratch service, Vault version, active-proof output,
+isolation output, and live-undisturbed output in
+the ceremony notes. The expected terminal stop line is:
+
+```text
+S0_RESTORE_READY namespace=vault-drill service=svc/vault-drill status=restored_unsealed_active_isolated_live_undisturbed
+```
+
+Do not record secrets. The restore driver intentionally performs no canary
+read-back and does not handle MFA, escrow, recovery shares, OTPs, generated
+root tokens, or `generate-root` requests.
 
 ## Generate-Root Endpoint Gate
 
