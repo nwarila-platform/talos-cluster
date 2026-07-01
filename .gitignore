@@ -116,6 +116,7 @@
 !/clusters/talos-cluster/apps/kyverno/policies/protect-repo-sync-namespace.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/protect-source-minter.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/protect-vault-client-serviceaccount.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/protect-live-vault-config.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/restrict-vso-org-pull-secrets.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
@@ -258,6 +259,7 @@
 !/scripts/health.sh
 !/scripts/check-no-placeholder-leak.sh
 !/scripts/check-vault-fold-invariants.sh
+!/scripts/check-live-vault-config-invariants.sh
 !/scripts/onboard-tenant.sh
 !/scripts/dr/
 !/scripts/dr/*
@@ -272,6 +274,7 @@
 !/docs/compliance/
 !/docs/compliance/README.md
 !/docs/runbooks/
+!/docs/runbooks/dr-generate-root-breakglass.md
 !/docs/runbooks/dr-stage1-backup.md
 !/docs/runbooks/migrate-first-vso-secret.md
 !/docs/runbooks/reprovision-secureboot-node.md
@@ -302,6 +305,8 @@
 !/docs/decision-records/repo/0015-use-vault-secrets-operator-for-workload-secrets.md
 !/docs/decision-records/repo/0016-deliver-on-cluster-ci-secrets-via-sops-file-mount.md
 !/docs/decision-records/repo/0017-fold-vault-into-talos-cluster-as-a-platform-service.md
+!/docs/decision-records/repo/0018-encrypt-pod-to-pod-traffic-with-cilium-wireguard.md
+!/docs/decision-records/repo/0019-enable-tokenless-vault-generate-root.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/

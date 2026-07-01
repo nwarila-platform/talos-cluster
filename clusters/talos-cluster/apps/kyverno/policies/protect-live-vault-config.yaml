@@ -1,0 +1,47 @@
+# ClusterPolicy: protect-live-vault-config
+#
+# Defense in depth for Vault DR: token-less generate-root belongs only in
+# isolated scratch or replacement-StatefulSet recovery configs, never in the
+# rendered live Vault ConfigMap.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-live-vault-config
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Protect live Vault config
+    policies.kyverno.io/category: Disaster Recovery
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: ConfigMap
+    policies.kyverno.io/description: >-
+      Blocks the live Vault ConfigMap from enabling unauthenticated
+      generate-root. Recovery workloads must carry that directive only in their
+      isolated recovery config.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: deny-live-vault-generate-root-config
+      match:
+        any:
+          - resources:
+              kinds:
+                - ConfigMap
+              namespaces:
+                - deploy-vault
+              operations:
+                - CREATE
+                - UPDATE
+      validate:
+        message: >-
+          Live Vault must not enable unauthenticated generate-root. Use the
+          isolated vault-drill or replacement-StatefulSet recovery config
+          instead.
+        deny:
+          conditions:
+            all:
+              - key: "{{ regex_match('^vault-config(-[a-z0-9]+)?$', request.object.metadata.name || '') && contains(request.object.data.\"vault.hcl\" || '', 'enable_unauthenticated_access') }}"
+                operator: Equals
+                value: true

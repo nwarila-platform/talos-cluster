@@ -1,6 +1,11 @@
 disable_mlock = true
 ui            = false
 
+# Vault 2.x gates generate-root by default. The restore drill must keep this
+# break-glass family token-less so a restored snapshot whose token store has
+# been replaced can still be recovered from the recovery-key quorum.
+enable_unauthenticated_access = ["generate-root"]
+
 # Distinct cluster identity. A snapshot restored in Part 2 (152b) overwrites
 # the cluster identity from the snapshot; for the empty Part 1 Vault this name
 # keeps the drill provably distinct from the live cluster.
