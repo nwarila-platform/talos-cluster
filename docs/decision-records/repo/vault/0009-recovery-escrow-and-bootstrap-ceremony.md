@@ -18,9 +18,10 @@ and an initial **root token** exactly once. Escrow that bundle in **AWS SSM
 Parameter Store** (Standard SecureString, encrypted under the Vault CMK,
 write-once). Run init as a short, fail-closed **operator ceremony** from an
 ephemeral context — **not** a standing in-cluster Job. Use
-`recovery_shares=5, recovery_threshold=3` (see "Recovery share count" below);
+`recovery_shares=3, recovery_threshold=2` (see "Recovery share count" below);
 mint an orphan least-privilege admin; **revoke** the initial root token. Nothing
-here is ever committed to Git.
+here is ever committed to Git. This ADR previously documented 5/3, but the
+2026-07-02 S0 drill verified the deployed as-built state is 3/2.
 
 ## Context and Problem Statement
 
@@ -80,20 +81,21 @@ state machine:
 1. **Preflight** SSM writability (and KMS encrypt-via-SSM) — catches IAM/path
    misconfig **before** the irreversible init.
 2. `GET /v1/sys/init` — if already initialized, do **not** init; go to step 5.
-3. `POST /v1/sys/init` with `recovery_shares=5`, `recovery_threshold=3`
+3. `POST /v1/sys/init` with `recovery_shares=3`, `recovery_threshold=2`
    (optionally `recovery_pgp_keys` so the one-time output is pre-encrypted).
 4. **First** post-init action: write the raw init response to SSM
    (`Overwrite=false`).
 
-   **Recovery share count (5/3, as built 2026-06-02).** Shamir *t-of-n* only
-   buys separation-of-duties when shares are distributed to **distinct
+   **Recovery share count (3/2, as built verified 2026-07-02).** Shamir *t-of-n*
+   only buys separation-of-duties when shares are distributed to **distinct
    custodians**. For a solo maintainer whose bundle is escrowed as a **single
    blob** (SSM + one offline file), every share lives together, so the split is
-   cosmetic to confidentiality regardless of `n`/`t`. Given that, 5/3 is chosen
-   over the originally-drafted 3/2 because it is strictly **no weaker** (higher
-   reconstruction threshold, 3>2; more redundancy, tolerates 2 lost vs 1) and a
-   destructive re-init to change a cosmetic count would forfeit validated,
-   working seal state for no security or availability gain.
+   cosmetic to confidentiality regardless of `n`/`t`. This ADR previously
+   documented 5/3, but the 2026-07-02 S0 drill verified that both live Vault and
+   the restored scratch Vault report `t=2, n=3`, and the escrow contains 3
+   recovery shares. The ADR is corrected to the deployed as-built reality rather
+   than changing live Vault to match the stale text. As built, `sys/generate-root`
+   needs 2 recovery shares.
 5. Mint an **orphan** (`no_parent=true`) least-privilege admin token/policy,
    then **revoke** the initial root token (`auth/token/revoke-self`).
 6. Idempotent rerun contract: `initialized + escrow present → exit 0`;
@@ -120,7 +122,10 @@ escrowed recovery keys succeeds in a non-prod path.
 
 ### As-built status (2026-06-02)
 
-Done and verified on `talos-cluster`: init (recovery 5/3); KMS auto-unseal
+Done and verified on `talos-cluster`: init (recovery 3/2; corrected from the
+previously documented 5/3 after the 2026-07-02 S0 drill confirmed live and
+restored scratch `vault status` both report `t=2, n=3`, with 3 escrowed recovery
+shares); KMS auto-unseal
 (`sealed=false`, `recovery_seal=true`); all 3 replicas unsealed on the UBI9
 image; **restart-safe** (a deleted replica re-unsealed unattended); escrow
 written to `/nwarila-platform/vault/talos-cluster/init-material` **under the
