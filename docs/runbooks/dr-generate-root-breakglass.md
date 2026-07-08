@@ -34,16 +34,17 @@ without a working non-root admin path can lock out live administration.
 
 ## Confirmed Escrow Facts
 
-ADR-0009 records the real init as `recovery_shares=5`,
-`recovery_threshold=3`, with SSM escrow at
+ADR-0009 records the real init as `recovery_shares=3`,
+`recovery_threshold=2`, with SSM escrow at
 `/nwarila-platform/vault/talos-cluster/init-material`.
 
-The owner-confirmed break-glass read on 2026-07-01 verified these live escrow
-facts:
+The owner-confirmed break-glass read on 2026-07-01 and the S0 drill on
+2026-07-02 verified these live escrow facts:
 
 - The working AWS CLI profile is `[profile vault-break-glass]`.
 - The recovery-key field is `recovery_keys_b64`.
-- The recovery-key threshold is 3, so S0 submits exactly three shares.
+- The escrow contains 3 recovery shares.
+- The recovery-key threshold is 2, so S0 submits exactly two shares.
 - The escrowed shares are raw base64 strings, not PGP-wrapped payloads
   (`len=44`, `pgp_armor=false`).
 
@@ -80,7 +81,7 @@ Stop before touching live or scratch if any item is false:
 - The ceremony environment has the `vault` CLI available; this runbook uses it
   for OTP generation and Vault-native generated-root decode.
 - The real escrow shape matches the confirmed facts above:
-  `recovery_keys_b64`, threshold 3, raw base64 shares of length 44, and no PGP
+  `recovery_keys_b64`, threshold 2, raw base64 shares of length 44, and no PGP
   armor.
 - In Git Bash, `MSYS_NO_PATHCONV=1` is set before every AWS SSM read and the
   SSM parameter name is quoted. Without both, Git Bash can silently mangle the
@@ -112,7 +113,7 @@ export AWS_PROFILE=vault-break-glass
 export AWS_REGION=us-east-1
 export MSYS_NO_PATHCONV=1
 PARAM_NAME='/nwarila-platform/vault/talos-cluster/init-material'
-RECOVERY_THRESHOLD=3
+RECOVERY_THRESHOLD=2
 
 aws ssm get-parameter \
   --name "$PARAM_NAME" \
@@ -243,7 +244,7 @@ ATTEMPT_JSON="${ATTEMPT_RESPONSE%$'\n'*}"
 test "$ATTEMPT_STATUS" = "200"
 NONCE="$(printf '%s' "$ATTEMPT_JSON" | jq -er '.nonce')"
 REQUIRED="$(printf '%s' "$ATTEMPT_JSON" | jq -er '.required')"
-RECOVERY_THRESHOLD=3
+RECOVERY_THRESHOLD=2
 test "$REQUIRED" = "$RECOVERY_THRESHOLD"
 printf 'generate-root_started=true required=%s\n' "$REQUIRED"
 ```
@@ -252,7 +253,7 @@ printf 'generate-root_started=true required=%s\n' "$REQUIRED"
 ## Complete Generate-Root From The Real Quorum
 
 Submit exactly the threshold number of real recovery-key shares. For the
-ADR-0009 as-built threshold, that is three shares. The escrowed shares are raw
+ADR-0009 as-built threshold, that is two shares. The escrowed shares are raw
 base64 and are submitted directly to `sys/generate-root/update`; do not unwrap,
 decrypt, transform, print, or persist them.
 
@@ -291,7 +292,7 @@ export AWS_PROFILE=vault-break-glass
 export AWS_REGION=us-east-1
 export MSYS_NO_PATHCONV=1
 PARAM_NAME='/nwarila-platform/vault/talos-cluster/init-material'
-RECOVERY_THRESHOLD="${RECOVERY_THRESHOLD:-3}"
+RECOVERY_THRESHOLD="${RECOVERY_THRESHOLD:-2}"
 submitted=0
 
 while IFS= read -r share; do
@@ -411,7 +412,7 @@ Final pass criteria:
 - Step-156/ADR-0019 negative-control evidence was accepted, or a separately
   reviewed isolated no-directive scratch returned HTTP 403 for unauthenticated
   `generate-root`.
-- The SSM read used `recovery_keys_b64` and submitted exactly three raw base64
+- The SSM read used `recovery_keys_b64` and submitted exactly two raw base64
   shares without printing or persisting them.
 - Generated root read `sys/mounts` and a reviewer-confirmed known-populated
   path from the restored snapshot without printing the secret value.
