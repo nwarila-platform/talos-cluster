@@ -39,7 +39,7 @@ mkdir -p "${WORK_DIR}"
 chmod 700 "${WORK_DIR}" 2>/dev/null || true
 TMPDIR="$(mktemp -d "${WORK_DIR}/tmp.XXXXXX")"
 
-host_path() {
+to_native_path() {
   if command -v cygpath >/dev/null 2>&1; then
     cygpath -w "$1"
   else
@@ -142,7 +142,7 @@ PY
 
 write_vault_ca_file() {
   VAULT_CA_FILE="${TMPDIR}/vault-ca.crt"
-  python - "$(host_path "${VAULT_CA_CONFIGMAP}")" "$(host_path "${VAULT_CA_FILE}")" <<'PY'
+  python - "$(to_native_path "${VAULT_CA_CONFIGMAP}")" "$(to_native_path "${VAULT_CA_FILE}")" <<'PY'
 import pathlib
 import sys
 
@@ -205,7 +205,7 @@ live_api() {
   VAULT_ADDR="https://127.0.0.1:${PF_PORT}" \
   VAULT_TOKEN_API="${token}" \
   VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY}" \
-  VAULT_CACERT="$(host_path "${VAULT_CA_FILE}")" \
+  VAULT_CACERT="$(to_native_path "${VAULT_CA_FILE}")" \
   python - "${method}" "${path}" "${payload_file}" "${output_file}" <<'PY'
 import json
 import os
@@ -304,7 +304,7 @@ PY
 }
 
 scratch_root() {
-  python - "$(host_path "${INIT_OUT}")" <<'PY'
+  python - "$(to_native_path "${INIT_OUT}")" <<'PY'
 import json
 import pathlib
 import sys
@@ -641,7 +641,7 @@ YAML
 
 cleanup_success_transients() {
   cleanup_sensitive_transients
-  python - "$(host_path "${SNAPSHOT_FILE}")" "$(host_path "${INIT_OUT}")" <<'PY'
+  python - "$(to_native_path "${SNAPSHOT_FILE}")" "$(to_native_path "${INIT_OUT}")" <<'PY'
 import pathlib
 import sys
 

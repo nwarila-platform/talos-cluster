@@ -68,32 +68,17 @@ Do not run `wsl --shutdown` or `wsl --terminate` during normal setup. The boot
 command takes effect on the next distro start, and shutting the distro down
 would drop the currently live backup target.
 
-## Windows Persistence Task
+## Windows Persistence Task Retired
 
-After the WSL setup script has run, the owner should run this file once from an
-elevated Windows session:
+The Windows-only `scripts\dr\Setup-NFS-Persistence.bat` helper has been
+removed. It registered the `WSL-NFS-Backup-Server` Scheduled Task for the
+interim WSL NFS target on the owner's workstation.
 
-```text
-scripts\dr\Setup-NFS-Persistence.bat
-```
-
-The batch file self-elevates when needed and registers Scheduled Task
-`WSL-NFS-Backup-Server` idempotently by unregistering any prior task with the
-same name first.
-
-The task:
-
-- triggers at owner logon;
-- runs with highest privileges as the interactive owner;
-- runs `%WINDIR%\System32\wsl.exe -d Ubuntu-24.04 -u root -- bash -lc "..."`;
-- starts `/usr/local/sbin/nwarila-nfs-interim-start` when present;
-- falls back to the inline NFS start sequence if the helper is missing;
-- ends the WSL command with `exec sleep infinity` to keep the distro alive;
-- has no execution time limit;
-- restarts every minute on failure;
-- does not stop on idle end.
-
-The batch file must print `SUCCESS` before the owner closes it.
+Do not recreate that path for new recovery work. The interim WSL NFS
+persistence path is retired in favor of the Synology backup target. If an
+existing workstation task still exists during migration, treat it as legacy
+state to keep stable until the Synology target is proven and no active restores
+need the workstation copy.
 
 ## Firewall Rule
 
@@ -147,7 +132,8 @@ owner workstation or NAS.
 Use these checks after setup, after workstation reboot, and after Synology
 migration.
 
-On Windows, confirm the task exists:
+Legacy only: on Windows, confirm any pre-existing task still exists while the
+interim workstation target remains in service:
 
 ```powershell
 Get-ScheduledTask -TaskName WSL-NFS-Backup-Server
