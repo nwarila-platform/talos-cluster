@@ -65,6 +65,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0017](repo/0017-fold-vault-into-talos-cluster-as-a-platform-service.md) | Fold Vault into talos-cluster as a platform service | Accepted | 2026-06-15 | Fold Vault out of the retired `deploy-vault` deploy repo and into `apps/vault` while retaining the `deploy-vault` namespace envelope. |
 | [0018](repo/0018-encrypt-pod-to-pod-traffic-with-cilium-wireguard.md) | Encrypt pod-to-pod traffic with Cilium WireGuard | Accepted | 2026-06-21 | Enable Cilium WireGuard transparent encryption for pod-to-pod traffic with MTU 1380 and node encryption disabled, closing the node-underlay sniff/MITM threat. |
 | [0019](repo/0019-enable-tokenless-vault-generate-root.md) | Keep token-less Vault generate-root in recovery configs only | Accepted | 2026-07-01 | Keep `enable_unauthenticated_access = ["generate-root"]` out of live base while allowing scratch/replacement recovery configs to mint a fresh root from the recovery-key quorum. |
+| [0020](repo/0020-automate-vault-restore-validation.md) | Automate Vault Restore Validation | Proposed | 2026-07-08 | Propose recurring scratch-only Vault restore validation that uses the recovery-key quorum, proves decrypted data access, records RTO and evidence, and destroys scratch resources. |
 
 ### Imported Vault ADRs
 

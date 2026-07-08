@@ -307,6 +307,7 @@
 !/docs/decision-records/repo/0017-fold-vault-into-talos-cluster-as-a-platform-service.md
 !/docs/decision-records/repo/0018-encrypt-pod-to-pod-traffic-with-cilium-wireguard.md
 !/docs/decision-records/repo/0019-enable-tokenless-vault-generate-root.md
+!/docs/decision-records/repo/0020-automate-vault-restore-validation.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
