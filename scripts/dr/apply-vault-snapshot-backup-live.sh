@@ -23,6 +23,10 @@ TMPDIR="$(mktemp -d)"
 PF_PID=""
 VAULT_CA_FILE="${TMPDIR}/vault-ca.crt"
 
+to_native_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
+
 cleanup() {
   kubectl delete job -n dr-backup vault-snapshot-backup-proof --ignore-not-found --wait=false >/dev/null 2>&1 || true
   if [[ -n "${PF_PID}" ]] && kill -0 "${PF_PID}" >/dev/null 2>&1; then
@@ -83,7 +87,7 @@ PY
 }
 
 write_vault_ca_file() {
-  python - "$(cygpath -w "${VAULT_CA_CONFIGMAP}")" "$(cygpath -w "${VAULT_CA_FILE}")" <<'PY'
+  python - "$(to_native_path "${VAULT_CA_CONFIGMAP}")" "$(to_native_path "${VAULT_CA_FILE}")" <<'PY'
 import pathlib
 import sys
 
@@ -127,7 +131,7 @@ vault_api() {
   VAULT_ADDR="https://127.0.0.1:${PF_PORT}" \
   VAULT_TOKEN="${ADMIN_TOKEN}" \
   VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY}" \
-  VAULT_CACERT="$(cygpath -w "${VAULT_CA_FILE}")" \
+  VAULT_CACERT="$(to_native_path "${VAULT_CA_FILE}")" \
   python - "${method}" "${path}" "${payload_file}" <<'PY'
 import json
 import os
@@ -169,7 +173,7 @@ self_revoke_admin_token() {
   VAULT_ADDR="https://127.0.0.1:${PF_PORT}" \
   VAULT_TOKEN="${ADMIN_TOKEN}" \
   VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY}" \
-  VAULT_CACERT="$(cygpath -w "${VAULT_CA_FILE}")" \
+  VAULT_CACERT="$(to_native_path "${VAULT_CA_FILE}")" \
   VAULT_TLS_SERVER_NAME="vault.deploy-vault.svc.cluster.local" \
   vault token revoke -self >/dev/null
   echo "ADMIN_TOKEN_REVOKED_OK"
@@ -395,7 +399,7 @@ kubectl -n deploy-vault get pods \
   -l app.kubernetes.io/name=vault,app.kubernetes.io/component=server \
   -o json >"${TMPDIR}/vault-after.json"
 
-python - "$(cygpath -w "${TMPDIR}/vault-before.json")" "$(cygpath -w "${TMPDIR}/vault-after.json")" <<'PY'
+python - "$(to_native_path "${TMPDIR}/vault-before.json")" "$(to_native_path "${TMPDIR}/vault-after.json")" <<'PY'
 import json
 import sys
 

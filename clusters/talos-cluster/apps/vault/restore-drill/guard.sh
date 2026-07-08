@@ -8,7 +8,10 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # kubectl is a Windows binary; hand it a Windows path when running under MSYS.
-if command -v cygpath >/dev/null 2>&1; then DIR_K="$(cygpath -w "$DIR")"; else DIR_K="$DIR"; fi
+to_native_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
+DIR_K="$(to_native_path "$DIR")"
 RENDER="$(kubectl kustomize "$DIR_K")"
 # Effective render with comment lines stripped (both YAML comments and comments
 # embedded in the vault.hcl block scalar). The isolation invariants are about

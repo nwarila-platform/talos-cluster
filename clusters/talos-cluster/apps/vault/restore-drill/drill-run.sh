@@ -17,7 +17,10 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if command -v cygpath >/dev/null 2>&1; then DIR_K="$(cygpath -w "$DIR")"; else DIR_K="$DIR"; fi
+to_native_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
+DIR_K="$(to_native_path "$DIR")"
 PF_PORT="${PF_PORT:-8300}"
 INIT_OUT="${INIT_OUT:-/c/tmp/vault-drill-init.json}"   # transient; outside repo
 LIVE_VAULT_CLUSTERIP="${LIVE_VAULT_CLUSTERIP:-10.101.98.168}"
