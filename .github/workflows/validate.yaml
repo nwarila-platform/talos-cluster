@@ -151,6 +151,9 @@ jobs:
       - name: "Guard: live Vault generate-root stays scratch-only"
         run: bash scripts/check-live-vault-config-invariants.sh
 
+      - name: "Guard: Vault restore-validator boundary"
+        run: bash scripts/check-vault-restore-validator-boundaries.sh
+
       - name: Check rendered resource namespaces
         run: |
           set -euo pipefail

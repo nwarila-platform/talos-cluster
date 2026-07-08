@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-restore-validator-default-deny
+  namespace: dr-validate
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: boundary
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
