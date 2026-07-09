@@ -66,6 +66,11 @@ APPROVED_RESTORE_DRIVER_IMAGE = (
 )
 RESTORE_DRIVER_COMMAND = ["/bin/bash", "/opt/vault-restore-validator/restore-driver.sh"]
 RESTORE_DRIVER_SCRIPT_VOLUME = "dr-restore-driver-script"
+DRIVER_SELECTOR_LABELS = {
+    "app.kubernetes.io/name": "vault-restore-validator",
+    "app.kubernetes.io/component": "restore-driver",
+    "io.kubernetes.pod.namespace": DR_VALIDATE_NS,
+}
 DESTRUCTIVE_LONGHORN_VERBS = {
     "create",
     "update",
@@ -567,6 +572,50 @@ def assert_no_unapproved_destructive_longhorn_roles(role_documents, source_label
         )
 
 
+def normalize_cilium_selector_key(key):
+    return key.removeprefix("k8s:") if isinstance(key, str) else key
+
+
+def could_select_driver(endpoint_selector):
+    if not isinstance(endpoint_selector, dict):
+        return True
+
+    match_labels = endpoint_selector.get("matchLabels") or {}
+    if not isinstance(match_labels, dict):
+        return True
+
+    match_expressions = endpoint_selector.get("matchExpressions")
+    if not match_labels and not match_expressions:
+        return True
+    if match_expressions is not None:
+        return True
+
+    return all(
+        DRIVER_SELECTOR_LABELS.get(normalize_cilium_selector_key(key)) == value
+        for key, value in match_labels.items()
+    )
+
+
+def assert_no_ccnp_egress_selects_driver(documents, source_label):
+    for document in documents:
+        if document.get("kind") != "CiliumClusterwideNetworkPolicy":
+            continue
+
+        for rule in [document.get("spec") or {}] + list_value(document.get("specs")):
+            if not isinstance(rule, dict):
+                continue
+            if not rule.get("egress"):
+                continue
+            if not could_select_driver(rule.get("endpointSelector") or {}):
+                continue
+
+            add_error(
+                f"{source_label} CiliumClusterwideNetworkPolicy {name(document) or '<unnamed>'} "
+                "must not grant egress to the restore-driver pods "
+                "(only the approved kube-apiserver CNP may)"
+            )
+
+
 def normalize_shell_continuations(script):
     logical_lines = []
     current = ""
@@ -751,6 +800,7 @@ for role in roles:
 assert_guarded_service_account_bindings(binding_scan_documents, binding_scan_source)
 assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
 assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_scan_source)
+assert_no_ccnp_egress_selects_driver(binding_scan_documents, binding_scan_source)
 
 noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", DR_VALIDATE_NS)
 if noop_role is not None and rules_for(noop_role) != []:
@@ -884,6 +934,8 @@ if len(cnps) != 1:
 cnp = assert_exactly_one("CiliumNetworkPolicy", "dr-orchestrator-egress", DR_VALIDATE_NS)
 if cnp is not None:
     spec = cnp.get("spec") or {}
+    if "specs" in cnp:
+        add_error("approved egress CNP must not use specs; egress must be declared only in spec")
     endpoint_selector = spec.get("endpointSelector") or {}
     if (endpoint_selector.get("matchLabels") or {}) != {
         "app.kubernetes.io/name": "vault-restore-validator",
