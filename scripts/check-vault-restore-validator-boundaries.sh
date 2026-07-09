@@ -47,6 +47,12 @@ LONGHORN_NS = "longhorn-system"
 DR_ORCHESTRATOR = "dr-orchestrator"
 DR_GENERATE_ROOT = "dr-generate-root"
 DR_ORCHESTRATOR_USER = "system:serviceaccount:dr-validate:dr-orchestrator"
+DR_GENERATE_ROOT_USER = "system:serviceaccount:dr-validate:dr-generate-root"
+GUARDED_REACHING_GROUPS = {
+    "system:authenticated",
+    "system:serviceaccounts",
+    "system:serviceaccounts:dr-validate",
+}
 VAP_NAME = "dr-orchestrator-longhorn-volume-allowlist"
 APPROVED_RESTORE_DRIVER_IMAGE = (
     "docker.io/bitnami/kubectl@"
@@ -346,11 +352,20 @@ def binding_key(binding):
     return (kind, namespace(binding), name(binding))
 
 
-def subject_is_guarded_service_account(subject):
-    return (
-        subject.get("kind") == "ServiceAccount"
-        and subject.get("name") in {DR_ORCHESTRATOR, DR_GENERATE_ROOT}
-    )
+def subject_reaches_guarded_sa(subject):
+    subject_kind = subject.get("kind")
+    subject_name = subject.get("name")
+    if subject_kind == "ServiceAccount":
+        return subject_name in {DR_ORCHESTRATOR, DR_GENERATE_ROOT}
+    if subject_kind == "User":
+        return subject_name in {DR_ORCHESTRATOR_USER, DR_GENERATE_ROOT_USER}
+    if subject_kind == "Group":
+        return subject_name in GUARDED_REACHING_GROUPS
+    return False
+
+
+def subject_label(subject):
+    return f"{subject.get('kind', '<unknown>')} {subject.get('name', '<unnamed>')}"
 
 
 def binding_location(binding):
@@ -369,18 +384,18 @@ def assert_guarded_service_account_bindings(binding_documents, source_label):
         guarded_subjects = [
             subject
             for subject in binding.get("subjects") or []
-            if subject_is_guarded_service_account(subject)
+            if subject_reaches_guarded_sa(subject)
         ]
         if not guarded_subjects:
             continue
 
         key = binding_key(binding)
         expected = APPROVED_GUARDED_BINDINGS.get(key)
-        guarded_names = ", ".join(sorted({subject.get("name", "") for subject in guarded_subjects}))
+        guarded_labels = ", ".join(sorted({subject_label(subject) for subject in guarded_subjects}))
         if expected is None:
             add_error(
-                f"{source_label} {binding_location(binding)} must not bind guarded ServiceAccount(s) "
-                f"{guarded_names}; only the approved restore-validator bindings may name them"
+                f"{source_label} {binding_location(binding)} must not bind guarded subject(s) "
+                f"{guarded_labels}; only the approved restore-validator bindings may name them"
             )
             continue
 
@@ -392,7 +407,7 @@ def assert_guarded_service_account_bindings(binding_documents, source_label):
         if (binding.get("subjects") or []) != expected["subjects"]:
             add_error(
                 f"{source_label} {binding_location(binding)} must bind only the approved guarded "
-                "ServiceAccount subject"
+                f"ServiceAccount subject; found guarded subject(s) {guarded_labels}"
             )
 
 
@@ -547,13 +562,13 @@ roles_by_key = {role_key(role): role for role in roles}
 for binding in bindings:
     binding_name = name(binding)
     for subject in binding.get("subjects") or []:
-        if not subject_is_guarded_service_account(subject):
+        if not subject_reaches_guarded_sa(subject):
             continue
         subject_name = subject.get("name")
         if binding_key(binding) not in APPROVED_GUARDED_BINDINGS:
             add_error(
-                f"{binding.get('kind')}/{binding_name} must not bind {subject_name}; "
-                "only approved restore-validator bindings may name that ServiceAccount"
+                f"{binding.get('kind')}/{binding_name} must not bind {subject_label(subject)}; "
+                "only approved restore-validator bindings may name guarded subjects"
             )
         role = roles_by_key.get(role_ref_key(binding))
         if role is None:
