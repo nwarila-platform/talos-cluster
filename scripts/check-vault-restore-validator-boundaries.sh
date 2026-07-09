@@ -188,6 +188,16 @@ EXPECTED_RESTORE_DRIVER_MOUNTS = [
     },
     {"name": "tmp", "mountPath": "/tmp"},
 ]
+EXPECTED_CONTAINER_ENV = [
+    {"name": "HOME", "value": "/tmp"},
+    {"name": "GIT_SHA", "value": "unknown"},
+    {"name": "POD_NAME", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
+    {
+        "name": "POD_NAMESPACE",
+        "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+    },
+    {"name": "POD_UID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}}},
+]
 CLUSTER_SCOPED_KINDS = {
     "Namespace",
     "ValidatingAdmissionPolicy",
@@ -920,6 +930,29 @@ if cronjob is not None:
             add_error("CronJob/dr-restore-driver command must execute the mounted restore-driver.sh with /bin/bash")
         if container.get("image") != APPROVED_RESTORE_DRIVER_IMAGE:
             add_error("CronJob/dr-restore-driver image must match the approved digest exactly")
+        container_env = container.get("env") or []
+        if (
+            len(container_env) != len(EXPECTED_CONTAINER_ENV)
+            or canonical_object_set(container_env) != canonical_object_set(
+                EXPECTED_CONTAINER_ENV
+            )
+        ):
+            add_error(
+                "CronJob/dr-restore-driver container env must be exactly the approved "
+                "provenance vars — no secretKeyRef or extra vars"
+            )
+        if container.get("envFrom"):
+            add_error("CronJob/dr-restore-driver container must not use envFrom")
+        if container.get("lifecycle"):
+            add_error("CronJob/dr-restore-driver container must not define lifecycle hooks")
+        for probe_name in ("livenessProbe", "readinessProbe", "startupProbe"):
+            if probe_name in container:
+                add_error(
+                    "CronJob/dr-restore-driver container must not define probes — "
+                    f"{probe_name} is an arbitrary-command surface"
+                )
+        if container.get("args"):
+            add_error("CronJob/dr-restore-driver command is pinned; args are forbidden")
 
         container_security = container.get("securityContext") or {}
         if container_security.get("allowPrivilegeEscalation") is not False:
