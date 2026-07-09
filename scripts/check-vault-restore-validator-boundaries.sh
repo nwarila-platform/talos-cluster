@@ -383,6 +383,18 @@ def role_key(role):
     return (kind, namespace(role), name(role))
 
 
+def role_location(role):
+    kind = role.get("kind", "<unknown>")
+    if kind == "ClusterRole":
+        role_id = f"{kind}/{name(role)}"
+    else:
+        role_id = f"{kind}/{namespace(role)}/{name(role)}"
+    source_path = role.get("_guard_source_path")
+    if source_path:
+        return f"{role_id} ({source_path})"
+    return role_id
+
+
 def role_ref_key(binding):
     role_ref = binding.get("roleRef") or {}
     role_ref_kind = role_ref.get("kind")
@@ -529,6 +541,19 @@ def assert_guarded_service_account_workloads(workload_documents, source_label):
             f"{source_label} {workload_location(workload)} runs as guarded "
             f"restore-driver ServiceAccount {sa}; only the approved suspended "
             "CronJob may run as a guarded restore-driver ServiceAccount"
+        )
+
+
+def assert_no_unapproved_destructive_longhorn_roles(role_documents, source_label):
+    for role in role_documents:
+        if role.get("kind") not in {"Role", "ClusterRole"}:
+            continue
+        if not role_grants_unapproved_longhorn_destructive(role):
+            continue
+
+        add_error(
+            f"{source_label} {role_location(role)}: no manifest in the tree may grant "
+            "destructive longhorn.io access except the approved scratch-scoped restore Role"
         )
 
 
@@ -715,6 +740,7 @@ for role in roles:
 
 assert_guarded_service_account_bindings(binding_scan_documents, binding_scan_source)
 assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
+assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_scan_source)
 
 noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", DR_VALIDATE_NS)
 if noop_role is not None and rules_for(noop_role) != []:
