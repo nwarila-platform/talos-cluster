@@ -1,0 +1,62 @@
+# ClusterPolicy: protect-live-vault-longhorn-volume
+#
+# Defense in depth for ADR-0020 restore validation. The restore driver may
+# create and clean up only its fixed scratch Longhorn volume; it must never
+# create, mutate, or delete live Vault data volumes.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-live-vault-longhorn-volume
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Protect live Vault Longhorn volumes
+    policies.kyverno.io/category: Disaster Recovery
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Volume
+    policies.kyverno.io/description: >-
+      Blocks the Vault restore-validator orchestrator from creating, mutating,
+      or deleting Longhorn Volume resources whose names start with data-vault.
+      RBAC also scopes destructive Longhorn volume verbs to the fixed scratch
+      restore volume name.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookConfiguration:
+    # Ignore (not Fail): the RBAC resourceNames scoping is the fail-closed primary
+    # control; a Kyverno webhook outage must not hard-block operations. Combined with
+    # the subject-scoped match below, Longhorn's own hot-path Volume operations never
+    # traverse this webhook at all.
+    failurePolicy: Ignore
+  rules:
+    - name: deny-dr-orchestrator-live-vault-volume-mutation
+      match:
+        any:
+          - resources:
+              kinds:
+                - longhorn.io/v1beta2/Volume
+              namespaces:
+                - longhorn-system
+              operations:
+                - CREATE
+                - UPDATE
+                - DELETE
+            # Fire this webhook ONLY for the restore-validator orchestrator, so
+            # Longhorn's frequent Volume status writes are not intercepted.
+            subjects:
+              - kind: ServiceAccount
+                name: dr-orchestrator
+                namespace: dr-validate
+      validate:
+        message: >-
+          dr-orchestrator may not create, update, or delete live data-vault
+          Longhorn volumes. Restore validation must target only
+          dr-validate-vault-restore.
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.userInfo.username }}"
+                operator: Equals
+                value: system:serviceaccount:dr-validate:dr-orchestrator
+              - key: "{{ regex_match('^data-vault', request.object.metadata.name || request.oldObject.metadata.name || '') }}"
+                operator: Equals
+                value: true

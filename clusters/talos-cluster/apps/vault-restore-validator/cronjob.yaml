@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dr-restore-driver
+  namespace: dr-validate
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+spec:
+  suspend: true
+  schedule: "0 6 31 2 *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vault-restore-validator
+            app.kubernetes.io/component: restore-driver
+        spec:
+          serviceAccountName: dr-orchestrator
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 240
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: restore-driver
+              # INTERIM third-party image (ADR-0020 slice 2). Digest-pinned; bitnami/kubectl
+              # is debian-based (bash + GNU coreutils for `date -d` + kubectl). Pinned by
+              # digest only because bitnami's versioned kubectl tags are unavailable
+              # post-migration. To be replaced by the signed first-party
+              # ghcr.io/nwarila/dr-restore-driver in the image-supply-chain slice.
+              image: docker.io/bitnami/kubectl@sha256:558420daf32bbc382e3e9af4537f4073085b336ddd47399a3b70e70087115978
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/bash
+                - /opt/vault-restore-validator/restore-driver.sh
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: GIT_SHA
+                  value: unknown
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: POD_UID
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.uid
+              volumeMounts:
+                - name: restore-driver-script
+                  mountPath: /opt/vault-restore-validator/restore-driver.sh
+                  subPath: restore-driver.sh
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+          volumes:
+            - name: restore-driver-script
+              configMap:
+                name: dr-restore-driver-script
+                defaultMode: 0555
+            - name: tmp
+              emptyDir: {}

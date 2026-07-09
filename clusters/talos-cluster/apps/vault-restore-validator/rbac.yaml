@@ -5,25 +5,8 @@ metadata:
   namespace: dr-validate
   labels:
     app.kubernetes.io/name: vault-restore-validator
-    app.kubernetes.io/component: boundary
+    app.kubernetes.io/component: recovery-quorum
 rules: []
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: dr-orchestrator-noop
-  namespace: dr-validate
-  labels:
-    app.kubernetes.io/name: vault-restore-validator
-    app.kubernetes.io/component: orchestrator
-subjects:
-  - kind: ServiceAccount
-    name: dr-orchestrator
-    namespace: dr-validate
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: vault-restore-validator-noop
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -41,3 +24,96 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: vault-restore-validator-noop
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dr-orchestrator-result-writer
+  namespace: dr-validate
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    resourceNames:
+      - dr-restore-driver-result
+    verbs:
+      - get
+      - create
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dr-orchestrator-result-writer
+  namespace: dr-validate
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+subjects:
+  - kind: ServiceAccount
+    name: dr-orchestrator
+    namespace: dr-validate
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dr-orchestrator-result-writer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dr-orchestrator-longhorn-restore
+  namespace: longhorn-system
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+rules:
+  - apiGroups:
+      - longhorn.io
+    resources:
+      - backups
+      - backupvolumes
+      - backuptargets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - longhorn.io
+    resources:
+      - volumes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+  - apiGroups:
+      - longhorn.io
+    resources:
+      - volumes
+    resourceNames:
+      - dr-validate-vault-restore
+    verbs:
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dr-orchestrator-longhorn-restore
+  namespace: longhorn-system
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+subjects:
+  - kind: ServiceAccount
+    name: dr-orchestrator
+    namespace: dr-validate
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dr-orchestrator-longhorn-restore

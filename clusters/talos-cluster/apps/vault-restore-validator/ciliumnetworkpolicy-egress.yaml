@@ -1,0 +1,16 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: dr-orchestrator-egress
+  namespace: dr-validate
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault-restore-validator
+      app.kubernetes.io/component: restore-driver
+  egress:
+    - toEntities:
+        - kube-apiserver

@@ -2,7 +2,7 @@
 
 | Field          | Value                                   |
 | -------------- | --------------------------------------- |
-| Status         | Proposed                                |
+| Status         | Accepted                                |
 | Date           | 2026-07-08                              |
 | Authors        | Nick Warila (@NWarila), Codex implementation support |
 | Decision-maker | Nick Warila (sole portfolio maintainer) |
@@ -19,9 +19,9 @@ Vault backup into an isolated scratch workload, recover access with the escrowed
 recovery-key quorum, prove the restored data is usable, record recovery time,
 emit tamper-evident results, and destroy the scratch environment.
 
-This ADR authorizes the design direction only after review. It does not approve
-live Vault changes, live generate-root, production restore, or any cluster
-mutation beyond future narrowly scoped implementation PRs.
+This ADR authorizes the staged design direction. It does not approve live Vault
+changes, live generate-root, production restore, or any cluster mutation beyond
+future narrowly scoped implementation PRs.
 
 ## Context and Problem Statement
 
@@ -177,6 +177,19 @@ ADR-0014 before this repository introduces a new AWS/S3 operational backup path.
 
 Each step should land in a separate small PR or tightly related PR group with
 focused validation evidence.
+
+### Implementation Notes
+
+Slice 2 is implemented as a suspended `dr-restore-driver` CronJob in
+`clusters/talos-cluster/apps/vault-restore-validator`. The slice restores the
+newest eligible Vault Longhorn backup into the fixed scratch volume
+`dr-validate-vault-restore`, performs only Longhorn metadata and size checks,
+cleans up the scratch volume, and records a non-secret result ConfigMap.
+
+The CronJob ships with `spec.suspend: true` and an inert Feb-31 schedule
+placeholder. Scratch Vault, recovery shares, tokenless generate-root,
+`enable_unauthenticated_access`, Vault data sampling, signed results, and any
+automatic schedule remain deferred to later slices.
 
 ## Verification
 
