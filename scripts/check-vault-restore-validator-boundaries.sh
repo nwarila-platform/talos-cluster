@@ -5,28 +5,34 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-APP_DIR="clusters/talos-cluster/apps/vault-restore-validator"
-APPS_DIR="clusters/talos-cluster/apps"
-PARENT_KUSTOMIZATION="clusters/talos-cluster/apps/kustomization.yaml"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT_DIR="clusters/talos-cluster"
+APP_DIR="${ROOT_DIR}/apps/vault-restore-validator"
+APPS_DIR="${ROOT_DIR}/apps"
+PARENT_KUSTOMIZATION="${ROOT_DIR}/apps/kustomization.yaml"
 
-cd "${ROOT_DIR}"
+cd "${REPO_ROOT}"
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "${tmpdir}"' EXIT
 
+root_rendered="${tmpdir}/root.yaml"
+root_render_error="${tmpdir}/root-kustomize.err"
 app_rendered="${tmpdir}/validator.yaml"
-apps_rendered="${tmpdir}/apps.yaml"
-apps_render_error="${tmpdir}/apps-kustomize.err"
 
-kubectl kustomize "${APP_DIR}" >"${app_rendered}"
-if kubectl kustomize "${APPS_DIR}" >"${apps_rendered}" 2>"${apps_render_error}"; then
-    apps_render_status=0
+if kubectl kustomize "${ROOT_DIR}" >"${root_rendered}" 2>"${root_render_error}"; then
+    root_render_status=0
 else
-    apps_render_status=$?
+    root_render_status=$?
 fi
 
-python3 - "${app_rendered}" "${PARENT_KUSTOMIZATION}" "${apps_rendered}" "${apps_render_status}" "${apps_render_error}" "${APPS_DIR}" <<'PY'
+if [[ "${root_render_status}" -ne 0 && "${GUARD_OFFLINE:-}" == "1" ]]; then
+    kubectl kustomize "${APP_DIR}" >"${app_rendered}"
+else
+    : >"${app_rendered}"
+fi
+
+python3 - "${root_rendered}" "${root_render_status}" "${app_rendered}" "${PARENT_KUSTOMIZATION}" "${APPS_DIR}" "${ROOT_DIR}" <<'PY'
 import json
 import os
 import re
@@ -34,12 +40,12 @@ import sys
 
 import yaml
 
-app_rendered_path = sys.argv[1]
-parent_kustomization = sys.argv[2]
-apps_rendered_path = sys.argv[3]
-apps_render_status = int(sys.argv[4])
-apps_render_error_path = sys.argv[5]
-apps_dir = sys.argv[6]
+root_rendered_path = sys.argv[1]
+root_render_status = int(sys.argv[2])
+app_rendered_path = sys.argv[3]
+parent_kustomization = sys.argv[4]
+apps_dir = sys.argv[5]
+flux_root_dir = sys.argv[6]
 
 SCRATCH = "dr-validate-vault-restore"
 DR_VALIDATE_NS = "dr-validate"
@@ -191,14 +197,14 @@ def load_documents(path):
     ]
 
 
-app_text = load_text(app_rendered_path)
-app_documents = load_documents(app_rendered_path)
-apps_render_error = load_text(apps_render_error_path)
-apps_documents = load_documents(apps_rendered_path) if apps_render_status == 0 else []
-
 with open(parent_kustomization, encoding="utf-8") as handle:
     parent = yaml.safe_load(handle)
 
+app_text = ""
+app_documents = []
+root_documents = []
+binding_scan_documents = []
+binding_scan_source = ""
 errors = []
 warnings = []
 
@@ -211,6 +217,16 @@ def add_warning(message):
     warnings.append(message)
 
 
+def exit_if_errors():
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    if errors:
+        print("Vault restore-validator restore-driver guard failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        sys.exit(1)
+
+
 def metadata(document):
     return document.get("metadata") or {}
 
@@ -221,6 +237,26 @@ def name(document):
 
 def namespace(document):
     return metadata(document).get("namespace", "")
+
+
+def in_validator_footprint(document):
+    document_metadata = metadata(document)
+    document_name = name(document)
+    return (
+        document_metadata.get("namespace") == DR_VALIDATE_NS
+        or (document.get("kind") == "Namespace" and document_name == DR_VALIDATE_NS)
+        or (
+            document_name == VAP_NAME
+            and document.get("kind") in {
+                "ValidatingAdmissionPolicy",
+                "ValidatingAdmissionPolicyBinding",
+            }
+        )
+        or (
+            document_metadata.get("namespace") == LONGHORN_NS
+            and document_name.startswith("dr-orchestrator-longhorn-restore")
+        )
+    )
 
 
 def docs(kind=None, resource_name=None, resource_namespace=None):
@@ -430,31 +466,33 @@ def normalize_shell_continuations(script):
     return logical_lines
 
 
-def full_apps_render_blocked_by_remote_base(error):
-    remote_markers = (
-        "gateway-api",
-        "github.com/kubernetes-sigs/gateway-api",
-        "Could not resolve host: github.com",
-        "operation not permitted",
-    )
-    return "github.com" in error and any(marker in error for marker in remote_markers)
-
-
 resources = parent.get("resources") or []
 if "vault-restore-validator" not in resources:
     add_error("parent apps kustomization must reference vault-restore-validator")
 
-if apps_render_status != 0:
-    if full_apps_render_blocked_by_remote_base(apps_render_error):
-        add_warning(
-            "full apps kustomize render is blocked locally by the remote Gateway API base; "
-            "falling back to source-tree RBAC binding enumeration"
-        )
-    else:
-        add_error(
-            "full apps kustomize render failed; cannot prove whole-apps-tree binding scope: "
-            f"{apps_render_error.strip()}"
-        )
+if root_render_status == 0:
+    root_documents = load_documents(root_rendered_path)
+    app_documents = [
+        document for document in root_documents if in_validator_footprint(document)
+    ]
+    app_text = yaml.safe_dump_all(app_documents, sort_keys=True)
+    binding_scan_documents = root_documents
+    binding_scan_source = "Flux root render"
+elif os.environ.get("GUARD_OFFLINE") == "1":
+    add_warning(
+        "GUARD_OFFLINE — Flux-root render skipped; kustomize transforms/top-level "
+        "patches NOT verified; this run is NOT authoritative"
+    )
+    app_text = load_text(app_rendered_path)
+    app_documents = load_documents(app_rendered_path)
+    binding_scan_documents = source_documents_under(apps_dir)
+    binding_scan_source = "apps source tree"
+else:
+    add_error(
+        f"cannot render the Flux root {flux_root_dir} (CI must verify the deployed state); "
+        "set GUARD_OFFLINE=1 only for local non-authoritative checks"
+    )
+    exit_if_errors()
 
 if "enable_unauthenticated_access" in app_text:
     add_error("validator render must not include enable_unauthenticated_access")
@@ -590,10 +628,7 @@ for role in roles:
             f"{role.get('kind')}/{name(role)} must not grant unapproved destructive Longhorn access"
         )
 
-if apps_render_status == 0:
-    assert_guarded_service_account_bindings(apps_documents, "full apps render")
-else:
-    assert_guarded_service_account_bindings(source_documents_under(apps_dir), "apps source tree")
+assert_guarded_service_account_bindings(binding_scan_documents, binding_scan_source)
 
 noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", DR_VALIDATE_NS)
 if noop_role is not None and rules_for(noop_role) != []:
@@ -798,14 +833,7 @@ if cronjob is not None:
 if "enable_unauthenticated_access" in app_text:
     add_error("rendered validator app must not contain generate-root recovery config")
 
-if errors:
-    print("Vault restore-validator restore-driver guard failed:", file=sys.stderr)
-    for error in errors:
-        print(f"- {error}", file=sys.stderr)
-    sys.exit(1)
-
-for warning in warnings:
-    print(f"warning: {warning}", file=sys.stderr)
+exit_if_errors()
 
 print("OK: Vault restore-validator restore-driver safety invariants hold")
 PY
