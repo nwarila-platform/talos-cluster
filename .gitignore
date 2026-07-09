@@ -130,6 +130,14 @@
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
 !/clusters/talos-cluster/apps/kyverno/release/helmrepository.yaml
 !/clusters/talos-cluster/apps/kyverno/release/kustomization.yaml
+!/clusters/talos-cluster/apps/longhorn/
+!/clusters/talos-cluster/apps/longhorn/kustomization.yaml
+!/clusters/talos-cluster/apps/longhorn/kustomization-flux.yaml
+!/clusters/talos-cluster/apps/longhorn/namespace.yaml
+!/clusters/talos-cluster/apps/longhorn/release/
+!/clusters/talos-cluster/apps/longhorn/release/helmrelease.yaml
+!/clusters/talos-cluster/apps/longhorn/release/helmrepository.yaml
+!/clusters/talos-cluster/apps/longhorn/release/kustomization.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/
 !/clusters/talos-cluster/apps/longhorn-vault-storage/kustomization.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/node-tags.yaml
@@ -318,6 +326,7 @@
 !/docs/decision-records/repo/0019-enable-tokenless-vault-generate-root.md
 !/docs/decision-records/repo/0020-automate-vault-restore-validation.md
 !/docs/decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md
+!/docs/decision-records/repo/0022-longhorn-under-flux-gitops.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/

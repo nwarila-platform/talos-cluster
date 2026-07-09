@@ -239,13 +239,19 @@ live throughout, so cutover carries no backup gap.
   credentialed, TLS object endpoint is later preferred.
 - The old WSL target is retained and functional until the cutover is proven, then
   retired; the interim WSL setup docs and scripts are superseded by the runbook.
+- ADR-0022 realizes the previously aspirational "reconciled by Flux" claim for
+  Longhorn values. The live backup target is a runtime Longhorn `BackupTarget` CR
+  set out-of-band until that migration; Helm values seed it only at install.
 
 ## Confirmation
 
 This ADR is confirmed when all of the following are true:
 
 1. `addons/longhorn/values.yaml`, the `dr-backup` egress policy, and the Stage-1
-   runbook point at the Synology target and are reconciled by Flux.
+   runbook point at the Synology target and are reconciled by Flux. ADR-0022
+   realizes the Flux portion; the live backup target is a runtime Longhorn
+   `BackupTarget` CR set out-of-band until that migration, while Helm values seed
+   it only at install.
 2. Longhorn reports the backup target as available.
 3. A **new** Vault volume backup completes to the Synology after cutover (Longhorn
    Backup CR `Completed` and the backup files present under
@@ -287,6 +293,8 @@ None (current).
 - [ADR-0012](0012-vault-kms-auto-unseal-credential-delivery.md) - the KMS
   auto-unseal model a restored Vault volume depends on.
 - [ADR-0006](0006-etcd-snapshot-automation.md) - the sibling etcd Stage-1 tier.
+- [ADR-0022](0022-longhorn-under-flux-gitops.md) - adopts Longhorn's existing
+  Helm release into Flux so this ADR's GitOps claim becomes true.
 
 ## Compliance Notes
 

@@ -469,6 +469,7 @@ Flux owns the remaining Kubernetes platform addons under `clusters/talos-cluster
 - `postfinance/kubelet-csr-approver` `1.2.14`
 - `metrics-server` `3.13.0`
 - `kyverno` `3.8.1`
+- `longhorn` `1.11.2`
 - Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass`
 - namespace hardening and tenant envelopes
 
@@ -482,12 +483,21 @@ Flux's `Kustomization` points at `./clusters/talos-cluster`, so once the bootstr
 kubectl -n flux-system get gitrepositories,kustomizations
 kubectl -n kube-system get helmreleases.helm.toolkit.fluxcd.io
 kubectl -n kyverno get helmreleases.helm.toolkit.fluxcd.io
+kubectl -n longhorn-system get helmreleases.helm.toolkit.fluxcd.io
 kubectl get gatewayclass
 ```
 
 metrics-server now uses chart defaults and validates kubelet serving certificates against the cluster CA. The previous kubelet TLS bypass workaround is not part of the current values.
 
-**Longhorn storage** is still pinned in `cluster/config.env` as a manual Helm release pending Flux migration. Source the version instead of hardcoding it:
+**Longhorn storage** is now Flux-managed at `clusters/talos-cluster/apps/longhorn/`.
+The `longhorn` HelmRelease adopts the existing release, pins chart version
+`1.11.2`, and inlines values that mirror `addons/longhorn/values.yaml`.
+The `longhorn-system` namespace is declared with the privileged PodSecurity
+labels because Longhorn instance-manager and engine pods require privileged mode
+(hostPath and raw block-device access).
+
+The manual Helm path is retained only as break-glass or DR bootstrap context when
+Flux is unavailable. Normal operation must flow through the GitOps manifests:
 
 ```bash
 source cluster/config.env
@@ -510,7 +520,15 @@ helm install longhorn longhorn/longhorn \
     -f addons/longhorn/values.yaml
 ```
 
-The `values.yaml` makes `longhorn` the cluster's default `StorageClass` and sets `defaultDataPath: /var/mnt/longhorn` so Longhorn writes to the Talos `UserVolumeConfig` declared in `cluster/patches/volumes.yaml` (50–240 GiB carved out of every node's system disk). Vault uses the separate Flux-owned `longhorn-vault` StorageClass for 3-replica, hard node anti-affinity volumes. See [ADR-0007](docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md) and [ADR-0013](docs/decision-records/repo/0013-use-dedicated-vault-longhorn-storageclass.md) for the rationale behind these storage defaults.
+The `values.yaml` makes `longhorn` the cluster's default `StorageClass` and sets
+`defaultDataPath: /var/mnt/longhorn` so Longhorn writes to the Talos
+`UserVolumeConfig` declared in `cluster/patches/volumes.yaml` (50-240 GiB carved
+out of every node's system disk). Vault uses the separate Flux-owned
+`longhorn-vault` StorageClass for 3-replica, hard node anti-affinity volumes.
+See [ADR-0007](docs/decision-records/repo/0007-capture-longhorn-as-managed-addon.md),
+[ADR-0013](docs/decision-records/repo/0013-use-dedicated-vault-longhorn-storageclass.md),
+and [ADR-0022](docs/decision-records/repo/0022-longhorn-under-flux-gitops.md)
+for the rationale behind these storage defaults and the Flux adoption.
 
 ### Step 11: Verify Everything Works
 
