@@ -186,10 +186,26 @@ newest eligible Vault Longhorn backup into the fixed scratch volume
 `dr-validate-vault-restore`, performs only Longhorn metadata and size checks,
 cleans up the scratch volume, and records a non-secret result ConfigMap.
 
+The slice uses two separate controls for Longhorn Volume mutation. RBAC scopes
+`update`, `patch`, and `delete` on `volumes.longhorn.io` to the fixed scratch
+name. Kubernetes RBAC cannot scope `create` by name, so the fail-closed create
+control is the native `ValidatingAdmissionPolicy`
+`dr-orchestrator-longhorn-volume-allowlist`, which is scoped by
+`matchConditions` to `system:serviceaccount:dr-validate:dr-orchestrator` and
+allows only `dr-validate-vault-restore`. The earlier Kyverno
+`protect-live-vault-longhorn-volume` denylist was replaced because a
+denylist-backed external webhook with fail-open behavior is not an adequate
+primary create control for this invariant.
+
 The CronJob ships with `spec.suspend: true` and an inert Feb-31 schedule
 placeholder. Scratch Vault, recovery shares, tokenless generate-root,
 `enable_unauthenticated_access`, Vault data sampling, signed results, and any
 automatic schedule remain deferred to later slices.
+
+Known limitation: the scratch restore Volume currently has no Longhorn node or
+disk placement constraint. A restore run could place the scratch Volume on a
+`vault`-tagged disk and pressure live Vault replicas. A non-vault placement
+constraint is a prerequisite before enabling the scheduling slice.
 
 ## Verification
 

@@ -6,6 +6,5 @@ resources:
   - protect-source-minter.yaml
   - protect-vault-client-serviceaccount.yaml
   - protect-live-vault-config.yaml
-  - protect-live-vault-longhorn-volume.yaml
   - restrict-vso-org-pull-secrets.yaml
   - verify-image-signatures.yaml

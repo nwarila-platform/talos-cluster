@@ -1,0 +1,43 @@
+# RBAC cannot scope CREATE by name. This API-server-native admission policy is
+# the fail-closed create control for the restore driver: it allows the
+# dr-orchestrator ServiceAccount to create only the fixed scratch Longhorn
+# Volume. Because this runs in the API server, failurePolicy: Fail has no
+# external-webhook availability gap. The matchConditions scope the policy to the
+# single restore-driver ServiceAccount, so Longhorn's own Volume creates are not
+# constrained. RBAC still scopes update, patch, and delete to the scratch name.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: dr-orchestrator-longhorn-volume-allowlist
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["longhorn.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE"]
+        resources: ["volumes"]
+  matchConditions:
+    - name: only-dr-orchestrator
+      expression: "request.userInfo.username == 'system:serviceaccount:dr-validate:dr-orchestrator'"
+  validations:
+    - expression: "object.metadata.name == 'dr-validate-vault-restore'"
+      reason: Forbidden
+      message: "dr-orchestrator may only create the fixed scratch Longhorn volume dr-validate-vault-restore"
+    - expression: "object.spec.numberOfReplicas <= 1"
+      reason: Forbidden
+      message: "restore scratch volume may request at most one replica"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: dr-orchestrator-longhorn-volume-allowlist
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+spec:
+  policyName: dr-orchestrator-longhorn-volume-allowlist
+  validationActions: [Deny]

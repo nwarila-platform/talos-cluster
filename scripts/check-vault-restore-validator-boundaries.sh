@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 APP_DIR="clusters/talos-cluster/apps/vault-restore-validator"
-KYVERNO_POLICY_DIR="clusters/talos-cluster/apps/kyverno/policies"
+APPS_DIR="clusters/talos-cluster/apps"
 PARENT_KUSTOMIZATION="clusters/talos-cluster/apps/kustomization.yaml"
 
 cd "${ROOT_DIR}"
@@ -16,23 +16,160 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "${tmpdir}"' EXIT
 
 app_rendered="${tmpdir}/validator.yaml"
-kyverno_rendered="${tmpdir}/kyverno.yaml"
+apps_rendered="${tmpdir}/apps.yaml"
+apps_render_error="${tmpdir}/apps-kustomize.err"
 
 kubectl kustomize "${APP_DIR}" >"${app_rendered}"
-kubectl kustomize "${KYVERNO_POLICY_DIR}" >"${kyverno_rendered}"
+if kubectl kustomize "${APPS_DIR}" >"${apps_rendered}" 2>"${apps_render_error}"; then
+    apps_render_status=0
+else
+    apps_render_status=$?
+fi
 
-python3 - "${app_rendered}" "${kyverno_rendered}" "${PARENT_KUSTOMIZATION}" <<'PY'
+python3 - "${app_rendered}" "${PARENT_KUSTOMIZATION}" "${apps_rendered}" "${apps_render_status}" "${apps_render_error}" "${APPS_DIR}" <<'PY'
+import json
+import os
 import re
 import sys
 
 import yaml
 
 app_rendered_path = sys.argv[1]
-kyverno_rendered_path = sys.argv[2]
-parent_kustomization = sys.argv[3]
+parent_kustomization = sys.argv[2]
+apps_rendered_path = sys.argv[3]
+apps_render_status = int(sys.argv[4])
+apps_render_error_path = sys.argv[5]
+apps_dir = sys.argv[6]
 
 SCRATCH = "dr-validate-vault-restore"
+DR_VALIDATE_NS = "dr-validate"
+LONGHORN_NS = "longhorn-system"
+DR_ORCHESTRATOR = "dr-orchestrator"
+DR_GENERATE_ROOT = "dr-generate-root"
 DR_ORCHESTRATOR_USER = "system:serviceaccount:dr-validate:dr-orchestrator"
+VAP_NAME = "dr-orchestrator-longhorn-volume-allowlist"
+APPROVED_RESTORE_DRIVER_IMAGE = (
+    "docker.io/bitnami/kubectl@"
+    "sha256:558420daf32bbc382e3e9af4537f4073085b336ddd47399a3b70e70087115978"
+)
+RESTORE_DRIVER_COMMAND = ["/bin/bash", "/opt/vault-restore-validator/restore-driver.sh"]
+RESTORE_DRIVER_SCRIPT_VOLUME = "dr-restore-driver-script"
+DESTRUCTIVE_LONGHORN_VERBS = {
+    "create",
+    "update",
+    "patch",
+    "delete",
+    "deletecollection",
+}
+APPROVED_GUARDED_BINDINGS = {
+    ("RoleBinding", LONGHORN_NS, "dr-orchestrator-longhorn-restore"): {
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "dr-orchestrator-longhorn-restore",
+        },
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": DR_ORCHESTRATOR,
+                "namespace": DR_VALIDATE_NS,
+            }
+        ],
+    },
+    ("RoleBinding", DR_VALIDATE_NS, "dr-orchestrator-result-writer"): {
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "dr-orchestrator-result-writer",
+        },
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": DR_ORCHESTRATOR,
+                "namespace": DR_VALIDATE_NS,
+            }
+        ],
+    },
+    ("RoleBinding", DR_VALIDATE_NS, "dr-generate-root-noop"): {
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "vault-restore-validator-noop",
+        },
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": DR_GENERATE_ROOT,
+                "namespace": DR_VALIDATE_NS,
+            }
+        ],
+    },
+}
+APPROVED_LONGHORN_RULES = {
+    (
+        ("longhorn.io",),
+        ("backups", "backuptargets", "backupvolumes"),
+        ("get", "list", "watch"),
+        (),
+        (),
+    ),
+    (
+        ("longhorn.io",),
+        ("volumes",),
+        ("create", "get", "list", "watch"),
+        (),
+        (),
+    ),
+    (
+        ("longhorn.io",),
+        ("volumes",),
+        ("delete", "patch", "update"),
+        (SCRATCH,),
+        (),
+    ),
+}
+EXPECTED_VAP_RESOURCE_RULES = [
+    {
+        "apiGroups": ["longhorn.io"],
+        "apiVersions": ["*"],
+        "operations": ["CREATE"],
+        "resources": ["volumes"],
+    }
+]
+EXPECTED_POD_SECURITY_CONTEXT = {
+    "runAsNonRoot": True,
+    "runAsUser": 65532,
+    "runAsGroup": 65532,
+    "fsGroup": 65532,
+    "fsGroupChangePolicy": "OnRootMismatch",
+    "seccompProfile": {"type": "RuntimeDefault"},
+}
+EXPECTED_RESTORE_DRIVER_VOLUMES = [
+    {
+        "name": "restore-driver-script",
+        "configMap": {
+            "name": RESTORE_DRIVER_SCRIPT_VOLUME,
+            "defaultMode": 0o555,
+        },
+    },
+    {"name": "tmp", "emptyDir": {}},
+]
+EXPECTED_RESTORE_DRIVER_MOUNTS = [
+    {
+        "name": "restore-driver-script",
+        "mountPath": "/opt/vault-restore-validator/restore-driver.sh",
+        "subPath": "restore-driver.sh",
+        "readOnly": True,
+    },
+    {"name": "tmp", "mountPath": "/tmp"},
+]
+CLUSTER_SCOPED_KINDS = {
+    "Namespace",
+    "ValidatingAdmissionPolicy",
+    "ValidatingAdmissionPolicyBinding",
+    "ClusterRole",
+    "ClusterRoleBinding",
+}
 
 
 def load_text(path):
@@ -49,18 +186,23 @@ def load_documents(path):
 
 
 app_text = load_text(app_rendered_path)
-kyverno_text = load_text(kyverno_rendered_path)
 app_documents = load_documents(app_rendered_path)
-kyverno_documents = load_documents(kyverno_rendered_path)
+apps_render_error = load_text(apps_render_error_path)
+apps_documents = load_documents(apps_rendered_path) if apps_render_status == 0 else []
 
 with open(parent_kustomization, encoding="utf-8") as handle:
     parent = yaml.safe_load(handle)
 
 errors = []
+warnings = []
 
 
 def add_error(message):
     errors.append(message)
+
+
+def add_warning(message):
+    warnings.append(message)
 
 
 def metadata(document):
@@ -75,19 +217,16 @@ def namespace(document):
     return metadata(document).get("namespace", "")
 
 
-def labels(document):
-    return metadata(document).get("labels") or {}
-
-
-def docs(kind=None, resource_name=None, resource_namespace=None, source=None):
-    haystack = app_documents if source is None else source
-    selected = haystack
+def docs(kind=None, resource_name=None, resource_namespace=None):
+    selected = app_documents
     if kind is not None:
         selected = [document for document in selected if document.get("kind") == kind]
     if resource_name is not None:
         selected = [document for document in selected if name(document) == resource_name]
     if resource_namespace is not None:
-        selected = [document for document in selected if namespace(document) == resource_namespace]
+        selected = [
+            document for document in selected if namespace(document) == resource_namespace
+        ]
     return selected
 
 
@@ -99,12 +238,16 @@ def list_value(value):
     return value if isinstance(value, list) else []
 
 
-def has_resource(rule, resource):
-    return resource in list_value(rule.get("resources"))
+def normalized_list(value):
+    return tuple(sorted(str(item) for item in list_value(value)))
 
 
-def has_api_group(rule, api_group):
-    return api_group in list_value(rule.get("apiGroups"))
+def canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_object_set(values):
+    return {canonical_json(value) for value in values}
 
 
 def verbs(rule):
@@ -115,8 +258,62 @@ def resource_names(rule):
     return list_value(rule.get("resourceNames"))
 
 
-def assert_exactly_one(kind, resource_name, resource_namespace=None, source=None):
-    matches = docs(kind, resource_name, resource_namespace, source)
+def values_match(values, expected):
+    value_set = set(list_value(values))
+    return "*" in value_set or expected in value_set
+
+
+def rule_matches_longhorn_api_group(rule):
+    return values_match(rule.get("apiGroups"), "longhorn.io")
+
+
+def normalized_rbac_rule(rule):
+    return (
+        normalized_list(rule.get("apiGroups")),
+        normalized_list(rule.get("resources")),
+        normalized_list(rule.get("verbs")),
+        normalized_list(rule.get("resourceNames")),
+        normalized_list(rule.get("nonResourceURLs")),
+    )
+
+
+def matched_destructive_verbs(rule):
+    rule_verbs = verbs(rule)
+    if "*" in rule_verbs:
+        return set(DESTRUCTIVE_LONGHORN_VERBS)
+    return rule_verbs & DESTRUCTIVE_LONGHORN_VERBS
+
+
+def has_unapproved_longhorn_destructive(rule):
+    return (
+        rule_matches_longhorn_api_group(rule)
+        and bool(matched_destructive_verbs(rule))
+        and normalized_rbac_rule(rule) not in APPROVED_LONGHORN_RULES
+    )
+
+
+def role_grants_unapproved_longhorn_destructive(role):
+    return any(has_unapproved_longhorn_destructive(rule) for rule in rules_for(role))
+
+
+def source_documents_under(path):
+    documents = []
+    for root, _, files in os.walk(path):
+        for file_name in files:
+            if not file_name.endswith((".yaml", ".yml")):
+                continue
+            file_path = os.path.join(root, file_name)
+            try:
+                for document in load_documents(file_path):
+                    document["_guard_source_path"] = file_path
+                    documents.append(document)
+            except yaml.YAMLError as exc:
+                add_error(f"failed to parse YAML source {file_path}: {exc}")
+    return documents
+
+
+def assert_exactly_one(kind, resource_name, resource_namespace=None):
+    matches = docs(kind, resource_name, resource_namespace)
     if len(matches) != 1:
         ns_text = f" in namespace {resource_namespace}" if resource_namespace else ""
         add_error(f"expected exactly one {kind}/{resource_name}{ns_text}, found {len(matches)}")
@@ -124,9 +321,125 @@ def assert_exactly_one(kind, resource_name, resource_namespace=None, source=None
     return matches[0]
 
 
+def role_key(role):
+    kind = role.get("kind")
+    if kind == "ClusterRole":
+        return (kind, "", name(role))
+    return (kind, namespace(role), name(role))
+
+
+def role_ref_key(binding):
+    role_ref = binding.get("roleRef") or {}
+    role_ref_kind = role_ref.get("kind")
+    role_ref_name = role_ref.get("name")
+    if role_ref_kind == "ClusterRole":
+        return ("ClusterRole", "", role_ref_name)
+    if role_ref_kind == "Role":
+        return ("Role", namespace(binding), role_ref_name)
+    return (role_ref_kind or "", namespace(binding), role_ref_name or "")
+
+
+def binding_key(binding):
+    kind = binding.get("kind", "")
+    if kind == "ClusterRoleBinding":
+        return (kind, "", name(binding))
+    return (kind, namespace(binding), name(binding))
+
+
+def subject_is_guarded_service_account(subject):
+    return (
+        subject.get("kind") == "ServiceAccount"
+        and subject.get("name") in {DR_ORCHESTRATOR, DR_GENERATE_ROOT}
+    )
+
+
+def binding_location(binding):
+    source_path = binding.get("_guard_source_path")
+    if source_path:
+        return source_path
+    ns = namespace(binding)
+    ns_text = f"{ns}/" if ns else ""
+    return f"{binding.get('kind', '<unknown>')}/{ns_text}{name(binding)}"
+
+
+def assert_guarded_service_account_bindings(binding_documents, source_label):
+    for binding in binding_documents:
+        if binding.get("kind") not in {"RoleBinding", "ClusterRoleBinding"}:
+            continue
+        guarded_subjects = [
+            subject
+            for subject in binding.get("subjects") or []
+            if subject_is_guarded_service_account(subject)
+        ]
+        if not guarded_subjects:
+            continue
+
+        key = binding_key(binding)
+        expected = APPROVED_GUARDED_BINDINGS.get(key)
+        guarded_names = ", ".join(sorted({subject.get("name", "") for subject in guarded_subjects}))
+        if expected is None:
+            add_error(
+                f"{source_label} {binding_location(binding)} must not bind guarded ServiceAccount(s) "
+                f"{guarded_names}; only the approved restore-validator bindings may name them"
+            )
+            continue
+
+        if (binding.get("roleRef") or {}) != expected["roleRef"]:
+            add_error(
+                f"{source_label} {binding_location(binding)} must keep the approved roleRef "
+                f"for guarded ServiceAccount binding {name(binding)}"
+            )
+        if (binding.get("subjects") or []) != expected["subjects"]:
+            add_error(
+                f"{source_label} {binding_location(binding)} must bind only the approved guarded "
+                "ServiceAccount subject"
+            )
+
+
+def normalize_shell_continuations(script):
+    logical_lines = []
+    current = ""
+    start_line = 1
+    for line_number, line in enumerate(script.splitlines(), start=1):
+        stripped = line.rstrip()
+        if not current:
+            start_line = line_number
+        if stripped.endswith("\\"):
+            current += stripped[:-1] + " "
+            continue
+        current += stripped
+        logical_lines.append((start_line, current))
+        current = ""
+    if current:
+        logical_lines.append((start_line, current))
+    return logical_lines
+
+
+def full_apps_render_blocked_by_remote_base(error):
+    remote_markers = (
+        "gateway-api",
+        "github.com/kubernetes-sigs/gateway-api",
+        "Could not resolve host: github.com",
+        "operation not permitted",
+    )
+    return "github.com" in error and any(marker in error for marker in remote_markers)
+
+
 resources = parent.get("resources") or []
 if "vault-restore-validator" not in resources:
     add_error("parent apps kustomization must reference vault-restore-validator")
+
+if apps_render_status != 0:
+    if full_apps_render_blocked_by_remote_base(apps_render_error):
+        add_warning(
+            "full apps kustomize render is blocked locally by the remote Gateway API base; "
+            "falling back to source-tree RBAC binding enumeration"
+        )
+    else:
+        add_error(
+            "full apps kustomize render failed; cannot prove whole-apps-tree binding scope: "
+            f"{apps_render_error.strip()}"
+        )
 
 if "enable_unauthenticated_access" in app_text:
     add_error("validator render must not include enable_unauthenticated_access")
@@ -147,87 +460,193 @@ for document in app_documents:
     if kind == "StatefulSet":
         add_error(f"StatefulSet/{resource_name} is forbidden; scratch Vault is out of scope")
 
-    if kind not in {"Namespace"} and not namespace(document):
+    if kind not in CLUSTER_SCOPED_KINDS and not namespace(document):
         add_error(f"{kind}/{resource_name} must have an explicit namespace")
 
     rendered_doc = yaml.safe_dump(document, sort_keys=True)
     if "data-vault" in rendered_doc and not (
-        kind == "ConfigMap" and resource_name == "dr-restore-driver-script"
+        kind == "ConfigMap" and resource_name == RESTORE_DRIVER_SCRIPT_VOLUME
     ):
         add_error(f"{kind}/{resource_name} contains data-vault outside the restore-driver script")
+
+dr_namespace = assert_exactly_one("Namespace", DR_VALIDATE_NS)
+if dr_namespace is not None:
+    labels = metadata(dr_namespace).get("labels") or {}
+    for psa_mode in ("enforce", "audit", "warn"):
+        label = f"pod-security.kubernetes.io/{psa_mode}"
+        if labels.get(label) != "restricted":
+            add_error(f"Namespace/{DR_VALIDATE_NS} must set {label}: restricted")
+    if not labels.get("pod-security.kubernetes.io/enforce-version"):
+        add_error(f"Namespace/{DR_VALIDATE_NS} must set pod-security.kubernetes.io/enforce-version")
+
+vap = assert_exactly_one("ValidatingAdmissionPolicy", VAP_NAME)
+if vap is not None:
+    spec = vap.get("spec") or {}
+    if spec.get("failurePolicy") != "Fail":
+        add_error(f"ValidatingAdmissionPolicy/{VAP_NAME} must set failurePolicy: Fail")
+
+    match_constraints = spec.get("matchConstraints") or {}
+    resource_rules = match_constraints.get("resourceRules") or []
+    if resource_rules != EXPECTED_VAP_RESOURCE_RULES:
+        add_error(
+            f"ValidatingAdmissionPolicy/{VAP_NAME} must match exactly longhorn.io */volumes CREATE"
+        )
+    if "excludeResourceRules" in match_constraints:
+        add_error(f"ValidatingAdmissionPolicy/{VAP_NAME} must not define excludeResourceRules")
+    for selector_field in ("namespaceSelector", "objectSelector"):
+        selector = match_constraints.get(selector_field)
+        if selector not in (None, {}):
+            add_error(f"ValidatingAdmissionPolicy/{VAP_NAME} must not define matchConstraints.{selector_field}")
+    match_policy = spec.get("matchPolicy")
+    if match_policy is not None and match_policy != "Equivalent":
+        add_error(f"ValidatingAdmissionPolicy/{VAP_NAME} spec.matchPolicy must be Equivalent when present")
+    match_constraints_policy = match_constraints.get("matchPolicy")
+    if match_constraints_policy is not None and match_constraints_policy != "Equivalent":
+        add_error(
+            f"ValidatingAdmissionPolicy/{VAP_NAME} matchConstraints.matchPolicy must be Equivalent when present"
+        )
+
+    match_conditions = spec.get("matchConditions") or []
+    expected_match_expression = f"request.userInfo.username == '{DR_ORCHESTRATOR_USER}'"
+    if len(match_conditions) != 1 or match_conditions[0].get("expression") != expected_match_expression:
+        add_error(
+            f"ValidatingAdmissionPolicy/{VAP_NAME} must have exactly one matchCondition for {DR_ORCHESTRATOR_USER}"
+        )
+
+    validations = spec.get("validations") or []
+    validation_expressions = {validation.get("expression") for validation in validations}
+    if f"object.metadata.name == '{SCRATCH}'" not in validation_expressions:
+        add_error(
+            f"ValidatingAdmissionPolicy/{VAP_NAME} must allowlist only {SCRATCH}"
+        )
+    if "object.spec.numberOfReplicas <= 1" not in validation_expressions:
+        add_error(
+            f"ValidatingAdmissionPolicy/{VAP_NAME} must cap scratch Longhorn replicas at one"
+        )
+
+vap_binding = assert_exactly_one("ValidatingAdmissionPolicyBinding", VAP_NAME)
+if vap_binding is not None:
+    spec = vap_binding.get("spec") or {}
+    if spec.get("policyName") != VAP_NAME:
+        add_error(f"ValidatingAdmissionPolicyBinding/{VAP_NAME} must bind {VAP_NAME}")
+    if spec.get("validationActions") != ["Deny"]:
+        add_error(f"ValidatingAdmissionPolicyBinding/{VAP_NAME} validationActions must be exactly [Deny]")
+    if "matchResources" in spec:
+        add_error(f"ValidatingAdmissionPolicyBinding/{VAP_NAME} must not define matchResources")
+    if "paramRef" in spec:
+        add_error(f"ValidatingAdmissionPolicyBinding/{VAP_NAME} must not define paramRef")
 
 for service_account in docs("ServiceAccount"):
     if service_account.get("automountServiceAccountToken") is not False:
         add_error(f"ServiceAccount/{name(service_account)} must set automountServiceAccountToken: false")
 
-noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", "dr-validate")
-if noop_role is not None and rules_for(noop_role) not in (None, []):
+roles = docs("Role") + docs("ClusterRole")
+bindings = docs("RoleBinding") + docs("ClusterRoleBinding")
+roles_by_key = {role_key(role): role for role in roles}
+
+for binding in bindings:
+    binding_name = name(binding)
+    for subject in binding.get("subjects") or []:
+        if not subject_is_guarded_service_account(subject):
+            continue
+        subject_name = subject.get("name")
+        if binding_key(binding) not in APPROVED_GUARDED_BINDINGS:
+            add_error(
+                f"{binding.get('kind')}/{binding_name} must not bind {subject_name}; "
+                "only approved restore-validator bindings may name that ServiceAccount"
+            )
+        role = roles_by_key.get(role_ref_key(binding))
+        if role is None:
+            add_error(f"{binding.get('kind')}/{binding_name} references a missing role")
+            continue
+        if (
+            subject_name == DR_ORCHESTRATOR
+            and name(role) != "dr-orchestrator-longhorn-restore"
+            and role_grants_unapproved_longhorn_destructive(role)
+        ):
+            add_error(
+                f"{binding.get('kind')}/{binding_name} grants dr-orchestrator "
+                f"unapproved destructive Longhorn access through {role.get('kind')}/{name(role)}"
+            )
+
+for role in roles:
+    if name(role) != "dr-orchestrator-longhorn-restore" and role_grants_unapproved_longhorn_destructive(role):
+        add_error(
+            f"{role.get('kind')}/{name(role)} must not grant unapproved destructive Longhorn access"
+        )
+
+if apps_render_status == 0:
+    assert_guarded_service_account_bindings(apps_documents, "full apps render")
+else:
+    assert_guarded_service_account_bindings(source_documents_under(apps_dir), "apps source tree")
+
+noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", DR_VALIDATE_NS)
+if noop_role is not None and rules_for(noop_role) != []:
     add_error("Role/vault-restore-validator-noop must remain permissionless")
 
-generate_root_binding = assert_exactly_one("RoleBinding", "dr-generate-root-noop", "dr-validate")
+generate_root_binding = assert_exactly_one("RoleBinding", "dr-generate-root-noop", DR_VALIDATE_NS)
 if generate_root_binding is not None:
     role_ref = generate_root_binding.get("roleRef") or {}
     if role_ref.get("kind") != "Role" or role_ref.get("name") != "vault-restore-validator-noop":
         add_error("RoleBinding/dr-generate-root-noop must bind the permissionless noop Role")
     subjects = generate_root_binding.get("subjects") or []
-    if subjects != [{"kind": "ServiceAccount", "name": "dr-generate-root", "namespace": "dr-validate"}]:
+    if subjects != [{"kind": "ServiceAccount", "name": DR_GENERATE_ROOT, "namespace": DR_VALIDATE_NS}]:
         add_error("RoleBinding/dr-generate-root-noop must bind only dr-generate-root in dr-validate")
 
-longhorn_role = assert_exactly_one("Role", "dr-orchestrator-longhorn-restore", "longhorn-system")
+result_role = assert_exactly_one("Role", "dr-orchestrator-result-writer", DR_VALIDATE_NS)
+if result_role is not None:
+    expected_result_rules = [
+        {
+            "apiGroups": [""],
+            "resources": ["configmaps"],
+            "resourceNames": ["dr-restore-driver-result"],
+            "verbs": ["get", "create", "update"],
+        }
+    ]
+    if rules_for(result_role) != expected_result_rules:
+        add_error(
+            "Role/dr-orchestrator-result-writer rules must be exactly "
+            "configmaps [get,create,update] scoped to dr-restore-driver-result"
+        )
+
+result_binding = assert_exactly_one("RoleBinding", "dr-orchestrator-result-writer", DR_VALIDATE_NS)
+if result_binding is not None:
+    role_ref = result_binding.get("roleRef") or {}
+    if role_ref.get("kind") != "Role" or role_ref.get("name") != "dr-orchestrator-result-writer":
+        add_error("RoleBinding/dr-orchestrator-result-writer must bind the result writer Role")
+    subjects = result_binding.get("subjects") or []
+    if subjects != [{"kind": "ServiceAccount", "name": DR_ORCHESTRATOR, "namespace": DR_VALIDATE_NS}]:
+        add_error("RoleBinding/dr-orchestrator-result-writer must bind only dr-orchestrator in dr-validate")
+
+longhorn_role = assert_exactly_one("Role", "dr-orchestrator-longhorn-restore", LONGHORN_NS)
 if longhorn_role is not None:
-    exact_destructive_rule_seen = False
+    normalized_rules = {normalized_rbac_rule(rule) for rule in rules_for(longhorn_role)}
+    if normalized_rules != APPROVED_LONGHORN_RULES:
+        add_error(
+            "Role/dr-orchestrator-longhorn-restore rules must be exactly the approved "
+            "Longhorn backup read, scratch volume create/read, and scratch-scoped "
+            "update/patch/delete rules"
+        )
+
     for rule in rules_for(longhorn_role):
         if any(resource_name.startswith("data-vault") for resource_name in resource_names(rule)):
             add_error("Longhorn Role resourceNames must never include data-vault*")
+        if has_unapproved_longhorn_destructive(rule):
+            add_error(
+                "Role/dr-orchestrator-longhorn-restore must not grant destructive verbs "
+                "on any unapproved longhorn.io resource or wildcard"
+            )
 
-        if has_api_group(rule, "longhorn.io") and has_resource(rule, "volumes"):
-            destructive = verbs(rule) & {"delete", "patch", "update"}
-            if destructive:
-                if resource_names(rule) != [SCRATCH]:
-                    add_error(
-                        "Longhorn volume delete/patch/update verbs must be resourceNames-scoped "
-                        f"exactly to [{SCRATCH}]"
-                    )
-                else:
-                    exact_destructive_rule_seen = True
-            if "create" in verbs(rule) and resource_names(rule):
-                add_error("Longhorn volume create must not use resourceNames; Kubernetes cannot scope create by name")
-
-    if not exact_destructive_rule_seen:
-        add_error("missing Longhorn volumes delete/patch/update rule scoped exactly to the scratch name")
-
-    expected_read_rule = False
-    expected_create_rule = False
-    for rule in rules_for(longhorn_role):
-        if (
-            has_api_group(rule, "longhorn.io")
-            and set(rule.get("resources") or []) == {"backups", "backupvolumes", "backuptargets"}
-            and verbs(rule) == {"get", "list", "watch"}
-            and not resource_names(rule)
-        ):
-            expected_read_rule = True
-        if (
-            has_api_group(rule, "longhorn.io")
-            and set(rule.get("resources") or []) == {"volumes"}
-            and verbs(rule) == {"get", "list", "watch", "create"}
-            and not resource_names(rule)
-        ):
-            expected_create_rule = True
-    if not expected_read_rule:
-        add_error("Longhorn Role must read backups, backupvolumes, and backuptargets with get/list/watch only")
-    if not expected_create_rule:
-        add_error("Longhorn Role must grant volumes get/list/watch/create without destructive verbs")
-
-longhorn_binding = assert_exactly_one("RoleBinding", "dr-orchestrator-longhorn-restore", "longhorn-system")
+longhorn_binding = assert_exactly_one("RoleBinding", "dr-orchestrator-longhorn-restore", LONGHORN_NS)
 if longhorn_binding is not None:
     role_ref = longhorn_binding.get("roleRef") or {}
     if role_ref.get("kind") != "Role" or role_ref.get("name") != "dr-orchestrator-longhorn-restore":
         add_error("RoleBinding/dr-orchestrator-longhorn-restore must bind the Longhorn restore Role")
     subjects = longhorn_binding.get("subjects") or []
-    if subjects != [{"kind": "ServiceAccount", "name": "dr-orchestrator", "namespace": "dr-validate"}]:
+    if subjects != [{"kind": "ServiceAccount", "name": DR_ORCHESTRATOR, "namespace": DR_VALIDATE_NS}]:
         add_error("Longhorn RoleBinding must bind only dr-orchestrator in dr-validate")
 
-script_configmap = assert_exactly_one("ConfigMap", "dr-restore-driver-script", "dr-validate")
+script_configmap = assert_exactly_one("ConfigMap", RESTORE_DRIVER_SCRIPT_VOLUME, DR_VALIDATE_NS)
 if script_configmap is not None:
     script = ((script_configmap.get("data") or {}).get("restore-driver.sh")) or ""
     if 'readonly SCRATCH="dr-validate-vault-restore"' not in script:
@@ -238,14 +657,46 @@ if script_configmap is not None:
         add_error("restore-driver.sh must delete only the fixed scratch volume")
     if "trap finish EXIT" not in script:
         add_error("restore-driver.sh must trap EXIT for fail-closed cleanup/result emission")
-    destructive_target = re.compile(r"\bkubectl\b.*\b(delete|patch|replace|apply)\b.*data-vault")
-    for line_number, line in enumerate(script.splitlines(), start=1):
-        if destructive_target.search(line):
-            add_error(f"restore-driver.sh line {line_number} has destructive data-vault target")
     if "fromBackup:" not in script:
         add_error("restore-driver.sh must create the scratch Longhorn Volume from a backup URL")
 
-network_policy = assert_exactly_one("NetworkPolicy", "vault-restore-validator-default-deny", "dr-validate")
+    create_restore_match = re.search(
+        r"create_restore_volume\(\) \{(?P<body>.*?)\n\}",
+        script,
+        re.DOTALL,
+    )
+    if create_restore_match is None:
+        add_error("restore-driver.sh must define create_restore_volume")
+    else:
+        create_restore_body = create_restore_match.group("body")
+        if "kind: Volume" not in create_restore_body:
+            add_error("restore-driver.sh create manifest must create a Longhorn Volume")
+        if f"\n  name: {SCRATCH}\n" not in create_restore_body:
+            add_error(
+                f"restore-driver.sh create manifest must set metadata.name to {SCRATCH}"
+            )
+        if "kubectl create -f -" not in create_restore_body:
+            add_error("restore-driver.sh must use kubectl create for the scratch Volume manifest")
+
+    destructive_target = re.compile(
+        r"\bkubectl\b.*\b(create|delete|deletecollection|patch|replace|apply)\b.*data-vault"
+    )
+    for line_number, logical_line in normalize_shell_continuations(script):
+        if "kubectl" not in logical_line:
+            continue
+        if "data-vault" in logical_line:
+            add_error(
+                f"restore-driver.sh logical line starting {line_number} has data-vault in a kubectl invocation"
+            )
+        if destructive_target.search(logical_line):
+            add_error(
+                f"restore-driver.sh logical line starting {line_number} has destructive data-vault target"
+            )
+
+network_policies = docs("NetworkPolicy")
+if len(network_policies) != 1:
+    add_error(f"expected exactly one NetworkPolicy default deny, found {len(network_policies)}")
+network_policy = assert_exactly_one("NetworkPolicy", "vault-restore-validator-default-deny", DR_VALIDATE_NS)
 if network_policy is not None:
     spec = network_policy.get("spec") or {}
     if spec.get("podSelector") != {}:
@@ -255,7 +706,10 @@ if network_policy is not None:
     if "ingress" in spec or "egress" in spec:
         add_error("default-deny NetworkPolicy must not include allow rules")
 
-cnp = assert_exactly_one("CiliumNetworkPolicy", "dr-orchestrator-egress", "dr-validate")
+cnps = docs("CiliumNetworkPolicy")
+if len(cnps) != 1:
+    add_error(f"expected exactly one CiliumNetworkPolicy egress allow, found {len(cnps)}")
+cnp = assert_exactly_one("CiliumNetworkPolicy", "dr-orchestrator-egress", DR_VALIDATE_NS)
 if cnp is not None:
     spec = cnp.get("spec") or {}
     endpoint_selector = spec.get("endpointSelector") or {}
@@ -264,54 +718,67 @@ if cnp is not None:
         "app.kubernetes.io/component": "restore-driver",
     }:
         add_error("CiliumNetworkPolicy must select only restore-driver pods")
-    egress = spec.get("egress") or []
-    if egress != [{"toEntities": ["kube-apiserver"]}]:
+    if "ingress" in spec:
+        add_error("CiliumNetworkPolicy must not include ingress allow rules")
+    if spec.get("egress") != [{"toEntities": ["kube-apiserver"]}]:
         add_error("CiliumNetworkPolicy egress must allow only toEntities: [kube-apiserver]")
 
-cronjobs = docs("CronJob")
-if not cronjobs:
-    add_error("expected the suspended dr-restore-driver CronJob")
-for cronjob in cronjobs:
+cronjob = assert_exactly_one("CronJob", "dr-restore-driver", DR_VALIDATE_NS)
+if cronjob is not None:
     spec = cronjob.get("spec") or {}
-    resource_name = name(cronjob)
     if spec.get("suspend") is not True:
-        add_error(f"CronJob/{resource_name} must ship spec.suspend: true")
+        add_error("CronJob/dr-restore-driver must ship spec.suspend: true")
     if spec.get("schedule") != "0 6 31 2 *":
-        add_error(f"CronJob/{resource_name} must use the inert Feb-31 schedule placeholder")
+        add_error("CronJob/dr-restore-driver must use the inert Feb-31 schedule placeholder")
     pod_spec = (
         ((spec.get("jobTemplate") or {}).get("spec") or {})
         .get("template", {})
         .get("spec", {})
     )
-    if pod_spec.get("serviceAccountName") != "dr-orchestrator":
-        add_error(f"CronJob/{resource_name} must run as dr-orchestrator")
+    if pod_spec.get("serviceAccountName") != DR_ORCHESTRATOR:
+        add_error("CronJob/dr-restore-driver must run as dr-orchestrator")
     if pod_spec.get("automountServiceAccountToken") is not True:
-        add_error(f"CronJob/{resource_name} pod must explicitly opt in to service account token automount")
-    for container in pod_spec.get("containers") or []:
-        image = container.get("image") or ""
-        if "@sha256:" not in image:
-            add_error(f"CronJob/{resource_name} container {container.get('name')} image must be digest-pinned")
+        add_error("CronJob/dr-restore-driver pod must explicitly opt in to service account token automount")
+    for host_flag in ("hostNetwork", "hostPID", "hostIPC"):
+        if pod_spec.get(host_flag) not in (None, False):
+            add_error(f"CronJob/dr-restore-driver pod must not set {host_flag}: true")
+    if (pod_spec.get("securityContext") or {}) != EXPECTED_POD_SECURITY_CONTEXT:
+        add_error("CronJob/dr-restore-driver pod securityContext must match the approved restricted context")
+    if pod_spec.get("initContainers"):
+        add_error("CronJob/dr-restore-driver must not define initContainers")
+    if pod_spec.get("ephemeralContainers"):
+        add_error("CronJob/dr-restore-driver must not define ephemeralContainers")
 
-kyverno_policy = assert_exactly_one(
-    "ClusterPolicy",
-    "protect-live-vault-longhorn-volume",
-    source=kyverno_documents,
-)
-if kyverno_policy is not None:
-    spec = kyverno_policy.get("spec") or {}
-    if spec.get("validationFailureAction") != "Enforce":
-        add_error("protect-live-vault-longhorn-volume must enforce admission denial")
-    policy_text = yaml.safe_dump(kyverno_policy, sort_keys=True)
-    for required in (
-        "longhorn.io/v1beta2/Volume",
-        "CREATE",
-        "UPDATE",
-        "DELETE",
-        DR_ORCHESTRATOR_USER,
-        "^data-vault",
-    ):
-        if required not in policy_text:
-            add_error(f"protect-live-vault-longhorn-volume missing required guard token: {required}")
+    containers = pod_spec.get("containers") or []
+    if len(containers) != 1:
+        add_error(f"CronJob/dr-restore-driver must define exactly one container, found {len(containers)}")
+    else:
+        container = containers[0]
+        if container.get("command") != RESTORE_DRIVER_COMMAND:
+            add_error("CronJob/dr-restore-driver command must execute the mounted restore-driver.sh with /bin/bash")
+        if container.get("image") != APPROVED_RESTORE_DRIVER_IMAGE:
+            add_error("CronJob/dr-restore-driver image must match the approved digest exactly")
+
+        container_security = container.get("securityContext") or {}
+        if container_security.get("allowPrivilegeEscalation") is not False:
+            add_error("CronJob/dr-restore-driver container must disable privilege escalation")
+        if container_security.get("capabilities") != {"drop": ["ALL"]}:
+            add_error("CronJob/dr-restore-driver container must drop exactly capability ALL")
+        if container_security.get("readOnlyRootFilesystem") is not True:
+            add_error("CronJob/dr-restore-driver container must use a read-only root filesystem")
+        if container_security.get("runAsNonRoot") is False:
+            add_error("CronJob/dr-restore-driver container must not override runAsNonRoot to false")
+        if container_security.get("privileged") is True:
+            add_error("CronJob/dr-restore-driver container must not be privileged")
+
+        if canonical_object_set(container.get("volumeMounts") or []) != canonical_object_set(
+            EXPECTED_RESTORE_DRIVER_MOUNTS
+        ):
+            add_error("CronJob/dr-restore-driver volumeMounts must be exactly the approved script and /tmp mounts")
+
+    volumes = pod_spec.get("volumes") or []
+    if canonical_object_set(volumes) != canonical_object_set(EXPECTED_RESTORE_DRIVER_VOLUMES):
+        add_error("CronJob/dr-restore-driver volumes must be exactly the approved script ConfigMap and tmp emptyDir")
 
 if "enable_unauthenticated_access" in app_text:
     add_error("rendered validator app must not contain generate-root recovery config")
@@ -321,6 +788,9 @@ if errors:
     for error in errors:
         print(f"- {error}", file=sys.stderr)
     sys.exit(1)
+
+for warning in warnings:
+    print(f"warning: {warning}", file=sys.stderr)
 
 print("OK: Vault restore-validator restore-driver safety invariants hold")
 PY

@@ -311,7 +311,7 @@ create_restore_volume() {
 apiVersion: longhorn.io/v1beta2
 kind: Volume
 metadata:
-  name: ${SCRATCH}
+  name: dr-validate-vault-restore
   namespace: ${LONGHORN_NS}
   labels:
     app.kubernetes.io/name: vault-restore-validator
