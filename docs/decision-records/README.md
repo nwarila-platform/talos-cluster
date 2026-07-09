@@ -66,6 +66,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0018](repo/0018-encrypt-pod-to-pod-traffic-with-cilium-wireguard.md) | Encrypt pod-to-pod traffic with Cilium WireGuard | Accepted | 2026-06-21 | Enable Cilium WireGuard transparent encryption for pod-to-pod traffic with MTU 1380 and node encryption disabled, closing the node-underlay sniff/MITM threat. |
 | [0019](repo/0019-enable-tokenless-vault-generate-root.md) | Keep token-less Vault generate-root in recovery configs only | Accepted | 2026-07-01 | Keep `enable_unauthenticated_access = ["generate-root"]` out of live base while allowing scratch/replacement recovery configs to mint a fresh root from the recovery-key quorum. |
 | [0020](repo/0020-automate-vault-restore-validation.md) | Automate Vault Restore Validation | Proposed | 2026-07-08 | Propose recurring scratch-only Vault restore validation that uses the recovery-key quorum, proves decrypted data access, records RTO and evidence, and destroys scratch resources. |
+| [0021](repo/0021-synology-nfs-backup-target-for-longhorn.md) | Synology NFS Backup Target for Longhorn Stage-1 DR | Accepted | 2026-07-09 | Replace the retired Windows/WSL NFS box with a dedicated Synology (RS3621rpxs) Btrfs share as the Longhorn Stage-1 target; pin NFSv4.1 (DSM's max; 4.2 gains nothing for Longhorn and only an unsupported hack could enable it), per-host export + `all_squash`, `sync`, daily immutable snapshots (retain 30). Realizes the Longhorn/PV tier deferred by ADR-0014. |
 
 ### Imported Vault ADRs
 

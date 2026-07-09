@@ -28,8 +28,9 @@ spec:
         - ports:
             - port: "8200"
               protocol: TCP
+    # Egress to the Synology NFS backup target (Stage-1 DR; ADR-0021).
     - toCIDRSet:
-        - cidr: 10.69.12.11/32
+        - cidr: 10.69.128.115/32
       toPorts:
         - ports:
             - port: "2049"

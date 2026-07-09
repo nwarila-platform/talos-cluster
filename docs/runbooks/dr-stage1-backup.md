@@ -1,108 +1,51 @@
 # DR Stage 1 Backup
 
-This runbook covers the current DR Stage 1 backup lifecycle for the Talos
-cluster. ADR-0014 records the decision to use a local Stage 1 backup server;
-this document is the operator how-to/reference for the interim NFS-backed
-implementation and the Synology migration path.
+This runbook is the operator how-to/reference for the DR Stage 1 backup lifecycle
+for the Talos cluster. ADR-0014 records the decision to use a local Stage 1 backup
+server; [ADR-0021](../decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md)
+records the decision to realize the Longhorn/PV tier of that server on a dedicated
+Synology NFS share.
 
-The current implementation protects Longhorn volume data by sending Longhorn
-backups to an NFS export on the owner's workstation. It is intentionally
-interim: the Synology NAS will replace the workstation once it is live, and the
-same Longhorn backup target protocol will be kept.
+Stage 1 protects Longhorn volume data by sending Longhorn backups to a dedicated
+NFS share on the Synology `TCNHQ-BKUP01` appliance. This replaces the retired
+interim NFS export that ran in WSL on the owner's Windows workstation; the same
+Longhorn NFS backup protocol is kept.
 
 ## Architecture
 
 The data path is:
 
-1. Vault uses Longhorn volumes through the `longhorn-vault` StorageClass.
+1. Vault uses Longhorn volumes through the `longhorn-vault` StorageClass (ADR-0013).
+   No Vault Raft snapshots are retained today, so these Longhorn volume backups are
+   the current Vault DR artifact — treat them as crown-jewel-class.
 2. The `vault-daily-backup` Longhorn RecurringJob backs up matching volumes.
-3. Longhorn writes backup data to `nfs://10.69.12.11:/srv/nfs/backup`.
-4. The interim NFS server runs in WSL2 `Ubuntu-24.04` on the owner's
-   workstation and exports `/srv/nfs/backup` to `10.69.112.0/24`.
-5. The Windows Hyper-V firewall allows inbound TCP 2049 from `10.69.112.0/24`.
+3. Longhorn writes backup data to
+   `nfs://10.69.128.115:/volume1/longhorn-backup?nfsOptions=nfsvers=4.1,actimeo=1`.
+4. The NFS server is the Synology `TCNHQ-BKUP01` (RS3621rpxs, DSM 7.2.1), a Btrfs
+   volume on RAID6, on its own storage VLAN `10.69.128.0/24`. It is an always-on
+   appliance (redundant PSU), not session-bound like the retired WSL target.
+5. Access is controlled by a per-node-IP NFS export on the NAS plus the `dr-backup`
+   egress CiliumNetworkPolicy; the mount is pinned to NFSv4.1.
 
-There are two persistence layers for the interim NFS server:
+The Synology is a shared production appliance (it also serves an ESXi datastore and
+Active Backup for Business / M365 / Google backups). Everything here is confined to
+one dedicated share, `longhorn-backup`; no existing share or export is touched.
 
-- WSL `/etc/wsl.conf` has a `[boot] command` that starts NFS whenever the
-  distro starts.
-- Windows Scheduled Task `WSL-NFS-Backup-Server` starts WSL at owner logon,
-  starts NFS as root, and then sleeps forever to keep WSL pinned.
+## Backup target configuration
 
-This means the interim server is available while the owner is logged in. It is
-not a true service before owner logon. The Synology replacement removes that
-session-bound limitation.
-
-## Interim NFS Server Setup
-
-Run the setup script as root inside the `Ubuntu-24.04` WSL distro:
-
-```powershell
-wsl.exe -d Ubuntu-24.04 -u root -- bash -lc "bash /mnt/c/Users/HellBomb/Documents/GitHub/nwarila-platform/talos-cluster/scripts/dr/nfs-interim-setup.sh"
-```
-
-The script is idempotent. It:
-
-- installs and repairs `nfs-kernel-server`, `nfs-common`, and `rpcbind`;
-- uses a temporary `policy-rc.d` exit-101 guard so package post-install scripts
-  do not fail when they try to start services under WSL without systemd;
-- creates `/srv/nfs/backup` with mode `1777`;
-- writes `/etc/exports` as:
-
-  ```text
-  /srv/nfs/backup 10.69.112.0/24(rw,async,no_subtree_check,no_root_squash)
-  ```
-
-- mounts `nfsd` at `/proc/fs/nfsd`;
-- runs `exportfs -ra`;
-- starts `rpcbind`, `rpc.nfsd 8`, and `rpc.mountd`;
-- installs `/usr/local/sbin/nwarila-nfs-interim-start`;
-- merges this WSL boot command into `/etc/wsl.conf` without removing existing
-  sections or keys:
-
-  ```ini
-  [boot]
-  command = /usr/local/sbin/nwarila-nfs-interim-start
-  ```
-
-Do not run `wsl --shutdown` or `wsl --terminate` during normal setup. The boot
-command takes effect on the next distro start, and shutting the distro down
-would drop the currently live backup target.
-
-## Windows Persistence Task Retired
-
-The Windows-only `scripts\dr\Setup-NFS-Persistence.bat` helper has been
-removed. It registered the `WSL-NFS-Backup-Server` Scheduled Task for the
-interim WSL NFS target on the owner's workstation.
-
-Do not recreate that path for new recovery work. The interim WSL NFS
-persistence path is retired in favor of the Synology backup target. If an
-existing workstation task still exists during migration, treat it as legacy
-state to keep stable until the Synology target is proven and no active restores
-need the workstation copy.
-
-## Firewall Rule
-
-The owner has already applied the interim Hyper-V firewall rule from the prior
-setup step. Keep the rule scoped to the Talos node subnet:
-
-- local host: owner workstation, currently `10.69.12.11`;
-- allowed remote subnet: `10.69.112.0/24`;
-- protocol/port: inbound TCP 2049;
-- service: NFSv4 backup target.
-
-When the NFS endpoint moves to Synology, update the equivalent firewall rule or
-NAS firewall allowlist to the same remote subnet. Do not broaden the rule to
-all local networks.
-
-## Longhorn Backup Configuration
-
-The Longhorn Helm values define the interim target:
+The Longhorn Helm values set the target:
 
 ```yaml
 defaultBackupStore:
-  backupTarget: "nfs://10.69.12.11:/srv/nfs/backup"
+  backupTarget: "nfs://10.69.128.115:/volume1/longhorn-backup?nfsOptions=nfsvers=4.1,actimeo=1"
   backupTargetCredentialSecret: ""
 ```
+
+The `nfsOptions=nfsvers=4.1` pin makes Longhorn mount once at NFSv4.1 (DSM's
+maximum) instead of probing 4.2 -> 4.1; `actimeo=1` is Longhorn's default and avoids
+the known NFSv4.1 backup-list cache-staleness issue. See ADR-0021 for the full
+rationale (4.2 gains nothing for Longhorn's backup format and DSM has no supported
+4.2).
 
 The Vault backup job is committed at
 `clusters/talos-cluster/apps/longhorn-vault-storage/recurringjob-vault-backup.yaml`:
@@ -123,41 +66,91 @@ spec:
 ```
 
 Retention is 14 Longhorn backups for the selected Vault volumes. Treat this as
-local operational recovery, not as the full 3-2-1 target. The long-term design
-is local NAS plus a later offsite copy for disaster scenarios that include the
-owner workstation or NAS.
+local operational recovery; the NAS-side immutable snapshots (retain 30) provide the
+tamper-resistant copy, and an offsite copy remains future work.
+
+## NAS-side configuration (Synology)
+
+Applied through the DSM Web UI, the only supported path for share + NFS + snapshot
+config. The `synoshare` / `/etc/exports` CLI is internal and undocumented, and DSM
+regenerates `/etc/exports` from its own config, so shell edits are unsupported and
+non-persistent.
+
+Shared folder `longhorn-backup` on the Btrfs volume:
+
+- Data checksum for advanced data integrity: enabled (Btrfs self-healing + scrubbing).
+- Shared folder quota: 100 GB — a blast-radius cap so this workload cannot fill the
+  volume and starve the co-resident business shares.
+- No share encryption (the Vault payload is already barrier-encrypted) and no
+  WriteOnce/WORM on the share (Longhorn must be able to delete/rotate and rewrite
+  metadata — see immutable snapshots below).
+
+NFS export rules — one per node IP, all identical:
+
+- Clients: `10.69.112.63`, `.64`, `.65` (cp1/2/3) and `.68`, `.69`, `.70` (w1/2/3).
+- Read/Write; Squash = Map all users to admin (`all_squash` -> `anonuid=1024`);
+  Security = sys; asynchronous OFF (`sync`); non-privileged ports OFF; access to
+  mounted subfolders ON (`crossmnt`).
+- Generated form:
+  `rw,sync,no_wdelay,crossmnt,all_squash,insecure_locks,sec=sys,anonuid=1024,anongid=100`.
+
+Immutable snapshots (tamper/ransomware protection):
+
+- Snapshot Replication: daily schedule, retain 30, immutable snapshots with a 7-day
+  lock (WORM).
+- Snapshots live outside the NFS-exported tree, so a compromised cluster credential
+  (even root-over-NFS) can overwrite or delete the live backup files but cannot touch
+  the snapshots; only a DSM administrator can, and not within the 7-day lock.
+- WORM on the *share itself* was rejected: it would block Longhorn's required
+  delete/rotate and metadata rewrites. Immutable snapshots give the tamper guarantee
+  while leaving the live share mutable.
+
+The DSM admin credentials used for this setup are DSM-admin only (the NFS data path
+uses AUTH_SYS / source IP, not the admin password) and are rotated after setup.
+
+## Network and access control
+
+- The Synology is on its own storage VLAN `10.69.128.0/24`; the nodes are on
+  `10.69.112.0/24` with routed inter-VLAN reachability.
+- The `dr-backup` egress CiliumNetworkPolicy allows egress to `10.69.128.115/32` on
+  TCP 2049.
+- Cilium masquerades pod egress to the node IP, so the NAS sees the node source IP
+  (verified: a w1 mount showed `clientaddr=10.69.112.68`). The per-host export is
+  scoped to exactly those six node IPs.
+- AUTH_SYS trusts the client-asserted UID, so IP scoping + VLAN isolation are the
+  real access control; `all_squash` prevents a remote client acting as root on the NAS.
 
 ## Health Checks
 
-Use these checks after setup, after workstation reboot, and after Synology
-migration.
+Run these after cutover, after any NAS or network change, and periodically.
 
-Legacy only: on Windows, confirm any pre-existing task still exists while the
-interim workstation target remains in service:
-
-```powershell
-Get-ScheduledTask -TaskName WSL-NFS-Backup-Server
-```
-
-Inside WSL, confirm the export and NFS processes:
-
-```bash
-exportfs -v
-mountpoint -q /proc/fs/nfsd
-pgrep -a rpcbind
-pgrep -a rpc.nfsd
-pgrep -a rpc.mountd
-```
-
-In Kubernetes, confirm Longhorn sees the target as available:
+In Kubernetes, confirm Longhorn sees the target and the RecurringJob:
 
 ```bash
 kubectl -n longhorn-system get settings.longhorn.io backup-target backup-target-credential-secret
 kubectl -n longhorn-system get recurringjobs.longhorn.io vault-daily-backup
 ```
 
-In the Longhorn UI or API, confirm the backup target status is available and
-the newest Vault backups are within the expected daily window.
+Confirm recent backups completed within the expected daily window:
+
+```bash
+kubectl -n longhorn-system get backups.longhorn.io \
+  -o custom-columns='NAME:.metadata.name,STATE:.status.state,SNAPSHOT:.status.snapshotCreatedAt,ERR:.status.error'
+```
+
+On the Synology (DSM UI or SSH), confirm the export and the immutable snapshots:
+
+- Control Panel -> Shared Folder -> `longhorn-backup` -> NFS Permissions lists the six node IPs.
+- Snapshot Replication -> `longhorn-backup` shows a daily schedule, retain 30,
+  immutable (7-day lock), and recent snapshots.
+- `/etc/exports` (root) shows the six `rw,sync,...,all_squash,...` rules for
+  `/volume1/longhorn-backup`.
+
+Optional deeper check: a throwaway pod that statically mounts
+`10.69.128.115:/volume1/longhorn-backup` with `-o nfsvers=4.1,actimeo=1` and
+writes/reads/deletes a probe file proves the full path end-to-end (this is the
+pre-cutover verification method; keep it clean and delete the pod, PVC, and PV
+afterward).
 
 ## Longhorn Restore Procedure
 
@@ -178,6 +171,10 @@ Vault PVC as a first move.
    timestamp and the target PVC cutover plan before replacing anything.
 
 ### Restore Drill Log
+
+Note: the 2026-06-22 and 2026-06-23 drills below ran against the interim WSL NFS
+target (`10.69.12.11`), now retired. The restore procedure is target-agnostic; the
+Synology cutover (ADR-0021) does not change it.
 
 2026-06-22 Vault restore drill: PASS.
 
@@ -252,48 +249,28 @@ For a production restore, keep the restored Vault isolated until the owner
 approves replacing the real workload. Avoid production DNS, Gateway routes, and
 client automation until the restore target has been verified.
 
-## Synology Migration
-
-When the Synology NAS is live, migrate Longhorn to the Synology NFS export with
-the same protocol:
-
-1. Create the Synology NFS export for Longhorn backups.
-2. Restrict the Synology export and firewall to `10.69.112.0/24`.
-3. Confirm a temporary pod can reach the Synology NFS endpoint on TCP 2049.
-4. Update `addons/longhorn/values.yaml`:
-
-   ```yaml
-   defaultBackupStore:
-     backupTarget: "nfs://<synology-ip>:/<synology-export-path>"
-     backupTargetCredentialSecret: ""
-   ```
-
-5. Reconcile the Longhorn HelmRelease through Flux.
-6. Confirm Longhorn reports the backup target as available.
-7. Trigger or wait for the next `vault-daily-backup`.
-8. Confirm a new Vault backup appears on the Synology target.
-9. Retire the workstation Scheduled Task only after the Synology target is
-   proven and no active restores need the workstation copy.
-
-Expected hands-on time is about one hour if the Synology export and firewall
-are ready.
-
 ## Limitations And Intent
 
-The interim workstation NFS target is useful because it exists now and keeps
-Longhorn backups off the cluster. It is still a compromise:
+The Synology target is a durable, always-on appliance with RAID6 + Btrfs checksum
+redundancy and NAS-side immutable snapshots — a substantial improvement over the
+retired session-bound WSL target. Remaining gaps:
 
-- WSL is session-bound, so the Scheduled Task only guarantees NFS while the
-  owner is logged in.
-- A workstation reboot interrupts the target until owner logon and task start.
-- The workstation is not the final redundant Stage 1 appliance.
-- NFS export authorization is IP-scoped, not authenticated.
-- The backup target is local only; it is not yet the offsite copy required for
-  a complete 3-2-1 posture.
+- NFS transport is unencrypted (AUTH_SYS, no TLS/krb5p). Mitigated by the isolated
+  storage VLAN, per-host scoping, and the fact that the crown-jewel payload (Vault
+  Raft) is barrier-encrypted inside the backup. Revisit if non-encrypted sensitive
+  PVs are later backed up here.
+- The share is not encrypted at rest (the payload already is). Same revisit trigger.
+- The appliance is shared with unrelated business backups; it is not a dedicated
+  backup host (mitigated by the dedicated share, quota, and scoping).
+- The backup target is local only; the offsite/offline copy required for a complete
+  3-2-1-1-0 posture remains future work.
+- Snapshot deletion is possible by a DSM administrator outside the 7-day WORM window
+  — a separate trust boundary; the setup admin credentials are rotated and never
+  stored in-cluster.
 
 The durable direction remains:
 
 - 3 production copies through Longhorn replica placement where appropriate;
-- 2 media/classes through cluster storage plus Stage 1 NAS backup storage;
-- 1 offsite or offline copy after the Synology target is stable and retention
-  is proven.
+- 2 media/classes through cluster storage plus the Stage 1 NAS;
+- 1 offsite or offline copy after the on-site target is stable and retention is
+  proven, alongside the NAS-side immutable snapshots already in place.
