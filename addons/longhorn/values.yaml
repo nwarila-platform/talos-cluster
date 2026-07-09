@@ -45,11 +45,16 @@ defaultSettings:
   concurrentAutomaticEngineUpgradePerNodeLimit: 1
 
 defaultBackupStore:
-  # Interim DR Stage 1 backup target: an NFS server on the owner's workstation
-  # (WSL), reachable at 10.69.12.11:2049 (NFSv4). Credential-free (NFS export is
-  # IP-scoped to the node subnet). TRACKED: migrate this URL to the Synology NAS
-  # when it's live (same protocol -> just the IP/URL changes). See PLAN.md §10 2026-06-22.
-  backupTarget: "nfs://10.69.12.11:/srv/nfs/backup"
+  # DR Stage 1 backup target: a dedicated Btrfs NFS share on the Synology
+  # RS3621rpxs (TCNHQ-BKUP01, 10.69.128.115) on its own storage VLAN. NFS is
+  # credential-free (AUTH_SYS); access is controlled by a per-node-IP export on
+  # the NAS plus the dr-backup egress CiliumNetworkPolicy. nfsvers is pinned to
+  # 4.1 (DSM's max; Longhorn treats 4.1 as first-class) for a deterministic mount
+  # instead of a 4.2->4.1 probe; actimeo=1 is Longhorn's default and avoids v4.1
+  # backup-list cache staleness. NAS-side daily immutable snapshots (retain 30)
+  # add tamper/ransomware protection the NFS client cannot reach. Replaces the
+  # retired interim WSL NFS box. See ADR-0021 and docs/runbooks/dr-stage1-backup.md.
+  backupTarget: "nfs://10.69.128.115:/volume1/longhorn-backup?nfsOptions=nfsvers=4.1,actimeo=1"
   backupTargetCredentialSecret: ""
 
 # Tolerate the control-plane NoSchedule taint on every Longhorn component

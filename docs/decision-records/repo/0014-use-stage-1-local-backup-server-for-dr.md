@@ -271,6 +271,8 @@ None (current).
   KMS auto-unseal model that Vault snapshot restore depends on.
 - [ADR-0013](0013-use-dedicated-vault-longhorn-storageclass.md) - reduces
   Vault storage single-node risk but does not replace off-host backups.
+- [ADR-0021](0021-synology-nfs-backup-target-for-longhorn.md) - realizes the
+  Longhorn/PV Stage-1 backup tier this ADR deferred, on the Synology NFS target.
 
 ## Compliance Notes
 
