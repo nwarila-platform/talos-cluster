@@ -117,6 +117,19 @@ APPROVED_GUARDED_BINDINGS = {
         ],
     },
 }
+POD_TEMPLATE_KINDS = {
+    "Pod",
+    "Deployment",
+    "DaemonSet",
+    "ReplicaSet",
+    "ReplicationController",
+    "StatefulSet",
+    "Job",
+    "CronJob",
+}
+APPROVED_GUARDED_WORKLOADS = {
+    ("CronJob", DR_VALIDATE_NS, "dr-restore-driver"),
+}
 APPROVED_LONGHORN_RULES = {
     (
         ("longhorn.io",),
@@ -413,6 +426,19 @@ def binding_location(binding):
     return f"{binding.get('kind', '<unknown>')}/{ns_text}{name(binding)}"
 
 
+def workload_id(workload):
+    ns = namespace(workload)
+    ns_text = f"{ns}/" if ns else ""
+    return f"{workload.get('kind', '<unknown>')}/{ns_text}{name(workload)}"
+
+
+def workload_location(workload):
+    source_path = workload.get("_guard_source_path")
+    if source_path:
+        return f"{workload_id(workload)} ({source_path})"
+    return workload_id(workload)
+
+
 def assert_guarded_service_account_bindings(binding_documents, source_label):
     for binding in binding_documents:
         if binding.get("kind") not in {"RoleBinding", "ClusterRoleBinding"}:
@@ -445,6 +471,65 @@ def assert_guarded_service_account_bindings(binding_documents, source_label):
                 f"{source_label} {binding_location(binding)} must bind only the approved guarded "
                 f"ServiceAccount subject; found guarded subject(s) {guarded_labels}"
             )
+
+
+def pod_spec_of(document):
+    kind = document.get("kind")
+    spec = document.get("spec")
+    if not isinstance(spec, dict):
+        return None
+    if kind == "Pod":
+        return spec
+    if kind in {
+        "Deployment",
+        "DaemonSet",
+        "ReplicaSet",
+        "ReplicationController",
+        "StatefulSet",
+        "Job",
+    }:
+        template = spec.get("template")
+        if not isinstance(template, dict):
+            return None
+        pod_spec = template.get("spec")
+        return pod_spec if isinstance(pod_spec, dict) else None
+    if kind == "CronJob":
+        job_template = spec.get("jobTemplate")
+        if not isinstance(job_template, dict):
+            return None
+        job_spec = job_template.get("spec")
+        if not isinstance(job_spec, dict):
+            return None
+        template = job_spec.get("template")
+        if not isinstance(template, dict):
+            return None
+        pod_spec = template.get("spec")
+        return pod_spec if isinstance(pod_spec, dict) else None
+    return None
+
+
+def assert_guarded_service_account_workloads(workload_documents, source_label):
+    guarded_service_accounts = {DR_ORCHESTRATOR, DR_GENERATE_ROOT}
+    for workload in workload_documents:
+        kind = workload.get("kind")
+        if kind not in POD_TEMPLATE_KINDS:
+            continue
+        pod_spec = pod_spec_of(workload)
+        if pod_spec is None:
+            continue
+
+        workload_namespace = namespace(workload)
+        sa = pod_spec.get("serviceAccountName") or pod_spec.get("serviceAccount")
+        if workload_namespace != DR_VALIDATE_NS or sa not in guarded_service_accounts:
+            continue
+        if (kind, workload_namespace, name(workload)) in APPROVED_GUARDED_WORKLOADS:
+            continue
+
+        add_error(
+            f"{source_label} {workload_location(workload)} runs as guarded "
+            f"restore-driver ServiceAccount {sa}; only the approved suspended "
+            "CronJob may run as a guarded restore-driver ServiceAccount"
+        )
 
 
 def normalize_shell_continuations(script):
@@ -629,6 +714,7 @@ for role in roles:
         )
 
 assert_guarded_service_account_bindings(binding_scan_documents, binding_scan_source)
+assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
 
 noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", DR_VALIDATE_NS)
 if noop_role is not None and rules_for(noop_role) != []:
