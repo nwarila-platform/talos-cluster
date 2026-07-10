@@ -175,7 +175,7 @@ This is a tracked-layout summary, not a byte-for-byte `git ls-files` dump. Use `
 | `clusters/talos-cluster/flux-system/` | Flux bootstrap manifests and repository sync definition. |
 | `clusters/talos-cluster/apps/` | Flux-reconciled platform apps: deploy repo references, Gateway API, kubelet CSR approver, Kyverno, metrics-server, namespace hardening, encrypted Vault AWS access material, and read-only drift detection. |
 | `clusters/talos-cluster/tenants/` | Tenant namespace/network-policy definitions plus onboarding templates. |
-| `addons/` | Helm values retained for manually installed or adopted releases: `cilium`, `kubelet-csr-approver`, `kyverno`, `longhorn`, and `metrics-server`. |
+| `addons/` | Out-of-band bootstrap Helm values retained for cluster rebuilds or adopted releases: `cilium`, `kubelet-csr-approver`, and `longhorn`. |
 | `docs/` | Compliance notes and ADR mirrors split into org, template, and repo decision records. |
 | `scripts/` | Operator automation used by the Makefile: generate, apply, bootstrap, health, upgrade, S3 sync, local drift helpers, snapshot, tenant onboarding, deploy-repo sync, and read-only drift tests. |
 | `.github/workflows/` | CI, deploy, security, snapshot, compliance, tenant, deploy-repo sync, and org ADR synchronization workflows. |

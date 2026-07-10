@@ -258,12 +258,8 @@
 !/addons/cilium/values.yaml
 !/addons/kubelet-csr-approver/
 !/addons/kubelet-csr-approver/values.yaml
-!/addons/kyverno/
-!/addons/kyverno/values.yaml
 !/addons/longhorn/
 !/addons/longhorn/values.yaml
-!/addons/metrics-server/
-!/addons/metrics-server/values.yaml
 
 # -- Scripts: automation invoked by the Makefile ------------------------------
 !/scripts/
@@ -271,6 +267,7 @@
 !/scripts/bootstrap.sh
 !/scripts/build-maintenance-iso.sh
 !/scripts/check-firewall-management-ports.py
+!/scripts/check-longhorn-values-sync.py
 !/scripts/check-text-encoding.py
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
