@@ -84,6 +84,12 @@ DESTRUCTIVE_LONGHORN_VERBS = {
     "delete",
     "deletecollection",
 }
+IMPERSONATE_IDENTITY_RESOURCES = {
+    "groups",
+    "serviceaccounts",
+    "uids",
+    "users",
+}
 APPROVED_GUARDED_BINDINGS = {
     ("RoleBinding", LONGHORN_NS, "dr-orchestrator-longhorn-restore"): {
         "roleRef": {
@@ -459,6 +465,18 @@ def role_grants_any_longhorn_destructive(role):
         and bool(matched_destructive_verbs(rule))
         for rule in rules_for(role)
     )
+
+
+def role_grants_impersonate(role):
+    for rule in rules_for(role):
+        if "impersonate" not in verbs(rule):
+            continue
+
+        rule_resources = set(list_value(rule.get("resources")))
+        if "*" in rule_resources or rule_resources & IMPERSONATE_IDENTITY_RESOURCES:
+            return True
+
+    return False
 
 
 def source_documents_under(path):
@@ -837,6 +855,19 @@ def assert_no_unapproved_destructive_longhorn_roles(role_documents, source_label
         )
 
 
+def assert_no_impersonate_roles(documents, source_label):
+    for role in documents:
+        if role.get("kind") not in {"Role", "ClusterRole"}:
+            continue
+        if not role_grants_impersonate(role):
+            continue
+
+        add_error(
+            f"{source_label} {role_location(role)} grants impersonate on identity "
+            "resources; it can assume the guarded restore-driver identity - forbidden"
+        )
+
+
 def normalize_cilium_selector_key(key):
     return key.removeprefix("k8s:") if isinstance(key, str) else key
 
@@ -1149,6 +1180,7 @@ assert_guarded_role_bindings(binding_scan_documents, binding_scan_source)
 assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
 assert_footprint_is_closed_world(binding_scan_documents, binding_scan_source)
 assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_scan_source)
+assert_no_impersonate_roles(binding_scan_documents, binding_scan_source)
 assert_no_ccnp_egress_selects_driver(binding_scan_documents, binding_scan_source)
 assert_no_mutating_admission_targets_driver(binding_scan_documents, binding_scan_source)
 
