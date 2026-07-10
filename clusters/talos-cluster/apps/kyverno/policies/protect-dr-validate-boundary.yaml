@@ -15,12 +15,18 @@
 #   - cluster-wide destructive Longhorn Role/ClusterRole hygiene (Longhorn Helm controller RBAC is broad);
 #   - broad MutatingWebhookConfiguration / ValidatingWebhookConfiguration denial (Kyverno owns webhooks);
 #   - wildcard closed-world admission for dr-validate (background/wildcard restrictions and Event false positives).
+#   - impersonation via broad roles: rule 6 flags only the LITERAL 'impersonate' verb (see its comment), so a role with
+#     wildcard verbs:[*] over serviceaccounts (cluster-admin, admin/edit, longhorn, crd-controller-flux-system, ...) is
+#     impersonation-capable but NOT denied at runtime — flagging verbs:[*] would false-positive on every broad platform
+#     role. Preventing unapproved grants of such roles is generic RBAC hardening covered by the git-declared CI guard,
+#     out of scope here. Rules 2-3 still deny bindings that name the guarded SAs/roles directly.
 #
 # !!! SHIPS IN AUDIT MODE. Validated offline with the kyverno CLI v1.18.1 (matches cluster app version): 13 attack
 # objects FAIL (un-suspended/rewritten CronJob, guarded-SA/-role bindings, impersonate role, data-vault fromBackup
-# Volume, arbitrary workload, SA-token Secret, destructive RecurringJob, weakened approved-VAP, driver-selecting CCNP)
-# and 53 legit/platform objects PASS with ZERO false-positives — including Longhorn's and Kyverno's own Helm-rendered
-# ClusterRoles/Roles/webhooks (the objects the static guard never sees). Still, before flipping validationFailureAction
+# Volume, arbitrary workload, SA-token Secret, destructive RecurringJob, weakened approved-VAP, driver-selecting CCNP).
+# A live 272-object RBAC soak found built-in false positives in rules 3/6 and a name-only approved-binding exemption
+# gap in rules 2/3; these are fixed with a built-in impersonate allowlist, a trivial-built-in-ClusterRole roleRef
+# exemption, and an exact-approved-binding shape check aligned with the CI guard. Still, before flipping validationFailureAction
 # to Enforce and failurePolicy to Fail:
 #   1. Soak in Audit ON THE CLUSTER; inspect PolicyReports for false-positives on real live applies (the offline set
 #      cannot cover every operator/controller object).
@@ -143,6 +149,31 @@ spec:
           - resources:
               kinds: [RoleBinding, ClusterRoleBinding]
               operations: [CREATE, UPDATE]
+      context:
+        - name: isExactApprovedBinding
+          variable:
+            jmesPath: >-
+              (request.object.kind == 'RoleBinding' && request.object.metadata.namespace == 'longhorn-system' &&
+               request.object.metadata.name == 'dr-orchestrator-longhorn-restore' &&
+               request.object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && request.object.roleRef.kind == 'Role' &&
+               request.object.roleRef.name == 'dr-orchestrator-longhorn-restore' &&
+               length(request.object.subjects || `[]`) == `1` && request.object.subjects[0].kind == 'ServiceAccount' &&
+               request.object.subjects[0].name == 'dr-orchestrator' && request.object.subjects[0].namespace == 'dr-validate')
+              ||
+              (request.object.kind == 'RoleBinding' && request.object.metadata.namespace == 'dr-validate' &&
+               request.object.metadata.name == 'dr-orchestrator-result-writer' &&
+               request.object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && request.object.roleRef.kind == 'Role' &&
+               request.object.roleRef.name == 'dr-orchestrator-result-writer' &&
+               length(request.object.subjects || `[]`) == `1` && request.object.subjects[0].kind == 'ServiceAccount' &&
+               request.object.subjects[0].name == 'dr-orchestrator' && request.object.subjects[0].namespace == 'dr-validate')
+              ||
+              (request.object.kind == 'RoleBinding' && request.object.metadata.namespace == 'dr-validate' &&
+               request.object.metadata.name == 'dr-generate-root-noop' &&
+               request.object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && request.object.roleRef.kind == 'Role' &&
+               request.object.roleRef.name == 'vault-restore-validator-noop' &&
+               length(request.object.subjects || `[]`) == `1` && request.object.subjects[0].kind == 'ServiceAccount' &&
+               request.object.subjects[0].name == 'dr-generate-root' && request.object.subjects[0].namespace == 'dr-validate')
+            default: false
       validate:
         message: >-
           Only the approved restore-validator bindings (dr-orchestrator-longhorn-restore,
@@ -153,9 +184,9 @@ spec:
               - key: "{{ request.object.roleRef.name }}"
                 operator: AnyIn
                 value: [dr-orchestrator-longhorn-restore, dr-orchestrator-result-writer, vault-restore-validator-noop]
-              - key: "{{ request.object.metadata.name }}"
-                operator: AnyNotIn
-                value: [dr-orchestrator-longhorn-restore, dr-orchestrator-result-writer, dr-generate-root-noop]
+              - key: "{{ isExactApprovedBinding }}"
+                operator: NotEquals
+                value: true
 
     # 3. Nothing may bind the guarded restore-driver ServiceAccounts by subject (SA/User/Group) except the
     #    approved bindings. Kyverno sees the resolved subject (post-substitution).
@@ -169,26 +200,69 @@ spec:
         message: >-
           Only the approved restore-validator bindings may name the guarded ServiceAccounts dr-orchestrator /
           dr-generate-root (by ServiceAccount, by their User username, or by a Group that contains them).
+        # Flat deny on a single precomputed boolean: kyverno-CLI v1.18.1 skips a policy that nests
+        # deny.conditions (all>any>all), so the direct-OR-(group-AND-non-trivial-roleRef) logic is folded
+        # into the 'violation' context variable below and denied with one condition.
         deny:
           conditions:
             all:
-              - key: "{{ request.object.metadata.name }}"
-                operator: AnyNotIn
-                value: [dr-orchestrator-longhorn-restore, dr-orchestrator-result-writer, dr-generate-root-noop]
-              - key: "{{ reaches }}"
+              - key: "{{ violation }}"
                 operator: Equals
                 value: true
-                # 'reaches' is computed by the context below: true if any subject reaches a guarded identity.
-      # context computes whether any subject reaches a guarded identity (SA name / User username / Group)
       context:
-        - name: reaches
+        - name: reachesDirect
           variable:
             jmesPath: >-
               length(request.object.subjects[?
                 (kind=='ServiceAccount' && (name=='dr-orchestrator' || name=='dr-generate-root')) ||
-                (kind=='User' && (name=='system:serviceaccount:dr-validate:dr-orchestrator' || name=='system:serviceaccount:dr-validate:dr-generate-root')) ||
-                (kind=='Group' && (name=='system:serviceaccounts' || name=='system:serviceaccounts:dr-validate' || name=='system:authenticated'))
-              ]) > `0`
+                (kind=='User' && (name=='system:serviceaccount:dr-validate:dr-orchestrator' || name=='system:serviceaccount:dr-validate:dr-generate-root'))
+              ] || `[]`) > `0`
+            default: false
+        - name: reachesGroup
+          variable:
+            jmesPath: >-
+              length(request.object.subjects[?
+                kind=='Group' && (name=='system:serviceaccounts' || name=='system:serviceaccounts:dr-validate' || name=='system:authenticated')
+              ] || `[]`) > `0`
+            default: false
+        - name: roleRefIsTrivialBuiltInClusterRole
+          variable:
+            jmesPath: >-
+              request.object.roleRef.kind == 'ClusterRole' && request.object.roleRef.apiGroup == 'rbac.authorization.k8s.io' &&
+              (request.object.roleRef.name == 'system:basic-user' || request.object.roleRef.name == 'system:discovery' ||
+               request.object.roleRef.name == 'system:public-info-viewer' || request.object.roleRef.name == 'system:service-account-issuer-discovery')
+            default: false
+        - name: isExactApprovedBinding
+          variable:
+            jmesPath: >-
+              (request.object.kind == 'RoleBinding' && request.object.metadata.namespace == 'longhorn-system' &&
+               request.object.metadata.name == 'dr-orchestrator-longhorn-restore' &&
+               request.object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && request.object.roleRef.kind == 'Role' &&
+               request.object.roleRef.name == 'dr-orchestrator-longhorn-restore' &&
+               length(request.object.subjects || `[]`) == `1` && request.object.subjects[0].kind == 'ServiceAccount' &&
+               request.object.subjects[0].name == 'dr-orchestrator' && request.object.subjects[0].namespace == 'dr-validate')
+              ||
+              (request.object.kind == 'RoleBinding' && request.object.metadata.namespace == 'dr-validate' &&
+               request.object.metadata.name == 'dr-orchestrator-result-writer' &&
+               request.object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && request.object.roleRef.kind == 'Role' &&
+               request.object.roleRef.name == 'dr-orchestrator-result-writer' &&
+               length(request.object.subjects || `[]`) == `1` && request.object.subjects[0].kind == 'ServiceAccount' &&
+               request.object.subjects[0].name == 'dr-orchestrator' && request.object.subjects[0].namespace == 'dr-validate')
+              ||
+              (request.object.kind == 'RoleBinding' && request.object.metadata.namespace == 'dr-validate' &&
+               request.object.metadata.name == 'dr-generate-root-noop' &&
+               request.object.roleRef.apiGroup == 'rbac.authorization.k8s.io' && request.object.roleRef.kind == 'Role' &&
+               request.object.roleRef.name == 'vault-restore-validator-noop' &&
+               length(request.object.subjects || `[]`) == `1` && request.object.subjects[0].kind == 'ServiceAccount' &&
+               request.object.subjects[0].name == 'dr-generate-root' && request.object.subjects[0].namespace == 'dr-validate')
+            default: false
+        # Folded deny logic (see the flat deny above): deny when the binding is NOT the exact approved shape AND it
+        # reaches a guarded SA — directly, or via a broad group bound to a non-trivial (non-built-in-discovery) role.
+        - name: violation
+          variable:
+            jmesPath: >-
+              isExactApprovedBinding == `false` &&
+              (reachesDirect == `true` || (reachesGroup == `true` && roleRefIsTrivialBuiltInClusterRole == `false`))
             default: false
 
     # 4. Longhorn data-plane objects must not reference data-vault except the driver's fixed scratch Volume.
@@ -264,6 +338,12 @@ spec:
                 - rbac.authorization.k8s.io/v1/Role
                 - rbac.authorization.k8s.io/v1/ClusterRole
               operations: [CREATE, UPDATE]
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/ClusterRole
+              names: ["admin", "edit", "system:aggregate-to-edit"]
       validate:
         message: >-
           Role rules must not grant literal impersonate on users, groups, serviceaccounts, uids, or wildcard
