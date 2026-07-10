@@ -138,7 +138,7 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 | **Cilium** | 1.19.4 | Handles pod networking, replaces kube-proxy, and provides the Gateway API dataplane. | Without a CNI (Container Network Interface), containers on different nodes cannot talk to each other. |
 | **CoreDNS** | bundled with Kubernetes | Translates service names to IP addresses inside the cluster. | So containers can find each other by name, such as `database`, instead of memorizing IP addresses. |
 | **Flux** | v2.8.8 | Reconciles the Kubernetes manifests under `clusters/talos-cluster/`. | Keeps Git as the operational source of truth after bootstrap. |
-| **Kyverno** | 3.8.1 | Provides Kubernetes admission policy and audit-mode image signature verification. | Gives the cluster a policy engine without requiring ad hoc manual admission checks. |
+| **Kyverno** | 3.8.1 | Provides Kubernetes admission policy, enforcing first-party image signatures while auditing upstream families. | Gives the cluster a policy engine without requiring ad hoc manual admission checks. |
 | **Gateway API CRDs** | v1.4.1 | Defines the Kubernetes Gateway API resources used with Cilium. | Uses the upstream Gateway API model for application routing. |
 | **metrics-server** | 3.13.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` and autoscaling signals. |
 | **Longhorn** | 1.11.2 | Provides replicated block storage and the default `StorageClass`. | Applications that need persistent volumes get storage backed by the Talos `longhorn` user volume. |
@@ -157,7 +157,7 @@ The current cluster stack is:
 
 - **GitOps:** Flux `v2.8.8` bootstraps from `clusters/talos-cluster/flux-system/` and reconciles app and tenant manifests from this repository.
 - **Networking and ingress:** Cilium `1.19.4` replaces kube-proxy and is the Gateway API dataplane. Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass` live under `clusters/talos-cluster/apps/gateway-api/`.
-- **Policy:** Kyverno `3.8.1` is reconciled by Flux. The current image-signature policy is audit-mode: it records verification failures in policy reports without blocking admission yet.
+- **Policy:** Kyverno `3.8.1` is reconciled by Flux. First-party image signatures for `ghcr.io/nwarila-platform/*`, `ghcr.io/nwarila/*`, and `ghcr.io/the-hero-wars-guys/*` are enforced, so unsigned or unverified images are blocked at admission; upstream Flux, Cilium, Kyverno, and VSO images remain audit-only pending a re-signing registry (TD-0001/TD-0002).
 - **Storage:** Longhorn `1.11.2` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
 - **Secrets:** SOPS with age encrypts Kubernetes Secret payload fields in git; Flux decrypts them at reconcile time using the in-cluster `sops-age` secret.
 - **Safety net:** GitHub Actions validate configs, scan for secrets and compliance issues, and keep organization ADR mirrors synchronized. Flux also runs the `talos-drift-readonly` CronJob in-cluster to detect reduced read-only drift for version pins, node InternalIPs, and Flux health.
