@@ -36,6 +36,7 @@ python3 - "${root_rendered}" "${root_render_status}" "${app_rendered}" "${PARENT
 import json
 import os
 import re
+import subprocess
 import sys
 
 import yaml
@@ -217,12 +218,16 @@ def load_text(path):
         return handle.read()
 
 
-def load_documents(path):
+def documents_from_text(text):
     return [
         document
-        for document in yaml.safe_load_all(load_text(path))
+        for document in yaml.safe_load_all(text)
         if isinstance(document, dict)
     ]
+
+
+def load_documents(path):
+    return documents_from_text(load_text(path))
 
 
 with open(parent_kustomization, encoding="utf-8") as handle:
@@ -380,6 +385,138 @@ def source_documents_under(path):
             except yaml.YAMLError as exc:
                 add_error(f"failed to parse YAML source {file_path}: {exc}")
     return documents
+
+
+def normalize_flux_path(path):
+    if not isinstance(path, str) or not path:
+        return ""
+    return os.path.normpath(path[2:] if path.startswith("./") else path)
+
+
+def is_flux_kustomization(document):
+    return (
+        document.get("kind") == "Kustomization"
+        and "kustomize.toolkit.fluxcd.io" in str(document.get("apiVersion", ""))
+    )
+
+
+def flux_kustomization_id(item):
+    namespace_text = f"{item['namespace']}/" if item["namespace"] else ""
+    return (
+        f"{namespace_text}{item['name']} "
+        f"(sourceRef.name={item['source_ref_name']}, path={item['path']}, "
+        f"source={item['source_path']})"
+    )
+
+
+def discover_flux_child_paths(path):
+    child_paths = []
+    seen_paths = set()
+    external_kustomizations = []
+    flux_root_path = os.path.normpath(flux_root_dir)
+
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
+        for file_name in sorted(files):
+            if not file_name.endswith((".yaml", ".yml")):
+                continue
+            file_path = os.path.join(root, file_name)
+            try:
+                documents = load_documents(file_path)
+            except yaml.YAMLError as exc:
+                add_error(f"failed to parse YAML source {file_path}: {exc}")
+                continue
+
+            for document in documents:
+                if not is_flux_kustomization(document):
+                    continue
+
+                document_metadata = metadata(document)
+                spec = document.get("spec") or {}
+                source_ref = spec.get("sourceRef") or {}
+                source_ref_name = source_ref.get("name", "")
+                document_path = spec.get("path", "")
+                normalized_path = normalize_flux_path(document_path)
+                item = {
+                    "name": document_metadata.get("name", ""),
+                    "namespace": document_metadata.get("namespace", ""),
+                    "path": document_path,
+                    "source_path": file_path,
+                    "source_ref_name": source_ref_name,
+                }
+
+                if source_ref_name != "flux-system":
+                    external_kustomizations.append(item)
+                    continue
+
+                if (
+                    normalized_path
+                    and normalized_path != flux_root_path
+                    and os.path.isdir(normalized_path)
+                    and normalized_path not in seen_paths
+                ):
+                    seen_paths.add(normalized_path)
+                    child_paths.append(normalized_path)
+
+    return child_paths, external_kustomizations
+
+
+def render_child_flux_documents(child_paths, failures_are_warnings=False):
+    documents = []
+    failed_paths = []
+
+    for child_path in child_paths:
+        result = subprocess.run(
+            ["kubectl", "kustomize", child_path],
+            check=False,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if result.returncode != 0:
+            stderr = " ".join(result.stderr.split()) or "<no stderr>"
+            message = (
+                f"cannot render child Flux Kustomization path {child_path}; "
+                f"kubectl kustomize exited {result.returncode}: {stderr}"
+            )
+            if failures_are_warnings:
+                add_warning(f"GUARD_OFFLINE — {message}")
+            else:
+                add_error(message)
+            failed_paths.append(child_path)
+            continue
+
+        try:
+            rendered_documents = documents_from_text(result.stdout)
+        except yaml.YAMLError as exc:
+            message = (
+                f"failed to parse rendered child Flux Kustomization path "
+                f"{child_path}: {exc}"
+            )
+            if failures_are_warnings:
+                add_warning(f"GUARD_OFFLINE — {message}")
+            else:
+                add_error(message)
+            failed_paths.append(child_path)
+            continue
+
+        for document in rendered_documents:
+            document["_guard_source_path"] = child_path
+            documents.append(document)
+
+    return documents, failed_paths
+
+
+def dedup_documents(documents):
+    deduped = []
+    seen = set()
+    for document in documents:
+        key = (document.get("kind", ""), namespace(document), name(document))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(document)
+    return deduped
 
 
 def assert_exactly_one(kind, resource_name, resource_namespace=None):
@@ -639,23 +776,46 @@ resources = parent.get("resources") or []
 if "vault-restore-validator" not in resources:
     add_error("parent apps kustomization must reference vault-restore-validator")
 
+guard_offline = os.environ.get("GUARD_OFFLINE") == "1"
+child_flux_paths, external_flux_kustomizations = discover_flux_child_paths(flux_root_dir)
+if external_flux_kustomizations:
+    add_warning(
+        "external-source Flux Kustomizations are out of scope for local rendering "
+        "and are governed by their source repositories: "
+        + "; ".join(
+            flux_kustomization_id(item) for item in external_flux_kustomizations
+        )
+    )
+
 if root_render_status == 0:
     root_documents = load_documents(root_rendered_path)
     app_documents = [
         document for document in root_documents if in_validator_footprint(document)
     ]
     app_text = yaml.safe_dump_all(app_documents, sort_keys=True)
-    binding_scan_documents = root_documents
-    binding_scan_source = "Flux root render"
-elif os.environ.get("GUARD_OFFLINE") == "1":
+    child_documents, failed_child_paths = render_child_flux_documents(
+        child_flux_paths,
+        failures_are_warnings=guard_offline,
+    )
+    if failed_child_paths and guard_offline:
+        add_warning(
+            "GUARD_OFFLINE — one or more child Flux Kustomization renders failed; "
+            "falling back to a whole Flux source-tree scan; this run is NOT authoritative"
+        )
+        binding_scan_documents = source_documents_under(flux_root_dir)
+        binding_scan_source = "Flux source tree"
+    else:
+        binding_scan_documents = dedup_documents(root_documents + child_documents)
+        binding_scan_source = "Flux root render plus child Flux Kustomization renders"
+elif guard_offline:
     add_warning(
         "GUARD_OFFLINE — Flux-root render skipped; kustomize transforms/top-level "
         "patches NOT verified; this run is NOT authoritative"
     )
     app_text = load_text(app_rendered_path)
     app_documents = load_documents(app_rendered_path)
-    binding_scan_documents = source_documents_under(apps_dir)
-    binding_scan_source = "apps source tree"
+    binding_scan_documents = source_documents_under(flux_root_dir)
+    binding_scan_source = "Flux source tree"
 else:
     add_error(
         f"cannot render the Flux root {flux_root_dir} (CI must verify the deployed state); "
