@@ -70,6 +70,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0022](repo/0022-longhorn-under-flux-gitops.md) | Bring Longhorn Under Flux GitOps | Accepted | 2026-07-09 | Adopt the existing Longhorn `1.11.2` Helm release with a Flux HelmRelease whose values byte-match `addons/longhorn/values.yaml`, and gate Longhorn-dependent Vault storage policy behind the Longhorn Kustomization for DR rebuilds. |
 | [0023](repo/0023-nwarila-signed-image-for-dr-restore-driver.md) | Use a Signed NWarila Image for the DR Restore Driver | Proposed | 2026-07-10 | Define the first-party signed-image contract for the DR restore driver and the coordinated CronJob, CI guard, and Kyverno boundary digest-swap sequence. |
 | [0024](repo/0024-two-layer-enforcement-of-restore-validator-boundary.md) | Use Two-Layer Enforcement for the Restore-Validator Boundary | Accepted | 2026-07-10 | Record the paired CI guard/self-test and Kyverno runtime policy that protect the ADR-0020 restore-validator boundary before owner-gated go-live. |
+| [0025](repo/0025-deliberate-transparency-public-repo.md) | Publish the Public Repository with Full Topology | Accepted | 2026-07-10 | Accept public publication of the real homelab topology as a portfolio trade, treating topology as reconnaissance rather than authority and requiring no-secret, boundary-first controls. |
 
 ### Imported Vault ADRs
 
