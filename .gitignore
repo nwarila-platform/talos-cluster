@@ -335,6 +335,7 @@
 !/docs/decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md
 !/docs/decision-records/repo/0022-longhorn-under-flux-gitops.md
 !/docs/decision-records/repo/0023-nwarila-signed-image-for-dr-restore-driver.md
+!/docs/decision-records/repo/0024-two-layer-enforcement-of-restore-validator-boundary.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
