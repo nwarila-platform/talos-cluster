@@ -1,16 +1,17 @@
 # ClusterPolicy: verify-image-signatures (scoped)
 #
 # Scoped cosign keyless signature verification for image families known to
-# publish sigstore signatures via GitHub Actions OIDC. nwarila-platform and
-# the-hero-wars-guys images are enforced; Flux, Cilium, Kyverno, and VSO remain
-# audit-only until they can be enforced without deadlocking GitOps or exceeding
-# Kyverno verifyImages support.
+# publish sigstore signatures via GitHub Actions OIDC. nwarila, nwarila-platform,
+# and the-hero-wars-guys images are enforced; Flux, Cilium, Kyverno, and VSO
+# remain audit-only until they can be enforced without deadlocking GitOps or
+# exceeding Kyverno verifyImages support.
 # Cilium is matched at the image-family level so signed release digest rotation
 # does not require policy churn; known unsigned helper families are skipped
 # explicitly. See ADR-0010.
 #
-# Scope: Flux, Cilium, Kyverno, and nwarila-platform GHCR images. Longhorn,
-# registry.k8s.io, and other image families are out of scope for this policy;
+# Scope: Flux, Cilium, Kyverno, nwarila, and nwarila-platform GHCR images.
+# Longhorn, registry.k8s.io, and other image families are out of scope for this
+# policy;
 # they fall through without evaluation because their registries are not listed
 # in imageReferences. Kyverno release images are verified from GHCR because the
 # reg.kyverno.io v1.18.1 mirrors do not expose discoverable cosign signatures.
@@ -36,8 +37,8 @@ metadata:
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
       Keyless cosign signature verification for Flux, Cilium, Kyverno, Vault
-      Secrets Operator, nwarila-platform, and the-hero-wars-guys images.
-      Enforces nwarila-platform and the-hero-wars-guys signatures while
+      Secrets Operator, nwarila, nwarila-platform, and the-hero-wars-guys images.
+      Enforces nwarila, nwarila-platform, and the-hero-wars-guys signatures while
       auditing the other families until they can be safely enforced by Kyverno
       admission.
 spec:
@@ -160,6 +161,25 @@ spec:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
                     subjectRegExp: "^https://github\\.com/nwarila-platform/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
+    - name: verify-nwarila-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/nwarila/*"
+          failureAction: Enforce
+          mutateDigest: false
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: "^https://github\\.com/[Nn][Ww]arila/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
                     rekor:
                       url: "https://rekor.sigstore.dev"
     - name: verify-herowars-images
