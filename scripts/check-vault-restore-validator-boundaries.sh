@@ -72,6 +72,10 @@ DRIVER_SELECTOR_LABELS = {
     "app.kubernetes.io/component": "restore-driver",
     "io.kubernetes.pod.namespace": DR_VALIDATE_NS,
 }
+EXPECTED_POD_TEMPLATE_LABELS = {
+    "app.kubernetes.io/name": "vault-restore-validator",
+    "app.kubernetes.io/component": "restore-driver",
+}
 DESTRUCTIVE_LONGHORN_VERBS = {
     "create",
     "update",
@@ -350,7 +354,8 @@ def rule_targets_driver_surface(api_groups, resources):
     return any(
         group in api_group_set or "*" in api_group_set
         for group, target_resources in {
-            "": {"pods"},
+            "": {"pods", "pods/ephemeralcontainers"},
+            "batch": {"jobs", "cronjobs"},
             "longhorn.io": {"volumes"},
             "admissionregistration.k8s.io": {
                 "validatingadmissionpolicies",
@@ -1203,11 +1208,17 @@ if cronjob is not None:
         add_error("CronJob/dr-restore-driver must ship spec.suspend: true")
     if spec.get("schedule") != "0 6 31 2 *":
         add_error("CronJob/dr-restore-driver must use the inert Feb-31 schedule placeholder")
-    pod_spec = (
-        ((spec.get("jobTemplate") or {}).get("spec") or {})
-        .get("template", {})
-        .get("spec", {})
+    pod_template = ((spec.get("jobTemplate") or {}).get("spec") or {}).get(
+        "template", {}
     )
+    pod_template_labels = (pod_template.get("metadata") or {}).get("labels") or {}
+    if pod_template_labels != EXPECTED_POD_TEMPLATE_LABELS:
+        add_error(
+            "CronJob/dr-restore-driver pod template labels must be exactly the two "
+            "approved app.kubernetes.io labels so no extra label can be targeted by "
+            "a network policy"
+        )
+    pod_spec = pod_template.get("spec", {})
     if pod_spec.get("serviceAccountName") != DR_ORCHESTRATOR:
         add_error("CronJob/dr-restore-driver must run as dr-orchestrator")
     if pod_spec.get("automountServiceAccountToken") is not True:
