@@ -7,4 +7,5 @@ resources:
   - protect-vault-client-serviceaccount.yaml
   - protect-live-vault-config.yaml
   - restrict-vso-org-pull-secrets.yaml
+  - protect-dr-validate-boundary.yaml
   - verify-image-signatures.yaml
