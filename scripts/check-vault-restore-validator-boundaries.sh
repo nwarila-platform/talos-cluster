@@ -55,6 +55,7 @@ DR_ORCHESTRATOR = "dr-orchestrator"
 DR_GENERATE_ROOT = "dr-generate-root"
 DR_ORCHESTRATOR_USER = "system:serviceaccount:dr-validate:dr-orchestrator"
 DR_GENERATE_ROOT_USER = "system:serviceaccount:dr-validate:dr-generate-root"
+DR_VALIDATE_DEFAULT_USER = "system:serviceaccount:dr-validate:default"
 GUARDED_REACHING_GROUPS = {
     "system:authenticated",
     "system:serviceaccounts",
@@ -614,9 +615,16 @@ def subject_reaches_guarded_sa(subject):
     subject_kind = subject.get("kind")
     subject_name = subject.get("name")
     if subject_kind == "ServiceAccount":
-        return subject_name in {DR_ORCHESTRATOR, DR_GENERATE_ROOT}
+        subject_namespace = subject.get("namespace")
+        return subject_name in {DR_ORCHESTRATOR, DR_GENERATE_ROOT} or (
+            subject_name == "default" and subject_namespace == DR_VALIDATE_NS
+        )
     if subject_kind == "User":
-        return subject_name in {DR_ORCHESTRATOR_USER, DR_GENERATE_ROOT_USER}
+        return subject_name in {
+            DR_ORCHESTRATOR_USER,
+            DR_GENERATE_ROOT_USER,
+            DR_VALIDATE_DEFAULT_USER,
+        }
     if subject_kind == "Group":
         return subject_name in GUARDED_REACHING_GROUPS
     return False
@@ -718,7 +726,7 @@ def pod_spec_of(document):
 
 
 def assert_guarded_service_account_workloads(workload_documents, source_label):
-    guarded_service_accounts = {DR_ORCHESTRATOR, DR_GENERATE_ROOT}
+    guarded_service_accounts = {DR_ORCHESTRATOR, DR_GENERATE_ROOT, "default"}
     for workload in workload_documents:
         kind = workload.get("kind")
         if kind not in POD_TEMPLATE_KINDS:
@@ -728,7 +736,7 @@ def assert_guarded_service_account_workloads(workload_documents, source_label):
             continue
 
         workload_namespace = namespace(workload)
-        sa = pod_spec.get("serviceAccountName") or pod_spec.get("serviceAccount")
+        sa = pod_spec.get("serviceAccountName") or pod_spec.get("serviceAccount") or "default"
         if workload_namespace != DR_VALIDATE_NS or sa not in guarded_service_accounts:
             continue
         if (kind, workload_namespace, name(workload)) in APPROVED_GUARDED_WORKLOADS:
