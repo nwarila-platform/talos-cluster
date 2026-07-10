@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dr-soak-observer
+  namespace: kyverno
+  labels:
+    app.kubernetes.io/name: dr-soak-observer
+    app.kubernetes.io/component: soak-observation
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch

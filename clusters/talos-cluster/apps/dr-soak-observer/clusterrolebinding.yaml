@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dr-soak-observer
+  labels:
+    app.kubernetes.io/name: dr-soak-observer
+    app.kubernetes.io/component: soak-observation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dr-soak-observer
+subjects:
+  - kind: ServiceAccount
+    name: dr-soak-observer
+    namespace: kyverno

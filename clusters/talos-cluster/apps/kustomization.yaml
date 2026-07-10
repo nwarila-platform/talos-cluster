@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
   - actions-runner-controller
   - dr-backup
+  - dr-soak-observer
   - gateway-api
   - kubelet-csr-approver
   - kyverno
