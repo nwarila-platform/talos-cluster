@@ -154,6 +154,9 @@ jobs:
       - name: "Guard: Vault restore-validator boundary"
         run: bash scripts/check-vault-restore-validator-boundaries.sh
 
+      - name: "Guard self-test: restore-validator boundary regression"
+        run: python3 scripts/check-vault-restore-validator-boundaries.selftest.py
+
       - name: Check rendered resource namespaces
         run: |
           set -euo pipefail
