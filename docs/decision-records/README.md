@@ -68,6 +68,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0020](repo/0020-automate-vault-restore-validation.md) | Automate Vault Restore Validation | Proposed | 2026-07-08 | Propose recurring scratch-only Vault restore validation that uses the recovery-key quorum, proves decrypted data access, records RTO and evidence, and destroys scratch resources. |
 | [0021](repo/0021-synology-nfs-backup-target-for-longhorn.md) | Synology NFS Backup Target for Longhorn Stage-1 DR | Accepted | 2026-07-09 | Replace the retired Windows/WSL NFS box with a dedicated Synology (RS3621rpxs) Btrfs share as the Longhorn Stage-1 target; pin NFSv4.1 (DSM's max; 4.2 gains nothing for Longhorn and only an unsupported hack could enable it), per-host export + `all_squash`, `sync`, daily immutable snapshots (retain 30). Realizes the Longhorn/PV tier deferred by ADR-0014. |
 | [0022](repo/0022-longhorn-under-flux-gitops.md) | Bring Longhorn Under Flux GitOps | Accepted | 2026-07-09 | Adopt the existing Longhorn `1.11.2` Helm release with a Flux HelmRelease whose values byte-match `addons/longhorn/values.yaml`, and gate Longhorn-dependent Vault storage policy behind the Longhorn Kustomization for DR rebuilds. |
+| [0023](repo/0023-nwarila-signed-image-for-dr-restore-driver.md) | Use a Signed NWarila Image for the DR Restore Driver | Proposed | 2026-07-10 | Define the first-party signed-image contract for the DR restore driver and the coordinated CronJob, CI guard, and Kyverno boundary digest-swap sequence. |
 
 ### Imported Vault ADRs
 
