@@ -7,6 +7,11 @@
 # machine.kubelet.extraArgs.rotate-server-certificates: "true" in
 # cluster/patches/common.yaml.
 #
+# WHY RETAINED:
+# These are OUT-OF-BAND bootstrap Helm values, installed before Flux can
+# reconcile the cluster. Keep this file for cluster rebuilds; it is not the
+# Flux-managed runtime source.
+#
 # See docs/decision-records/repo/0005-kubelet-csr-approver.md
 # =============================================================================
 

@@ -1,6 +1,11 @@
 # =============================================================================
 # Cilium CNI — Helm values for Talos
 # Chart: cilium/cilium v1.19.4 (pinned in cluster/config.env)
+#
+# WHY RETAINED:
+# These are OUT-OF-BAND bootstrap Helm values, installed before Flux can
+# reconcile the cluster. Keep this file for cluster rebuilds; it is not the
+# Flux-managed runtime source.
 # =============================================================================
 ipam:
   mode: kubernetes

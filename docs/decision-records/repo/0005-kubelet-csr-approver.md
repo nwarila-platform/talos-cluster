@@ -19,7 +19,7 @@ This cluster deploys `postfinance/kubelet-csr-approver` (Helm chart, version 1.2
 
 K8s kubelet has two operating modes for its serving certificate (the cert presented on port 10250 to clients like metrics-server, `kubectl logs/exec/port-forward`, and node-exporter):
 
-1. **Self-signed.** Default in K8s 1.x. kubelet signs its own serving cert with an in-memory key; clients that validate the cert (metrics-server, Prometheus kubelet scraper, OpenTelemetry collectors) must be configured with `--kubelet-insecure-tls` or equivalent. This is what the cluster runs today; `addons/metrics-server/values.yaml` carries the insecure-tls workaround.
+1. **Self-signed.** Default in K8s 1.x. kubelet signs its own serving cert with an in-memory key; clients that validate the cert (metrics-server, Prometheus kubelet scraper, OpenTelemetry collectors) must be configured with `--kubelet-insecure-tls` or equivalent. At ADR adoption, this was what the cluster ran; `addons/metrics-server/values.yaml` carried the insecure-tls workaround. That file was later removed as vestigial after the Flux HelmRelease moved to chart defaults and no longer set `--kubelet-insecure-tls`.
 
 2. **Cluster-CA-signed via the CSR API.** Enabled by `kubelet --rotate-server-certificates`. On startup and ~80% through expiry, kubelet creates a CSR for signer `kubernetes.io/kubelet-serving` and waits for a `system:masters`-level approver to sign it. Once signed, kubelet uses the cert (validated by the cluster CA, which every in-cluster client trusts). Eliminates the `--insecure-tls` workaround.
 
@@ -29,7 +29,7 @@ On 2026-05-25, this repository's prior `cluster/patches/common.yaml` declared `r
 
 ## Decision Drivers
 
-1. **Eliminate the `--kubelet-insecure-tls` exception** in `addons/metrics-server/values.yaml` and any future scraper that wants to validate kubelet's serving cert.
+1. **Eliminate the `--kubelet-insecure-tls` exception** formerly carried in `addons/metrics-server/values.yaml` and any future scraper that wants to validate kubelet's serving cert. The metrics-server addon values file was later removed as vestigial after this exception was dropped.
 2. **Zero manual operator action** for routine kubelet cert rotation. Manual `kubectl certificate approve` is a known operational pain point that, when missed, silently breaks metrics-server.
 3. **Defense in depth on the approval policy**. A bad approver that signs any CSR is worse than no approver at all (it would let a compromised pod with kubelet-style credentials request certs for other nodes). The chosen approver must verify (a) the requestor's identity, (b) the requested SANs are scoped to that requestor.
 4. **Minimal new attack surface**. The approver itself must run unprivileged and as few replicas as gives HA.
@@ -99,7 +99,7 @@ Adherence to this ADR is confirmed by the following mechanisms. The wording `MUS
 ### Positive
 
 - `rotate-server-certificates: "true"` becomes safe to enable in a follow-up cycle; kubelet serving certs rotate automatically and are signed by the cluster CA.
-- `addons/metrics-server/values.yaml` can drop `--kubelet-insecure-tls` (separate follow-up cycle).
+- The then-existing `addons/metrics-server/values.yaml` could drop `--kubelet-insecure-tls` (separate follow-up cycle). That vestigial file was later removed after the Flux HelmRelease used chart defaults.
 - Future addons that scrape kubelet (Prometheus, OpenTelemetry, Sysdig, etc.) can validate kubelet's identity with the cluster CA rather than needing per-addon insecure-TLS exceptions.
 
 ### Negative
