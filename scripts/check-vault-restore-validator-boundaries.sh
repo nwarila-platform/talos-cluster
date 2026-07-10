@@ -141,6 +141,9 @@ POD_TEMPLATE_KINDS = {
 APPROVED_GUARDED_WORKLOADS = {
     ("CronJob", DR_VALIDATE_NS, "dr-restore-driver"),
 }
+APPROVED_SSA_IFNOTPRESENT = {
+    ("ConfigMap", DR_VALIDATE_NS, "dr-restore-driver-result"),
+}
 APPROVED_LONGHORN_RULES = {
     (
         ("longhorn.io",),
@@ -933,6 +936,25 @@ if "vault-drill" in app_text or "scratch-vault" in app_text:
 for document in app_documents:
     kind = document.get("kind", "")
     resource_name = name(document)
+    resource_namespace = namespace(document)
+    document_annotations = metadata(document).get("annotations") or {}
+
+    if document_annotations.get("kustomize.toolkit.fluxcd.io/reconcile") == "disabled":
+        add_error(f"{kind}/{resource_name} must not disable Flux reconciliation")
+
+    flux_ssa = document_annotations.get("kustomize.toolkit.fluxcd.io/ssa")
+    if flux_ssa == "Ignore":
+        add_error(f"{kind}/{resource_name} must not set Flux ssa: Ignore")
+    elif flux_ssa == "IfNotPresent":
+        if (kind, resource_namespace, resource_name) not in APPROVED_SSA_IFNOTPRESENT:
+            add_error(
+                f"{kind}/{resource_name} may set Flux ssa: IfNotPresent only on "
+                "ConfigMap/dr-restore-driver-result"
+            )
+    elif flux_ssa is not None and flux_ssa != "Override":
+        add_error(
+            f"{kind}/{resource_name} must not set unsupported Flux ssa value {flux_ssa!r}"
+        )
 
     if kind in {"ClusterRole", "ClusterRoleBinding"}:
         add_error(f"{kind}/{resource_name} is forbidden; Longhorn access must use a namespaced Role")
