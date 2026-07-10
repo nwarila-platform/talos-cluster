@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dr-restore-driver-result
+  namespace: dr-validate
+  annotations:
+    # Flux seeds this PENDING placeholder once, then leaves the driver's PASS/FAIL
+    # result in place (IfNotPresent = create-if-absent, never drift-correct) so a
+    # reconcile can't revert a run's result back to PENDING.
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+data:
+  result.json: |
+    {
+      "status": "PENDING",
+      "reason": "restore driver has not run",
+      "cleanup_verified": false
+    }

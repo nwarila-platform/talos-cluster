@@ -61,6 +61,11 @@
 !/clusters/talos-cluster/apps/vault-restore-validator/serviceaccounts.yaml
 !/clusters/talos-cluster/apps/vault-restore-validator/rbac.yaml
 !/clusters/talos-cluster/apps/vault-restore-validator/networkpolicy-default-deny.yaml
+!/clusters/talos-cluster/apps/vault-restore-validator/ciliumnetworkpolicy-egress.yaml
+!/clusters/talos-cluster/apps/vault-restore-validator/validatingadmissionpolicy.yaml
+!/clusters/talos-cluster/apps/vault-restore-validator/result-configmap.yaml
+!/clusters/talos-cluster/apps/vault-restore-validator/cronjob.yaml
+!/clusters/talos-cluster/apps/vault-restore-validator/restore-driver.sh
 !/clusters/talos-cluster/apps/vault-secrets-operator/
 !/clusters/talos-cluster/apps/vault-secrets-operator/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-secrets-operator/kustomization-controller.yaml
@@ -125,6 +130,7 @@
 !/clusters/talos-cluster/apps/kyverno/policies/protect-vault-client-serviceaccount.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/protect-live-vault-config.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/restrict-vso-org-pull-secrets.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/protect-dr-validate-boundary.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml

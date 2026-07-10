@@ -1,0 +1,176 @@
+# ClusterPolicy: protect-dr-validate-boundary
+#
+# RUNTIME (admission) backstop for the DR restore-validator boundary — the authoritative layer of the
+# defense-in-depth model chosen for this slice. It validates the ACTUALLY-APPLIED object (after Flux
+# spec.postBuild/spec.components substitution and after Helm chart templating), closing the class the static
+# CI guard (scripts/check-vault-restore-validator-boundaries.sh) structurally cannot see: the rendered git
+# manifest != the applied cluster object.
+#
+# DESIGN: deliberately does NOT exclude the Flux controllers. The threat is Flux/Helm applying malicious
+# CONTENT (a poisoned commit, a postBuild substitution, a chart-templated binding), so every rule is
+# CONTENT-based — legit resources pass on their content, malicious ones fail regardless of who applies them.
+#
+# !!! SHIPS IN AUDIT MODE. Runtime admission policy could not be tested offline (no kyverno CLI / cluster in
+# the authoring environment). Before flipping validationFailureAction to Enforce and failurePolicy to Fail:
+#   1. Soak in Audit; inspect PolicyReports for FALSE POSITIVES on legit Flux/Helm applies (there must be none).
+#   2. Validate each rule with `kyverno apply` against fixtures (approved objects PASS; the round-4 attack
+#      objects — un-suspended CronJob, ${VAR}-substituted guarded binding, data-vault fromBackup Volume — FAIL).
+#   3. A buggy Enforce+Fail rule would BLOCK legit Flux reconciliation cluster-wide, so do not skip the soak.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-dr-validate-boundary
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Protect DR restore-validator boundary (runtime backstop)
+    policies.kyverno.io/category: Disaster Recovery
+    policies.kyverno.io/severity: critical
+    policies.kyverno.io/subject: CronJob, RoleBinding, Volume, Pod
+    policies.kyverno.io/description: >-
+      Runtime admission backstop for the DR restore-validator. Validates the real
+      applied object (post Flux/Helm) to close what the static CI guard cannot see:
+      un-suspending or rewriting the driver CronJob, binding the guarded restore-driver
+      ServiceAccounts, running arbitrary code as them, and restoring the live data-vault
+      backup into a Longhorn Volume. Ships in Audit — soak then Enforce.
+spec:
+  validationFailureAction: Audit          # TODO: -> Enforce after Audit soak (see header)
+  background: true
+  webhookConfiguration:
+    failurePolicy: Ignore                 # TODO: -> Fail after Audit soak confirms no legit-apply false-positives
+  rules:
+    # 1. The approved CronJob must stay inert (suspended) with its pinned identity/command/image. Catches the
+    #    confirmed Flux spec.patches un-suspend/command-swap that the static guard cannot see.
+    - name: cronjob-must-stay-suspended-and-pinned
+      match:
+        any:
+          - resources:
+              kinds: [CronJob]
+              namespaces: [dr-validate]
+              names: [dr-restore-driver]
+              operations: [CREATE, UPDATE]
+      validate:
+        message: >-
+          The dr-restore-driver CronJob must stay suspended (spec.suspend: true) and run only the pinned
+          restore-driver.sh as dr-orchestrator. Un-suspending or rewriting its command/image/ServiceAccount is
+          forbidden — the DR validation runs only under supervised manual trigger.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.suspend || `false` }}"
+                operator: NotEquals
+                value: true
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.serviceAccountName || '' }}"
+                operator: NotEquals
+                value: dr-orchestrator
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.containers[0].command || `[]` }}"
+                operator: NotEquals
+                value: ["/bin/bash", "/opt/vault-restore-validator/restore-driver.sh"]
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.containers[0].image || '' }}"
+                operator: NotEquals
+                value: "docker.io/bitnami/kubectl@sha256:558420daf32bbc382e3e9af4537f4073085b336ddd47399a3b70e70087115978"
+
+    # 2. Only the approved bindings may bind the guarded restore-driver Roles. Kyverno sees the RESOLVED binding
+    #    (after Flux ${VAR} substitution), closing the postBuild placeholder evasion. roleRef-keyed.
+    - name: no-unapproved-binding-of-guarded-roles
+      match:
+        any:
+          - resources:
+              kinds: [RoleBinding, ClusterRoleBinding]
+              operations: [CREATE, UPDATE]
+      validate:
+        message: >-
+          Only the approved restore-validator bindings (dr-orchestrator-longhorn-restore,
+          dr-orchestrator-result-writer, dr-generate-root-noop) may reference the guarded restore-driver Roles.
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.roleRef.name }}"
+                operator: AnyIn
+                value: [dr-orchestrator-longhorn-restore, dr-orchestrator-result-writer, vault-restore-validator-noop]
+              - key: "{{ request.object.metadata.name }}"
+                operator: AnyNotIn
+                value: [dr-orchestrator-longhorn-restore, dr-orchestrator-result-writer, dr-generate-root-noop]
+
+    # 3. Nothing may bind the guarded restore-driver ServiceAccounts by subject (SA/User/Group) except the
+    #    approved bindings. Kyverno sees the resolved subject (post-substitution).
+    - name: no-unapproved-subject-reaches-guarded-sa
+      match:
+        any:
+          - resources:
+              kinds: [RoleBinding, ClusterRoleBinding]
+              operations: [CREATE, UPDATE]
+      validate:
+        message: >-
+          Only the approved restore-validator bindings may name the guarded ServiceAccounts dr-orchestrator /
+          dr-generate-root (by ServiceAccount, by their User username, or by a Group that contains them).
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.metadata.name }}"
+                operator: AnyNotIn
+                value: [dr-orchestrator-longhorn-restore, dr-orchestrator-result-writer, dr-generate-root-noop]
+              - key: "{{ reaches }}"
+                operator: Equals
+                value: true
+                # 'reaches' is computed by the context below: true if any subject reaches a guarded identity.
+      # context computes whether any subject reaches a guarded identity (SA name / User username / Group)
+      context:
+        - name: reaches
+          variable:
+            jmesPath: >-
+              length(request.object.subjects[?
+                (kind=='ServiceAccount' && (name=='dr-orchestrator' || name=='dr-generate-root')) ||
+                (kind=='User' && (name=='system:serviceaccount:dr-validate:dr-orchestrator' || name=='system:serviceaccount:dr-validate:dr-generate-root')) ||
+                (kind=='Group' && (name=='system:serviceaccounts' || name=='system:serviceaccounts:dr-validate' || name=='system:authenticated'))
+              ]) > `0`
+            default: false
+
+    # 4. Restoring the live data-vault backup into a Longhorn Volume is forbidden except the driver's fixed
+    #    scratch volume created by dr-orchestrator. Catches the data-plane restore (a Volume applied by
+    #    flux-system, which the VAP — scoped to the dr-orchestrator username — never constrains).
+    - name: no-datavault-backup-restore
+      match:
+        any:
+          - resources:
+              kinds: [Volume]                 # longhorn.io/v1beta2 Volume
+              operations: [CREATE, UPDATE]
+      preconditions:
+        all:
+          - key: "{{ request.object.apiVersion || '' }}"
+            operator: Equals
+            value: "longhorn.io/v1beta2"
+      validate:
+        message: >-
+          A Longhorn Volume may not be created from the live data-vault backup except as the driver's fixed
+          scratch volume dr-validate-vault-restore by the dr-orchestrator ServiceAccount.
+        deny:
+          conditions:
+            all:
+              - key: "{{ contains(request.object.spec.fromBackup || '', 'data-vault') }}"
+                operator: Equals
+                value: true
+              - key: "{{ request.object.metadata.name }}"
+                operator: NotEquals
+                value: dr-validate-vault-restore
+
+    # 5. Closed-world dr-validate: no runnable workload or Secret may exist in dr-validate except the approved
+    #    CronJob. Catches the SA-token Secret + arbitrary workloads (incl Helm-templated / postBuild-injected).
+    - name: no-unexpected-workload-or-secret-in-dr-validate
+      match:
+        any:
+          - resources:
+              kinds: [Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, ReplicationController, Job, Secret]
+              namespaces: [dr-validate]
+              operations: [CREATE, UPDATE]
+      validate:
+        message: >-
+          The dr-validate namespace is closed-world: only the approved suspended CronJob dr-restore-driver
+          (and the objects it owns at supervised run time) may run there. Arbitrary workloads and Secrets —
+          including service-account-token Secrets — are forbidden.
+        deny:
+          conditions:
+            all:
+              # allow the CronJob-owned Job/Pod at supervised run time (ownerReference chains to dr-restore-driver)
+              - key: "{{ length(request.object.metadata.ownerReferences[?name=='dr-restore-driver' || starts_with(name, 'dr-restore-driver-')] || `[]`) }}"
+                operator: Equals
+                value: 0

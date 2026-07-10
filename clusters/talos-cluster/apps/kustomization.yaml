@@ -17,5 +17,6 @@ resources:
   - vault-auth
   - vault-aws-access
   - vault-kustomization.yaml
+  - vault-restore-validator
   - vault-secrets-operator
   - vault-tls

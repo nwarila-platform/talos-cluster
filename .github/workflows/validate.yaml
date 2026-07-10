@@ -175,6 +175,8 @@ jobs:
               "Namespace",
               "PriorityClass",
               "StorageClass",
+              "ValidatingAdmissionPolicy",
+              "ValidatingAdmissionPolicyBinding",
               "ValidatingWebhookConfiguration",
           }
 
