@@ -13,8 +13,11 @@
 !/.editorconfig
 !/.pre-commit-config.yaml
 !/AGENTS.md
+!/CONTRIBUTING.md
+!/LICENSE
 !/Makefile
 !/README.md
+!/SECURITY.md
 !/systems
 
 # -- Flux: GitOps controllers + cluster-specific bootstrap ---------------------
