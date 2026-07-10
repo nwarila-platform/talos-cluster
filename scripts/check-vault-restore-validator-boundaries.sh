@@ -262,11 +262,23 @@ FORBIDDEN_FLUX_CR_TRANSFORMS = [
     "patches",
     "patchesStrategicMerge",
     "patchesJson6902",
-    "postBuild",
     "images",
     "commonMetadata",
-    "components",
 ]
+FORBIDDEN_APPLY_TIME_FLUX_CR_TRANSFORMS = {
+    "postBuild": "variable substitution",
+    "components": "added components",
+}
+LONGHORN_DATAPLANE_KINDS = {
+    "Volume",
+    "RecurringJob",
+    "Snapshot",
+    "Backup",
+    "BackingImage",
+}
+APPROVED_LONGHORN_DATAPLANE = {
+    ("RecurringJob", LONGHORN_NS, "vault-daily-backup"),
+}
 
 
 def load_text(path):
@@ -414,12 +426,15 @@ def values_match(values, expected):
 
 def rule_targets_driver_surface(api_groups, resources):
     api_group_set = set(list_value(api_groups))
-    resource_set = set(list_value(resources))
+    resource_bases = {
+        str(resource).split("/", 1)[0]
+        for resource in list_value(resources)
+    }
 
     return any(
         group in api_group_set or "*" in api_group_set
         for group, target_resources in {
-            "": {"pods", "pods/ephemeralcontainers"},
+            "": {"pods"},
             "batch": {"jobs", "cronjobs"},
             "longhorn.io": {"volumes"},
             "admissionregistration.k8s.io": {
@@ -428,7 +443,7 @@ def rule_targets_driver_surface(api_groups, resources):
                 "validatingwebhookconfigurations",
             },
         }.items()
-        if "*" in resource_set or resource_set & target_resources
+        if "*" in resource_bases or resource_bases & target_resources
     )
 
 
@@ -675,6 +690,13 @@ def assert_flux_cr_transform_boundaries(
                 f"Flux Kustomization {flux_kustomization_name(item)} must not "
                 f"targetNamespace {DR_VALIDATE_NS}"
             )
+        for field, effect in FORBIDDEN_APPLY_TIME_FLUX_CR_TRANSFORMS.items():
+            if field in spec:
+                add_error(
+                    f"Flux Kustomization {flux_kustomization_name(item)} must not "
+                    f"use spec.{field} - its apply-time effect ({effect}) is "
+                    "invisible to the guard and can inject into the validator footprint"
+                )
 
         normalized_path = item["normalized_path"]
         if normalized_path == flux_root_path:
@@ -936,6 +958,26 @@ def assert_no_unapproved_destructive_longhorn_roles(role_documents, source_label
             f"{source_label} {role_location(role)}: only the approved "
             "dr-orchestrator-longhorn-restore Role in longhorn-system may carry "
             f"create/destructive longhorn.io access; {role_id} must not"
+        )
+
+
+def assert_no_unexpected_longhorn_dataplane(documents, source_label):
+    for document in documents:
+        if "longhorn.io" not in str(document.get("apiVersion", "")):
+            continue
+        kind = document.get("kind", "")
+        if kind not in LONGHORN_DATAPLANE_KINDS:
+            continue
+
+        key = (kind, namespace(document), name(document))
+        if key in APPROVED_LONGHORN_DATAPLANE:
+            continue
+
+        add_error(
+            f"{source_label} unexpected Longhorn data-plane "
+            f"{kind}/{namespace(document)}/{name(document)}; git may declare only "
+            "the approved backup RecurringJob - a Volume fromBackup or extra "
+            "RecurringJob can restore/destroy the live data-vault volume"
         )
 
 
@@ -1306,6 +1348,7 @@ assert_guarded_role_bindings(binding_scan_documents, binding_scan_source)
 assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
 assert_footprint_is_closed_world(binding_scan_documents, binding_scan_source)
 assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_scan_source)
+assert_no_unexpected_longhorn_dataplane(binding_scan_documents, binding_scan_source)
 assert_no_impersonate_roles(binding_scan_documents, binding_scan_source)
 assert_no_ccnp_egress_selects_driver(binding_scan_documents, binding_scan_source)
 assert_no_mutating_admission_targets_driver(binding_scan_documents, binding_scan_source)
