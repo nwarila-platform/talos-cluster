@@ -258,6 +258,15 @@ VALIDATING_ADMISSION_KINDS = {
     "ValidatingAdmissionPolicy",
     "ValidatingAdmissionPolicyBinding",
 }
+FORBIDDEN_FLUX_CR_TRANSFORMS = [
+    "patches",
+    "patchesStrategicMerge",
+    "patchesJson6902",
+    "postBuild",
+    "images",
+    "commonMetadata",
+    "components",
+]
 
 
 def load_text(path):
@@ -503,7 +512,19 @@ def source_documents_under(path):
 def normalize_flux_path(path):
     if not isinstance(path, str) or not path:
         return ""
-    return os.path.normpath(path[2:] if path.startswith("./") else path)
+    normalized_path = path[2:] if path.startswith("./") else path
+    normalized_path = normalized_path.lstrip("/")
+    if not normalized_path:
+        return "."
+    return os.path.normpath(normalized_path)
+
+
+def flux_path_is_in_repo_dir(path):
+    if not path or not os.path.isdir(path):
+        return False
+    repo_root = os.getcwd()
+    absolute_path = os.path.abspath(path)
+    return absolute_path == repo_root or absolute_path.startswith(repo_root + os.sep)
 
 
 def is_flux_kustomization(document):
@@ -522,10 +543,15 @@ def flux_kustomization_id(item):
     )
 
 
+def flux_kustomization_name(item):
+    return item["name"] or "<unnamed>"
+
+
 def discover_flux_child_paths(path):
     child_paths = []
     seen_paths = set()
     external_kustomizations = []
+    in_repo_kustomizations = []
     flux_root_path = os.path.normpath(flux_root_dir)
 
     for root, dirs, files in os.walk(path):
@@ -554,6 +580,8 @@ def discover_flux_child_paths(path):
                     "name": document_metadata.get("name", ""),
                     "namespace": document_metadata.get("namespace", ""),
                     "path": document_path,
+                    "normalized_path": normalized_path,
+                    "spec": spec,
                     "source_path": file_path,
                     "source_ref_name": source_ref_name,
                 }
@@ -562,20 +590,29 @@ def discover_flux_child_paths(path):
                     external_kustomizations.append(item)
                     continue
 
+                in_repo_kustomizations.append(item)
+                if not flux_path_is_in_repo_dir(normalized_path):
+                    add_error(
+                        f"Flux Kustomization {flux_kustomization_name(item)} "
+                        f"spec.path {document_path} does not resolve to an "
+                        "in-repo directory"
+                    )
+                    continue
+
                 if (
                     normalized_path
                     and normalized_path != flux_root_path
-                    and os.path.isdir(normalized_path)
                     and normalized_path not in seen_paths
                 ):
                     seen_paths.add(normalized_path)
                     child_paths.append(normalized_path)
 
-    return child_paths, external_kustomizations
+    return child_paths, external_kustomizations, in_repo_kustomizations
 
 
 def render_child_flux_documents(child_paths, failures_are_warnings=False):
     documents = []
+    documents_by_path = {}
     failed_paths = []
 
     for child_path in child_paths:
@@ -587,6 +624,7 @@ def render_child_flux_documents(child_paths, failures_are_warnings=False):
             stderr=subprocess.PIPE,
         )
         if result.returncode != 0:
+            documents_by_path[child_path] = []
             stderr = " ".join(result.stderr.split()) or "<no stderr>"
             message = (
                 f"cannot render child Flux Kustomization path {child_path}; "
@@ -602,6 +640,7 @@ def render_child_flux_documents(child_paths, failures_are_warnings=False):
         try:
             rendered_documents = documents_from_text(result.stdout)
         except yaml.YAMLError as exc:
+            documents_by_path[child_path] = []
             message = (
                 f"failed to parse rendered child Flux Kustomization path "
                 f"{child_path}: {exc}"
@@ -613,11 +652,51 @@ def render_child_flux_documents(child_paths, failures_are_warnings=False):
             failed_paths.append(child_path)
             continue
 
+        documents_by_path[child_path] = rendered_documents
         for document in rendered_documents:
             document["_guard_source_path"] = child_path
             documents.append(document)
 
-    return documents, failed_paths
+    return documents, documents_by_path, failed_paths
+
+
+def assert_flux_cr_transform_boundaries(
+    in_repo_kustomizations,
+    root_render_documents,
+    child_render_documents_by_path,
+):
+    flux_root_path = os.path.normpath(flux_root_dir)
+
+    for item in in_repo_kustomizations:
+        spec = item["spec"]
+        target_namespace = spec.get("targetNamespace")
+        if target_namespace == DR_VALIDATE_NS:
+            add_error(
+                f"Flux Kustomization {flux_kustomization_name(item)} must not "
+                f"targetNamespace {DR_VALIDATE_NS}"
+            )
+
+        normalized_path = item["normalized_path"]
+        if normalized_path == flux_root_path:
+            rendered_documents = root_render_documents
+        else:
+            rendered_documents = child_render_documents_by_path.get(normalized_path, [])
+
+        renders_validator = (
+            normalized_path == flux_root_path
+            or target_namespace == DR_VALIDATE_NS
+            or any(in_validator_footprint(document) for document in rendered_documents)
+        )
+        if not renders_validator:
+            continue
+
+        for field in FORBIDDEN_FLUX_CR_TRANSFORMS:
+            if spec.get(field):
+                add_error(
+                    f"Flux Kustomization {flux_kustomization_name(item)} renders "
+                    "the restore-validator footprint and must not use Flux-level "
+                    f"spec.{field} (applied post-kustomize, invisible to the guard)"
+                )
 
 
 def dedup_documents(documents):
@@ -1012,7 +1091,10 @@ if "vault-restore-validator" not in resources:
     add_error("parent apps kustomization must reference vault-restore-validator")
 
 guard_offline = os.environ.get("GUARD_OFFLINE") == "1"
-child_flux_paths, external_flux_kustomizations = discover_flux_child_paths(flux_root_dir)
+child_flux_paths, external_flux_kustomizations, in_repo_flux_kustomizations = (
+    discover_flux_child_paths(flux_root_dir)
+)
+child_documents_by_path = {}
 if external_flux_kustomizations:
     add_warning(
         "external-source Flux Kustomizations are out of scope for local rendering "
@@ -1028,9 +1110,11 @@ if root_render_status == 0:
         document for document in root_documents if in_validator_footprint(document)
     ]
     app_text = yaml.safe_dump_all(app_documents, sort_keys=True)
-    child_documents, failed_child_paths = render_child_flux_documents(
-        child_flux_paths,
-        failures_are_warnings=guard_offline,
+    child_documents, child_documents_by_path, failed_child_paths = (
+        render_child_flux_documents(
+            child_flux_paths,
+            failures_are_warnings=guard_offline,
+        )
     )
     if failed_child_paths and guard_offline:
         add_warning(
@@ -1057,6 +1141,12 @@ else:
         "set GUARD_OFFLINE=1 only for local non-authoritative checks"
     )
     exit_if_errors()
+
+assert_flux_cr_transform_boundaries(
+    in_repo_flux_kustomizations,
+    root_documents,
+    child_documents_by_path,
+)
 
 if "enable_unauthenticated_access" in app_text:
     add_error("validator render must not include enable_unauthenticated_access")
