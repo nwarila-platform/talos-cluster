@@ -395,6 +395,22 @@ def role_grants_unapproved_longhorn_destructive(role):
     return any(has_unapproved_longhorn_destructive(rule) for rule in rules_for(role))
 
 
+def role_is_approved_longhorn_identity(role):
+    return (
+        role.get("kind") == "Role"
+        and namespace(role) == LONGHORN_NS
+        and name(role) == "dr-orchestrator-longhorn-restore"
+    )
+
+
+def role_grants_any_longhorn_destructive(role):
+    return any(
+        rule_matches_longhorn_api_group(rule)
+        and bool(matched_destructive_verbs(rule))
+        for rule in rules_for(role)
+    )
+
+
 def source_documents_under(path):
     documents = []
     for root, _, files in os.walk(path):
@@ -724,12 +740,20 @@ def assert_no_unapproved_destructive_longhorn_roles(role_documents, source_label
     for role in role_documents:
         if role.get("kind") not in {"Role", "ClusterRole"}:
             continue
-        if not role_grants_unapproved_longhorn_destructive(role):
+        if not role_grants_any_longhorn_destructive(role):
+            continue
+        if role_is_approved_longhorn_identity(role):
             continue
 
+        role_id = (
+            f"ClusterRole/{name(role)}"
+            if role.get("kind") == "ClusterRole"
+            else f"Role/{namespace(role)}/{name(role)}"
+        )
         add_error(
-            f"{source_label} {role_location(role)}: no manifest in the tree may grant "
-            "destructive longhorn.io access except the approved scratch-scoped restore Role"
+            f"{source_label} {role_location(role)}: only the approved "
+            "dr-orchestrator-longhorn-restore Role in longhorn-system may carry "
+            f"create/destructive longhorn.io access; {role_id} must not"
         )
 
 
