@@ -1,0 +1,4 @@
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata: {name: evil-job, namespace: longhorn-system}
+spec: {groups: [default], task: snapshot-delete, retain: 0}

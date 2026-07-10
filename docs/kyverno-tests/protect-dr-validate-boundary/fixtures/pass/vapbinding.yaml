@@ -1,0 +1,11 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: dr-orchestrator-longhorn-volume-allowlist
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+spec:
+  policyName: dr-orchestrator-longhorn-volume-allowlist
+  validationActions:
+  - Deny
