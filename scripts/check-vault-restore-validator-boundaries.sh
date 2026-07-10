@@ -144,6 +144,24 @@ APPROVED_GUARDED_WORKLOADS = {
 APPROVED_SSA_IFNOTPRESENT = {
     ("ConfigMap", DR_VALIDATE_NS, "dr-restore-driver-result"),
 }
+APPROVED_FOOTPRINT_KEYS = {
+    ("CiliumNetworkPolicy", DR_VALIDATE_NS, "dr-orchestrator-egress"),
+    ("ConfigMap", DR_VALIDATE_NS, "dr-restore-driver-result"),
+    ("ConfigMap", DR_VALIDATE_NS, "dr-restore-driver-script"),
+    ("CronJob", DR_VALIDATE_NS, "dr-restore-driver"),
+    ("Namespace", "", DR_VALIDATE_NS),
+    ("NetworkPolicy", DR_VALIDATE_NS, "vault-restore-validator-default-deny"),
+    ("Role", LONGHORN_NS, "dr-orchestrator-longhorn-restore"),
+    ("Role", DR_VALIDATE_NS, "dr-orchestrator-result-writer"),
+    ("Role", DR_VALIDATE_NS, "vault-restore-validator-noop"),
+    ("RoleBinding", DR_VALIDATE_NS, "dr-generate-root-noop"),
+    ("RoleBinding", LONGHORN_NS, "dr-orchestrator-longhorn-restore"),
+    ("RoleBinding", DR_VALIDATE_NS, "dr-orchestrator-result-writer"),
+    ("ServiceAccount", DR_VALIDATE_NS, DR_GENERATE_ROOT),
+    ("ServiceAccount", DR_VALIDATE_NS, DR_ORCHESTRATOR),
+    ("ValidatingAdmissionPolicy", "", VAP_NAME),
+    ("ValidatingAdmissionPolicyBinding", "", VAP_NAME),
+}
 APPROVED_LONGHORN_RULES = {
     (
         ("longhorn.io",),
@@ -303,6 +321,24 @@ def in_validator_footprint(document):
             and document_name.startswith("dr-orchestrator-longhorn-restore")
         )
     )
+
+
+def assert_footprint_is_closed_world(documents, source_label):
+    for document in documents:
+        if not in_validator_footprint(document):
+            continue
+
+        key = (document.get("kind", ""), namespace(document), name(document))
+        if key in APPROVED_FOOTPRINT_KEYS:
+            continue
+
+        kind, resource_namespace, resource_name = key
+        add_error(
+            f"{source_label} unexpected resource "
+            f"{kind}/{resource_namespace}/{resource_name} in the restore-validator "
+            "footprint; the dr-validate footprint is a closed allowlist — only "
+            "the approved 16 resources may exist there"
+        )
 
 
 def docs(kind=None, resource_name=None, resource_namespace=None):
@@ -1082,6 +1118,7 @@ for role in roles:
 
 assert_guarded_service_account_bindings(binding_scan_documents, binding_scan_source)
 assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
+assert_footprint_is_closed_world(binding_scan_documents, binding_scan_source)
 assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_scan_source)
 assert_no_ccnp_egress_selects_driver(binding_scan_documents, binding_scan_source)
 assert_no_mutating_admission_targets_driver(binding_scan_documents, binding_scan_source)
