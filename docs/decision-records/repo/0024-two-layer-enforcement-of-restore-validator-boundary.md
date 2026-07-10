@@ -19,10 +19,13 @@ backstop. The CI guard blocks unsafe repository changes before merge. The
 Kyverno policy sees the objects Kubernetes is actually asked to admit after Flux
 and Helm have transformed them.
 
-Neither layer is sufficient by itself. The required go-live order is: soak the
-Kyverno policy in Audit, promote it to Enforce after false-positive review, and
-only then un-suspend the ADR-0020 CronJob after the non-`vault` Longhorn
-placement constraint and ADR-0023 signed first-party image have landed.
+Neither layer is sufficient by itself. Promoting the Kyverno policy from Audit
+to Enforce after a clean soak hardens the current inert boundary, but it does
+not by itself lead to live scheduled operation. The current Kyverno rule set,
+static guard, and CronJob manifest all pin the driver suspended. Enabling
+scheduled runs therefore requires a prior reviewed slice that co-evolves the
+guard and Kyverno rules to define the approved live state; see the go-live
+section below.
 
 ## Context and Problem Statement
 
@@ -124,19 +127,49 @@ hygiene, broad mutating/validating webhook denial, and wildcard closed-world
 reach. This residual is recorded in the policy header and accepted as a
 deliberate trade.
 
-The owner-gated go-live sequence is mandatory:
+The owner-gated go-live model has two distinct paths.
 
-1. Soak `protect-dr-validate-boundary` in Audit on the live cluster and review
-   PolicyReports for false positives on real Flux, Helm, operator, and manual
-   apply traffic.
-2. Promote the policy only after that review by changing
-   `validationFailureAction` to `Enforce` and `failurePolicy` to `Fail`.
-3. Only after runtime enforcement is active may the ADR-0020 Slice-2 CronJob be
-   un-suspended, and only after the non-`vault` Longhorn placement constraint
-   recorded as an ADR-0020 known limitation and the ADR-0023 signed
-   first-party restore-driver image digest swap both land, and only after the
-   driver has passed a supervised one-shot run as required by ADR-0020's
-   implementation sequence.
+**Path A -- harden the inert boundary (available now).** Soak
+`protect-dr-validate-boundary` in Audit on the live cluster and review
+PolicyReports for false positives on real Flux, Helm, operator, and manual
+apply traffic. After that review, promote the policy by changing
+`validationFailureAction` to `Enforce` and
+`webhookConfiguration.failurePolicy` to `Fail`.
+
+Path A locks the current inert boundary and is terminal for inert operation
+unless the promotion PR is reverted. Rule
+`cronjob-must-stay-suspended-and-pinned` denies
+`CronJob/dr-restore-driver` unless it keeps `spec.suspend: true`, the inert
+schedule `"0 6 31 2 *"`, and the rest of the pinned pod template. The static
+guard in `scripts/check-vault-restore-validator-boundaries.sh` independently
+errors unless the same CronJob ships with `spec.suspend: true`, the same inert
+Feb-31 schedule placeholder, and no in-repository `Job` objects. Rule
+`no-unexpected-workload-or-secret-in-dr-validate` denies `Job`, `Pod`, other
+runnable workload kinds, and `Secret` objects in `dr-validate` unless their
+owner reference names `dr-restore-driver` or starts with
+`dr-restore-driver-`. Once Path A is Enforced, both an un-suspend GitOps edit
+and an ad hoc supervised `kubectl create job --from=cronjob/dr-restore-driver`
+are denied. Rollback is reverting the promotion PR.
+
+**Path B -- enable live scheduled operation (blocked, owner-gated).** Live
+scheduled operation is not a bit-flip of `spec.suspend`. It first requires a
+reviewed slice that co-evolves rule
+`cronjob-must-stay-suspended-and-pinned`, the static guard in
+`scripts/check-vault-restore-validator-boundaries.sh`, and rule
+`no-unexpected-workload-or-secret-in-dr-validate` to define the approved live
+schedule and behavior. That slice must also land the non-`vault` Longhorn
+placement constraint recorded as an ADR-0020 known limitation and the ADR-0023
+signed first-party restore-driver image.
+
+Within the Path B slice, the supervised one-shot run required by ADR-0020 step
+8 must happen while `protect-dr-validate-boundary` is still in Audit. A manual
+`kubectl create job --from=cronjob/dr-restore-driver` Job has no
+`dr-restore-driver` owner reference and is denied by rule
+`no-unexpected-workload-or-secret-in-dr-validate` once the current policy is in
+Enforce. Only after the redesigned controls land should the CronJob be
+un-suspended; Enforce then locks the approved live state. Path B is gated on
+ADR-0019's scratch/recovery-config-only Vault recovery path and live Vault
+readiness. It is out of scope for this ADR slice.
 
 ## Consequences
 
@@ -155,6 +188,11 @@ The owner-gated go-live sequence is mandatory:
 
 - Kyverno Audit mode is non-blocking until the owner promotes the policy to
   Enforce with a fail-closed webhook policy.
+- With the current controls, Enforce is terminal for inert operation: live
+  scheduled operation requires a co-evolved redesign of rule
+  `cronjob-must-stay-suspended-and-pinned`, the static guard, and rule
+  `no-unexpected-workload-or-secret-in-dr-validate`, and any supervised one-shot
+  run must happen while the policy is still in Audit.
 - Any future change to the restore-validator boundary must update the guard,
   self-test, Kyverno policy, and this ADR in lockstep or the layers will drift.
 - Maintaining two enforcement layers costs more review effort than a single
