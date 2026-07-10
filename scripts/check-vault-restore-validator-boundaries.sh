@@ -211,6 +211,11 @@ CLUSTER_SCOPED_KINDS = {
     "ClusterRole",
     "ClusterRoleBinding",
 }
+MUTATING_ADMISSION_KINDS = {
+    "MutatingWebhookConfiguration",
+    "MutatingAdmissionPolicy",
+    "MutatingAdmissionPolicyBinding",
+}
 
 
 def load_text(path):
@@ -336,6 +341,25 @@ def resource_names(rule):
 def values_match(values, expected):
     value_set = set(list_value(values))
     return "*" in value_set or expected in value_set
+
+
+def rule_targets_driver_surface(api_groups, resources):
+    api_group_set = set(list_value(api_groups))
+    resource_set = set(list_value(resources))
+
+    return any(
+        group in api_group_set or "*" in api_group_set
+        for group, target_resources in {
+            "": {"pods"},
+            "longhorn.io": {"volumes"},
+            "admissionregistration.k8s.io": {
+                "validatingadmissionpolicies",
+                "validatingadmissionpolicybindings",
+                "validatingwebhookconfigurations",
+            },
+        }.items()
+        if "*" in resource_set or resource_set & target_resources
+    )
 
 
 def rule_matches_longhorn_api_group(rule):
@@ -753,6 +777,46 @@ def assert_no_ccnp_egress_selects_driver(documents, source_label):
             )
 
 
+def assert_no_mutating_admission_targets_driver(documents, source_label):
+    for document in documents:
+        kind = document.get("kind")
+        if kind not in MUTATING_ADMISSION_KINDS:
+            continue
+
+        document_name = name(document) or "<unnamed>"
+        if kind == "MutatingWebhookConfiguration":
+            for webhook in document.get("webhooks") or []:
+                for rule in webhook.get("rules") or []:
+                    if rule_targets_driver_surface(
+                        rule.get("apiGroups"), rule.get("resources")
+                    ):
+                        add_error(
+                            f"{source_label} MutatingWebhookConfiguration {document_name} "
+                            "may rewrite the restore-driver pod / Longhorn volume / VAP"
+                        )
+
+        if kind == "MutatingAdmissionPolicy":
+            resource_rules = (
+                ((document.get("spec") or {}).get("matchConstraints") or {})
+                .get("resourceRules")
+                or []
+            )
+            for rule in resource_rules:
+                if rule_targets_driver_surface(
+                    rule.get("apiGroups"), rule.get("resources")
+                ):
+                    add_error(
+                        f"{source_label} MutatingAdmissionPolicy {document_name} "
+                        "may rewrite the restore-driver pod / Longhorn volume / VAP"
+                    )
+
+        if kind == "MutatingAdmissionPolicyBinding":
+            add_error(
+                f"{source_label} MutatingAdmissionPolicyBinding {document_name} "
+                "is forbidden; the restore-driver design uses no mutating admission"
+            )
+
+
 def normalize_shell_continuations(script):
     logical_lines = []
     current = ""
@@ -961,6 +1025,7 @@ assert_guarded_service_account_bindings(binding_scan_documents, binding_scan_sou
 assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
 assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_scan_source)
 assert_no_ccnp_egress_selects_driver(binding_scan_documents, binding_scan_source)
+assert_no_mutating_admission_targets_driver(binding_scan_documents, binding_scan_source)
 
 noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", DR_VALIDATE_NS)
 if noop_role is not None and rules_for(noop_role) != []:
