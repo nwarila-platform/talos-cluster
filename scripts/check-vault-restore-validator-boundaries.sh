@@ -128,6 +128,11 @@ APPROVED_GUARDED_BINDINGS = {
         ],
     },
 }
+GUARDED_ROLE_REFS = {
+    ("Role", LONGHORN_NS, "dr-orchestrator-longhorn-restore"),
+    ("Role", DR_VALIDATE_NS, "dr-orchestrator-result-writer"),
+    ("Role", DR_VALIDATE_NS, "vault-restore-validator-noop"),
+}
 POD_TEMPLATE_KINDS = {
     "Pod",
     "Deployment",
@@ -729,6 +734,29 @@ def assert_guarded_service_account_bindings(binding_documents, source_label):
             )
 
 
+def assert_guarded_role_bindings(binding_documents, source_label):
+    for binding in binding_documents:
+        if binding.get("kind") not in {"RoleBinding", "ClusterRoleBinding"}:
+            continue
+        if role_ref_key(binding) not in GUARDED_ROLE_REFS:
+            continue
+
+        key = binding_key(binding)
+        expected = APPROVED_GUARDED_BINDINGS.get(key)
+        if expected is None:
+            add_error(
+                f"{source_label} {binding_location(binding)} binds a guarded "
+                "restore-validator Role; only the approved binding may reference it"
+            )
+            continue
+
+        if (binding.get("subjects") or []) != expected["subjects"]:
+            add_error(
+                f"{source_label} {binding_location(binding)} must bind only the "
+                "approved subject"
+            )
+
+
 def pod_spec_of(document):
     kind = document.get("kind")
     spec = document.get("spec")
@@ -1117,6 +1145,7 @@ for role in roles:
         )
 
 assert_guarded_service_account_bindings(binding_scan_documents, binding_scan_source)
+assert_guarded_role_bindings(binding_scan_documents, binding_scan_source)
 assert_guarded_service_account_workloads(binding_scan_documents, binding_scan_source)
 assert_footprint_is_closed_world(binding_scan_documents, binding_scan_source)
 assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_scan_source)
