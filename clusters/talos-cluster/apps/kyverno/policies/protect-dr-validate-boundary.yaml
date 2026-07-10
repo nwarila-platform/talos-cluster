@@ -45,7 +45,7 @@ metadata:
       backup into a Longhorn Volume. Ships in Audit — soak then Enforce.
 spec:
   validationFailureAction: Audit          # TODO: -> Enforce after Audit soak (see header)
-  background: true                         # TEMPORARY soak scan: Audit-eval existing cluster resources to surface false-positives (esp. rule 6 vs platform Roles/ClusterRoles). Denies nothing (Audit). TODO: -> false after the soak scan is reviewed.
+  background: false                        # A background:true soak (PR #225) confirmed the non-RBAC rules pass on live objects, but Kyverno background scan EXCLUDES RBAC here (default resourceFilters), so rule 6/binding rules can't be background-soaked — they're covered by admission-time eval + the CI guard + offline kyverno-CLI validation.
   webhookConfiguration:
     failurePolicy: Ignore                 # TODO: -> Fail after Audit soak confirms no legit-apply false-positives
   rules:
