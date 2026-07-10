@@ -281,6 +281,7 @@
 !/scripts/check-vault-fold-invariants.sh
 !/scripts/check-live-vault-config-invariants.sh
 !/scripts/check-vault-restore-validator-boundaries.sh
+!/scripts/check-vault-restore-validator-boundaries.selftest.py
 !/scripts/onboard-tenant.sh
 !/scripts/dr/
 !/scripts/dr/apply-vault-snapshot-backup-live.sh
