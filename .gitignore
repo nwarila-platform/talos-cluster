@@ -296,6 +296,7 @@
 
 # -- Docs: org-mirrored ADRs + repo/template ADR skeleton ---------------------
 !/docs/
+!/docs/README.md
 !/docs/tech-debt.md
 !/docs/compliance/
 !/docs/compliance/README.md

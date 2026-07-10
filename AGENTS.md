@@ -33,8 +33,11 @@ governance and style. In particular:
   mirrored under `docs/decision-records/org/`, template-level ADRs under
   `docs/decision-records/template/`, and repository-specific ADRs under
   `docs/decision-records/repo/`.
-- Non-ADR documentation should follow Diataxis: `docs/tutorials/`,
-  `docs/how-to/`, `docs/reference/`, and `docs/explanation/`.
+- Non-ADR documentation should follow Diataxis. This repository currently
+  indexes non-ADR docs by purpose in `docs/README.md`; the strict
+  `docs/tutorials/`, `docs/how-to/`, `docs/reference/`, and
+  `docs/explanation/` quadrant layout is tracked as TD-0003 in
+  `docs/tech-debt.md`.
 - Source-control hygiene, dependency-update strategy, CI posture, Markdown
   style, and release conventions should be compared against the org baseline
   before inventing local conventions.

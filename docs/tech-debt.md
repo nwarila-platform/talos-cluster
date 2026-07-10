@@ -8,6 +8,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | --- | --- | --- | --- |
 | TD-0001 | Cilium + Kyverno images cannot be signature-enforced at admission | Open | **High** |
 | TD-0002 | Flux image-signature enforcement deferred | Open | Medium |
+| TD-0003 | Strict Diataxis quadrant-directory layout not implemented | Open | Medium |
 
 ---
 
@@ -157,7 +158,45 @@ would un-block it. `webhookConfiguration.failurePolicy: Ignore` mitigates
 
 ---
 
+## TD-0003 — Strict Diataxis quadrant-directory layout not implemented
+
+**Opened:** 2026-07-10 · **Status:** Open · **Priority:** Medium ·
+**See:** [ADR-0002](decision-records/org/0002-adopt-diataxis-documentation-framework.md);
+[Docs index](README.md)
+
+### Gap
+The repository organizes current non-ADR docs by Diataxis purpose through
+`docs/README.md`, but it does not yet implement ADR-0002's mandatory
+`docs/{tutorials,how-to,reference,explanation}/` skeleton. Runbooks remain in
+`docs/runbooks/` rather than `docs/how-to/`.
+
+### Why deferred
+Moving the runbooks now would require updating the ADR-0022 byte-match-guarded
+Longhorn cluster-manifest comments that reference `docs/runbooks/dr-stage1-backup.md`
+in both `addons/longhorn/values.yaml` and
+`clusters/talos-cluster/apps/longhorn/release/helmrelease.yaml`. That manifest
+touch is disproportionate for the current docs-only reconciliation, so this
+cycle fixes the false compliance claim and records the layout gap instead.
+
+### Options to close
+1. Create the four required quadrant directories
+   `docs/tutorials/`, `docs/how-to/`, `docs/reference/`, and
+   `docs/explanation/`, using `.gitkeep` for empty quadrants.
+2. Move `docs/runbooks/*` to `docs/how-to/`.
+3. Move lookup-oriented docs to `docs/reference/`.
+4. Update all references, including the two lockstep Longhorn cluster-manifest
+   comments that currently point at `docs/runbooks/dr-stage1-backup.md`.
+5. Update `docs/README.md` so it indexes the strict layout instead of this
+   temporary purpose classification.
+
+### References
+[ADR-0002]; [Docs index](README.md).
+
+---
+
 [ADR-0010]: decision-records/repo/0010-adopt-kyverno-policy-engine.md
+[ADR-0002]: decision-records/org/0002-adopt-diataxis-documentation-framework.md
+[Docs index](README.md): README.md
 [cosign #4708]: https://github.com/sigstore/cosign/issues/4708
 [Kyverno IVP feedback #14036]: https://github.com/kyverno/kyverno/discussions/14036
 [Cilium image-signature docs]: https://docs.cilium.io/en/stable/configuration/verify-image-signatures/
