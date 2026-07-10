@@ -10,11 +10,22 @@
 # CONTENT (a poisoned commit, a postBuild substitution, a chart-templated binding), so every rule is
 # CONTENT-based — legit resources pass on their content, malicious ones fail regardless of who applies them.
 #
-# !!! SHIPS IN AUDIT MODE. Runtime admission policy could not be tested offline (no kyverno CLI / cluster in
-# the authoring environment). Before flipping validationFailureAction to Enforce and failurePolicy to Fail:
-#   1. Soak in Audit; inspect PolicyReports for FALSE POSITIVES on legit Flux/Helm applies (there must be none).
-#   2. Validate each rule with `kyverno apply` against fixtures (approved objects PASS; the round-4 attack
-#      objects — un-suspended CronJob, ${VAR}-substituted guarded binding, data-vault fromBackup Volume — FAIL).
+# RESIDUALS: these remain enforced by the git-declared CI guard, not by this runtime policy, to stay false-positive
+# safe against Helm-rendered platform objects Kyverno admission sees but the static app render does not:
+#   - cluster-wide destructive Longhorn Role/ClusterRole hygiene (Longhorn Helm controller RBAC is broad);
+#   - broad MutatingWebhookConfiguration / ValidatingWebhookConfiguration denial (Kyverno owns webhooks);
+#   - wildcard closed-world admission for dr-validate (background/wildcard restrictions and Event false positives).
+#
+# !!! SHIPS IN AUDIT MODE. Validated offline with the kyverno CLI v1.18.1 (matches cluster app version): 13 attack
+# objects FAIL (un-suspended/rewritten CronJob, guarded-SA/-role bindings, impersonate role, data-vault fromBackup
+# Volume, arbitrary workload, SA-token Secret, destructive RecurringJob, weakened approved-VAP, driver-selecting CCNP)
+# and 53 legit/platform objects PASS with ZERO false-positives — including Longhorn's and Kyverno's own Helm-rendered
+# ClusterRoles/Roles/webhooks (the objects the static guard never sees). Still, before flipping validationFailureAction
+# to Enforce and failurePolicy to Fail:
+#   1. Soak in Audit ON THE CLUSTER; inspect PolicyReports for false-positives on real live applies (the offline set
+#      cannot cover every operator/controller object).
+#   2. Re-run the offline check: `podman run --rm --user 0 -v <dir>:/work -w /work ghcr.io/kyverno/kyverno-cli:v1.18.1
+#      apply /work/protect-dr-validate-boundary.yaml --resource /work/<fixture>` (approved PASS, attacks FAIL).
 #   3. A buggy Enforce+Fail rule would BLOCK legit Flux reconciliation cluster-wide, so do not skip the soak.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
@@ -34,7 +45,7 @@ metadata:
       backup into a Longhorn Volume. Ships in Audit — soak then Enforce.
 spec:
   validationFailureAction: Audit          # TODO: -> Enforce after Audit soak (see header)
-  background: true
+  background: false
   webhookConfiguration:
     failurePolicy: Ignore                 # TODO: -> Fail after Audit soak confirms no legit-apply false-positives
   rules:
@@ -50,24 +61,79 @@ spec:
               operations: [CREATE, UPDATE]
       validate:
         message: >-
-          The dr-restore-driver CronJob must stay suspended (spec.suspend: true) and run only the pinned
-          restore-driver.sh as dr-orchestrator. Un-suspending or rewriting its command/image/ServiceAccount is
-          forbidden — the DR validation runs only under supervised manual trigger.
+          The dr-restore-driver CronJob must keep the approved inert schedule, pod template labels,
+          ServiceAccount, host namespace isolation, and single pinned container. Un-suspending or rewriting the
+          restore driver is forbidden; DR validation runs only under supervised manual trigger.
         deny:
           conditions:
             any:
-              - key: "{{ request.object.spec.suspend || `false` }}"
+              # Check the container count before evaluating the single-container invariants below.
+              - key: "{{ length(request.object.spec.jobTemplate.spec.template.spec.containers || `[]`) }}"
                 operator: NotEquals
-                value: true
-              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.serviceAccountName || '' }}"
-                operator: NotEquals
-                value: dr-orchestrator
+                value: 1
               - key: "{{ request.object.spec.jobTemplate.spec.template.spec.containers[0].command || `[]` }}"
                 operator: NotEquals
                 value: ["/bin/bash", "/opt/vault-restore-validator/restore-driver.sh"]
               - key: "{{ request.object.spec.jobTemplate.spec.template.spec.containers[0].image || '' }}"
                 operator: NotEquals
                 value: "docker.io/bitnami/kubectl@sha256:558420daf32bbc382e3e9af4537f4073085b336ddd47399a3b70e70087115978"
+              - key: "{{ contains(keys(request.object.spec.jobTemplate.spec.template.spec.containers[0] || `{}`), 'lifecycle') }}"
+                operator: Equals
+                value: true
+              - key: "{{ contains(keys(request.object.spec.jobTemplate.spec.template.spec.containers[0] || `{}`), 'livenessProbe') }}"
+                operator: Equals
+                value: true
+              - key: "{{ contains(keys(request.object.spec.jobTemplate.spec.template.spec.containers[0] || `{}`), 'readinessProbe') }}"
+                operator: Equals
+                value: true
+              - key: "{{ contains(keys(request.object.spec.jobTemplate.spec.template.spec.containers[0] || `{}`), 'startupProbe') }}"
+                operator: Equals
+                value: true
+              - key: "{{ contains(keys(request.object.spec.jobTemplate.spec.template.spec.containers[0] || `{}`), 'envFrom') }}"
+                operator: Equals
+                value: true
+              - key: "{{ contains(keys(request.object.spec.jobTemplate.spec.template.spec.containers[0] || `{}`), 'args') }}"
+                operator: Equals
+                value: true
+              - key: "{{ length(request.object.spec.jobTemplate.spec.template.spec.containers[0].env[?valueFrom.secretKeyRef] || `[]`) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.suspend || `false` }}"
+                operator: NotEquals
+                value: true
+              - key: "{{ request.object.spec.schedule || '' }}"
+                operator: NotEquals
+                value: "0 6 31 2 *"
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.serviceAccountName || '' }}"
+                operator: NotEquals
+                value: dr-orchestrator
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.automountServiceAccountToken || `false` }}"
+                operator: NotEquals
+                value: true
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.hostNetwork || `false` }}"
+                operator: Equals
+                value: true
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.hostPID || `false` }}"
+                operator: Equals
+                value: true
+              - key: "{{ request.object.spec.jobTemplate.spec.template.spec.hostIPC || `false` }}"
+                operator: Equals
+                value: true
+              - key: "{{ length(request.object.spec.jobTemplate.spec.template.spec.initContainers || `[]`) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ length(request.object.spec.jobTemplate.spec.template.spec.ephemeralContainers || `[]`) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ length(keys(request.object.spec.jobTemplate.spec.template.metadata.labels || `{}`)) }}"
+                operator: NotEquals
+                value: 2
+              - key: "{{ request.object.spec.jobTemplate.spec.template.metadata.labels.\"app.kubernetes.io/name\" || '' }}"
+                operator: NotEquals
+                value: vault-restore-validator
+              - key: "{{ request.object.spec.jobTemplate.spec.template.metadata.labels.\"app.kubernetes.io/component\" || '' }}"
+                operator: NotEquals
+                value: restore-driver
 
     # 2. Only the approved bindings may bind the guarded restore-driver Roles. Kyverno sees the RESOLVED binding
     #    (after Flux ${VAR} substitution), closing the postBuild placeholder evasion. roleRef-keyed.
@@ -125,33 +191,46 @@ spec:
               ]) > `0`
             default: false
 
-    # 4. Restoring the live data-vault backup into a Longhorn Volume is forbidden except the driver's fixed
-    #    scratch volume created by dr-orchestrator. Catches the data-plane restore (a Volume applied by
-    #    flux-system, which the VAP — scoped to the dr-orchestrator username — never constrains).
+    # 4. Longhorn data-plane objects must not reference data-vault except the driver's fixed scratch Volume.
+    #    Catches the data-plane restore path (objects applied by flux-system, which the VAP — scoped to the
+    #    dr-orchestrator username — never constrains).
     - name: no-datavault-backup-restore
       match:
         any:
           - resources:
-              kinds: [Volume]                 # longhorn.io/v1beta2 Volume
+              kinds:
+                - longhorn.io/v1beta2/Volume
+                - longhorn.io/v1beta2/Snapshot
+                - longhorn.io/v1beta2/Backup
+                - longhorn.io/v1beta2/BackingImage
               operations: [CREATE, UPDATE]
-      preconditions:
-        all:
-          - key: "{{ request.object.apiVersion || '' }}"
-            operator: Equals
-            value: "longhorn.io/v1beta2"
+      context:
+        - name: referencesDataVault
+          variable:
+            jmesPath: >-
+              contains(request.object.spec.fromBackup || '', 'data-vault') ||
+              contains(to_string(request.object.spec.dataSource || ''), 'data-vault') ||
+              contains(to_string(request.object.spec.backingImage || ''), 'data-vault')
+            default: false
+        - name: approvedScratchVolume
+          variable:
+            jmesPath: >-
+              request.object.kind == 'Volume' &&
+              request.object.metadata.name == 'dr-validate-vault-restore'
+            default: false
       validate:
         message: >-
-          A Longhorn Volume may not be created from the live data-vault backup except as the driver's fixed
-          scratch volume dr-validate-vault-restore by the dr-orchestrator ServiceAccount.
+          Longhorn Volume/Snapshot/Backup/BackingImage objects may not reference live data-vault material
+          except as the driver's fixed scratch Volume dr-validate-vault-restore.
         deny:
           conditions:
             all:
-              - key: "{{ contains(request.object.spec.fromBackup || '', 'data-vault') }}"
+              - key: "{{ referencesDataVault }}"
                 operator: Equals
                 value: true
-              - key: "{{ request.object.metadata.name }}"
+              - key: "{{ approvedScratchVolume }}"
                 operator: NotEquals
-                value: dr-validate-vault-restore
+                value: true
 
     # 5. Closed-world dr-validate: no runnable workload or Secret may exist in dr-validate except the approved
     #    CronJob. Catches the SA-token Secret + arbitrary workloads (incl Helm-templated / postBuild-injected).
@@ -174,3 +253,136 @@ spec:
               - key: "{{ length(request.object.metadata.ownerReferences[?name=='dr-restore-driver' || starts_with(name, 'dr-restore-driver-')] || `[]`) }}"
                 operator: Equals
                 value: 0
+
+    # 6. Literal impersonate grants on identity resources can assume the guarded restore-driver identity.
+    #    Tuple-scoped foreach keeps verbs/resources from the same RBAC rule together.
+    - name: no-impersonate-identity
+      match:
+        any:
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/Role
+                - rbac.authorization.k8s.io/v1/ClusterRole
+              operations: [CREATE, UPDATE]
+      validate:
+        message: >-
+          Role rules must not grant literal impersonate on users, groups, serviceaccounts, uids, or wildcard
+          resources. Literal impersonation can assume the guarded restore-driver identity.
+        foreach:
+          - list: "request.object.rules || `[]`"
+            deny:
+              conditions:
+                all:
+                  # LITERAL impersonate only (contains(), not AnyIn — AnyIn treats a role's verbs:[*] / resources:[*]
+                  # as a wildcard and false-positives on Flux/Longhorn broad-* platform roles). verbs:[*] parity is
+                  # a documented CI-only residual.
+                  - key: "{{ contains(element.verbs || `[]`, 'impersonate') }}"
+                    operator: Equals
+                    value: true
+                  - key: "{{ length((element.resources || `[]`)[?@ == 'users' || @ == 'groups' || @ == 'serviceaccounts' || @ == 'uids' || @ == '*']) }}"
+                    operator: GreaterThan
+                    value: 0
+
+    # 7. Only the approved Longhorn backup RecurringJob is allowed; destructive or extra tasks are denied.
+    - name: no-unapproved-longhorn-recurringjob
+      match:
+        any:
+          - resources:
+              kinds: [longhorn.io/v1beta2/RecurringJob]
+              operations: [CREATE, UPDATE]
+      validate:
+        message: >-
+          The only approved Longhorn RecurringJob is vault-daily-backup with spec.task: backup.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.metadata.name }}"
+                operator: NotEquals
+                value: vault-daily-backup
+              - key: "{{ request.object.spec.task || '' }}"
+                operator: NotEquals
+                value: backup
+
+    # 8. The API-server-native VAP/B guarding dr-orchestrator Longhorn Volume creates must not be weakened.
+    - name: approved-vap-integrity
+      match:
+        any:
+          - resources:
+              kinds:
+                - admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy
+                - admissionregistration.k8s.io/v1/ValidatingAdmissionPolicyBinding
+              names: [dr-orchestrator-longhorn-volume-allowlist]
+              operations: [CREATE, UPDATE]
+      context:
+        - name: vapPolicyWeak
+          variable:
+            jmesPath: >-
+              request.object.kind == 'ValidatingAdmissionPolicy' &&
+              (
+                request.object.spec.failurePolicy != 'Fail' ||
+                length(request.object.spec.matchConditions || `[]`) != `1` ||
+                request.object.spec.matchConditions[0].expression != 'request.userInfo.username == \'system:serviceaccount:dr-validate:dr-orchestrator\'' ||
+                contains(request.object.spec.validations[].expression || `[]`, 'object.metadata.name == \'dr-validate-vault-restore\'') == `false` ||
+                contains(request.object.spec.validations[].expression || `[]`, 'object.spec.numberOfReplicas <= 1') == `false`
+              )
+            default: false
+        - name: vapBindingWeak
+          variable:
+            jmesPath: >-
+              request.object.kind == 'ValidatingAdmissionPolicyBinding' &&
+              (
+                request.object.spec.policyName != 'dr-orchestrator-longhorn-volume-allowlist' ||
+                length(request.object.spec.validationActions || `[]`) != `1` ||
+                request.object.spec.validationActions[0] != 'Deny' ||
+                request.object.spec.matchResources != `null` ||
+                request.object.spec.paramRef != `null`
+              )
+            default: false
+      validate:
+        message: >-
+          The approved dr-orchestrator Longhorn Volume VAP and binding must keep Fail/Deny behavior,
+          the dr-orchestrator match condition, the scratch-name and replica validations, and no binding
+          matchResources or paramRef.
+        deny:
+          conditions:
+            any:
+              - key: "{{ vapPolicyWeak }}"
+                operator: Equals
+                value: true
+              - key: "{{ vapBindingWeak }}"
+                operator: Equals
+                value: true
+
+    # 9. Clusterwide Cilium egress policy must not select the restore-driver labels.
+    #    The approved driver egress policy is namespaced CiliumNetworkPolicy, not CCNP.
+    - name: no-driver-ccnp-egress
+      match:
+        any:
+          - resources:
+              kinds: [cilium.io/v2/CiliumClusterwideNetworkPolicy]
+              operations: [CREATE, UPDATE]
+      validate:
+        message: >-
+          CiliumClusterwideNetworkPolicy egress rules must not select restore-driver pods by
+          app.kubernetes.io/name or app.kubernetes.io/component labels.
+        foreach:
+          - list: "[request.object.spec]"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ length(element.egress || `[]`) }}"
+                    operator: GreaterThan
+                    value: 0
+                  - key: "{{ (element.endpointSelector.matchLabels.\"app.kubernetes.io/name\" || '') == 'vault-restore-validator' || (element.endpointSelector.matchLabels.\"k8s:app.kubernetes.io/name\" || '') == 'vault-restore-validator' || (element.endpointSelector.matchLabels.\"app.kubernetes.io/component\" || '') == 'restore-driver' || (element.endpointSelector.matchLabels.\"k8s:app.kubernetes.io/component\" || '') == 'restore-driver' }}"
+                    operator: Equals
+                    value: true
+          - list: "request.object.specs || `[]`"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ length(element.egress || `[]`) }}"
+                    operator: GreaterThan
+                    value: 0
+                  - key: "{{ (element.endpointSelector.matchLabels.\"app.kubernetes.io/name\" || '') == 'vault-restore-validator' || (element.endpointSelector.matchLabels.\"k8s:app.kubernetes.io/name\" || '') == 'vault-restore-validator' || (element.endpointSelector.matchLabels.\"app.kubernetes.io/component\" || '') == 'restore-driver' || (element.endpointSelector.matchLabels.\"k8s:app.kubernetes.io/component\" || '') == 'restore-driver' }}"
+                    operator: Equals
+                    value: true

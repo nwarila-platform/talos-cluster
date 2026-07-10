@@ -1,0 +1,29 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: dr-orchestrator-longhorn-volume-allowlist
+  labels:
+    app.kubernetes.io/name: vault-restore-validator
+    app.kubernetes.io/component: restore-driver
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - longhorn.io
+      apiVersions:
+      - '*'
+      operations:
+      - CREATE
+      resources:
+      - volumes
+  matchConditions:
+  - name: only-dr-orchestrator
+    expression: request.userInfo.username == 'system:serviceaccount:dr-validate:dr-orchestrator'
+  validations:
+  - expression: object.metadata.name == 'dr-validate-vault-restore'
+    reason: Forbidden
+    message: dr-orchestrator may only create the fixed scratch Longhorn volume dr-validate-vault-restore
+  - expression: object.spec.numberOfReplicas <= 1
+    reason: Forbidden
+    message: restore scratch volume may request at most one replica

@@ -1,0 +1,4 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: evil-dep, namespace: dr-validate}
+spec: {selector: {matchLabels: {a: b}}, template: {metadata: {labels: {a: b}}, spec: {serviceAccountName: evil, containers: [{name: c, image: x}]}}}

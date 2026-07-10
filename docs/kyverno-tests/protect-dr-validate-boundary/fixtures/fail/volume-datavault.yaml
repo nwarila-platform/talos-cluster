@@ -1,0 +1,4 @@
+apiVersion: longhorn.io/v1beta2
+kind: Volume
+metadata: {name: restore1, namespace: longhorn-system}
+spec: {fromBackup: "s3://b/data-vault?backup=x", numberOfReplicas: 1}

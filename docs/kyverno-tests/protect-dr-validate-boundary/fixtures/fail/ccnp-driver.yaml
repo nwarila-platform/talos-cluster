@@ -1,0 +1,6 @@
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata: {name: evil-ccnp}
+spec:
+  endpointSelector: {matchLabels: {app.kubernetes.io/name: vault-restore-validator}}
+  egress: [{toEntities: [world]}]

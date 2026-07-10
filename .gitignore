@@ -341,3 +341,5 @@
 !/docs/decision-records/org/.gitkeep
 !/.github/workflows/org-adr-sync.yaml
 !/.github/workflows/org-adr-auto-sync.yaml
+!/docs/kyverno-tests/
+!/docs/kyverno-tests/**
