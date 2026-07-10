@@ -253,6 +253,11 @@ MUTATING_ADMISSION_KINDS = {
     "MutatingAdmissionPolicy",
     "MutatingAdmissionPolicyBinding",
 }
+VALIDATING_ADMISSION_KINDS = {
+    "ValidatingWebhookConfiguration",
+    "ValidatingAdmissionPolicy",
+    "ValidatingAdmissionPolicyBinding",
+}
 
 
 def load_text(path):
@@ -952,6 +957,37 @@ def assert_no_mutating_admission_targets_driver(documents, source_label):
             )
 
 
+def assert_no_unexpected_validating_admission(documents, source_label):
+    for document in documents:
+        kind = document.get("kind")
+        if kind not in VALIDATING_ADMISSION_KINDS:
+            continue
+
+        document_name = name(document) or "<unnamed>"
+        if kind == "ValidatingWebhookConfiguration":
+            for webhook in document.get("webhooks") or []:
+                for rule in webhook.get("rules") or []:
+                    if rule_targets_driver_surface(
+                        rule.get("apiGroups"), rule.get("resources")
+                    ):
+                        add_error(
+                            f"{source_label} ValidatingWebhookConfiguration {document_name} "
+                            "may observe/deny the restore-driver pod / Longhorn volume / VAP"
+                        )
+
+        if kind == "ValidatingAdmissionPolicy" and document_name != VAP_NAME:
+            add_error(
+                f"{source_label} unexpected ValidatingAdmissionPolicy {document_name}; "
+                f"only the approved {VAP_NAME} may exist"
+            )
+
+        if kind == "ValidatingAdmissionPolicyBinding" and document_name != VAP_NAME:
+            add_error(
+                f"{source_label} unexpected ValidatingAdmissionPolicyBinding {document_name}; "
+                f"only the approved {VAP_NAME} may exist"
+            )
+
+
 def normalize_shell_continuations(script):
     logical_lines = []
     current = ""
@@ -1183,6 +1219,7 @@ assert_no_unapproved_destructive_longhorn_roles(binding_scan_documents, binding_
 assert_no_impersonate_roles(binding_scan_documents, binding_scan_source)
 assert_no_ccnp_egress_selects_driver(binding_scan_documents, binding_scan_source)
 assert_no_mutating_admission_targets_driver(binding_scan_documents, binding_scan_source)
+assert_no_unexpected_validating_admission(binding_scan_documents, binding_scan_source)
 
 noop_role = assert_exactly_one("Role", "vault-restore-validator-noop", DR_VALIDATE_NS)
 if noop_role is not None and rules_for(noop_role) != []:
