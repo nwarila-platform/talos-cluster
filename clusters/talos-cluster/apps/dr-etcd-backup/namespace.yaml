@@ -1,0 +1,33 @@
+# Namespace for the in-cluster etcd snapshot CronJob (ADR-0006 Stage-1 retarget).
+#
+# PSA enforce is `privileged` — the ONLY workload namespace in the cluster not
+# enforced `restricted` — because the snapshot pod requires hostNetwork: the
+# Talos ingress-apid firewall (cluster/patches/firewall.yaml) admits the
+# operator and node subnets ONLY, deliberately excluding the pod CIDR so no
+# pod can ever reach the Talos management API. A hostNetwork pod pinned to a
+# control-plane node egresses from that node's own IP, which IS admitted.
+# hostNetwork is prohibited by the `baseline` PSS profile, so enforcement must
+# drop to privileged here.
+#
+# audit/warn stay `baseline`: the daily snapshot pod's hostNetwork audit
+# annotation is the one EXPECTED signal; any OTHER baseline violation
+# appearing in this namespace is an anomaly worth investigating.
+#
+# Compensating controls for the relaxed enforcement:
+#   - single-purpose namespace: only the etcd-backup CronJob belongs here;
+#   - default-deny NetworkPolicy closes the namespace to any non-hostNetwork pod;
+#   - the ServiceAccount does not automount a Kubernetes API token;
+#   - the mounted talosconfig is role-scoped to os:etcd:backup (snapshot-only;
+#     it cannot reconfigure, reboot, or wipe nodes).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dr-etcd-backup
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: latest
+    nwarila.io/platform-addon: dr-etcd-backup

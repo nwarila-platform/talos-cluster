@@ -1,0 +1,17 @@
+# Default-deny for everything in the namespace. The snapshot pod itself runs
+# hostNetwork and is therefore a HOST endpoint to Cilium — namespaced
+# NetworkPolicy does not select it (its reachability is governed by the Talos
+# ingress firewall instead). This deny exists to close the namespace to any
+# OTHER pod that lands here: with PSA enforcement relaxed to privileged, a
+# workload scheduled into this namespace would otherwise start with the
+# cluster-default open egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dr-etcd-backup-default-deny
+  namespace: dr-etcd-backup
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
