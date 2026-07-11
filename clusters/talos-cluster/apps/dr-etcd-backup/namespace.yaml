@@ -1,33 +1,30 @@
 # Namespace for the in-cluster etcd snapshot CronJob (ADR-0006 Stage-1 retarget).
 #
-# PSA enforce is `privileged` — the ONLY workload namespace in the cluster not
-# enforced `restricted` — because the snapshot pod requires hostNetwork: the
-# Talos ingress-apid firewall (cluster/patches/firewall.yaml) admits the
-# operator and node subnets ONLY, deliberately excluding the pod CIDR so no
-# pod can ever reach the Talos management API. A hostNetwork pod pinned to a
-# control-plane node egresses from that node's own IP, which IS admitted.
-# hostNetwork is prohibited by the `baseline` PSS profile, so enforcement must
-# drop to privileged here.
+# PSA restricted, like every other workload namespace. The snapshot pod does
+# NOT need hostNetwork: pod egress to a node's apid (tcp/50000) is masqueraded
+# to the node's own IP (Cilium enable-ipv4-masquerade, tunnel mode), which the
+# Talos ingress-apid firewall admits — proven daily by the talos-drift
+# read-only CronJob, a plain restricted pod that queries apid on all six
+# nodes. What actually stands between ordinary pods and the Talos management
+# API is the per-namespace default-deny egress NetworkPolicy (plus apid's own
+# mTLS + RBAC), NOT the node firewall; this namespace therefore carries a
+# default-deny and grants the snapshot pod a single scoped CiliumNetworkPolicy
+# egress rule to the control-plane apid endpoints.
 #
-# audit/warn stay `baseline`: the daily snapshot pod's hostNetwork audit
-# annotation is the one EXPECTED signal; any OTHER baseline violation
-# appearing in this namespace is an anomaly worth investigating.
-#
-# Compensating controls for the relaxed enforcement:
+# Other controls:
 #   - single-purpose namespace: only the etcd-backup CronJob belongs here;
-#   - default-deny NetworkPolicy closes the namespace to any non-hostNetwork pod;
 #   - the ServiceAccount does not automount a Kubernetes API token;
 #   - the mounted talosconfig is role-scoped to os:etcd:backup (snapshot-only;
-#     it cannot reconfigure, reboot, or wipe nodes).
+#     it cannot read machine config or manage nodes — verified live).
 apiVersion: v1
 kind: Namespace
 metadata:
   name: dr-etcd-backup
   labels:
-    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/audit-version: latest
-    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
     nwarila.io/platform-addon: dr-etcd-backup

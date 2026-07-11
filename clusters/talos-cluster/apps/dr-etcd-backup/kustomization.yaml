@@ -4,4 +4,5 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - networkpolicy-default-deny.yaml
+  - ciliumnetworkpolicy-egress.yaml
   - pvc.yaml

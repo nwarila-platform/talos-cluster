@@ -1,10 +1,9 @@
-# Default-deny for everything in the namespace. The snapshot pod itself runs
-# hostNetwork and is therefore a HOST endpoint to Cilium — namespaced
-# NetworkPolicy does not select it (its reachability is governed by the Talos
-# ingress firewall instead). This deny exists to close the namespace to any
-# OTHER pod that lands here: with PSA enforcement relaxed to privileged, a
-# workload scheduled into this namespace would otherwise start with the
-# cluster-default open egress.
+# Default-deny for the namespace. Combined with the scoped etcd-backup-egress
+# CiliumNetworkPolicy this IS the layer that separates pods from the Talos
+# management API: apid ingress filtering on the nodes admits masqueraded pod
+# traffic (it arrives from the node's own IP), so only namespace egress policy
+# decides which pods may reach apid. The snapshot pod gets exactly
+# control-plane:50000; every other flow in this namespace stays denied.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
