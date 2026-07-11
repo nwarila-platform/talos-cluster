@@ -72,6 +72,8 @@
 !/clusters/talos-cluster/apps/dr-etcd-backup/ciliumnetworkpolicy-egress.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/pvc.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/talosconfig.sops.yaml
+!/clusters/talos-cluster/apps/dr-etcd-backup/configmap-encrypt-script.yaml
+!/clusters/talos-cluster/apps/dr-etcd-backup/cronjob.yaml
 !/clusters/talos-cluster/apps/vault-restore-validator/
 !/clusters/talos-cluster/apps/vault-restore-validator/README.md
 !/clusters/talos-cluster/apps/vault-restore-validator/kustomization.yaml
@@ -321,6 +323,8 @@
 !/docs/
 !/docs/README.md
 !/docs/tech-debt.md
+!/docs/dr-escrow/
+!/docs/dr-escrow/etcd-snapshot-age-key.sops.yaml
 !/docs/compliance/
 !/docs/compliance/README.md
 !/docs/explanation/

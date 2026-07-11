@@ -1,0 +1,45 @@
+# ESCROW COPY - NOT A KUBERNETES RESOURCE. NEVER add this file to a
+# kustomization: the cluster must hold only the PUBLIC half of this key
+# (encrypt-only). Applying the private half in-cluster would let anyone who
+# compromises the cluster (or the shared Synology target plus the cluster)
+# decrypt every archived etcd snapshot.
+#
+# What this is: the dedicated age identity that the dr-etcd-backup CronJob
+# encrypts etcd snapshots TO (recipient
+# age18scjc2mepug263cnqmkxe6drne6mqs5h77y9j3fh3fuxshxesuhsyh0vhx).
+# Encrypted here with the repository SOPS age recipient, so decrypting this
+# file requires the repo age key (in-cluster sops-age Secret /
+# .s3/secrets/age.agekey / Stage-0). The RAW key is also escrowed at
+# .s3/secrets/etcd-snapshot-age.agekey -> S3 Stage-0 (owner sync).
+#
+# Dead-cluster restore path:
+#   1. Fetch this key: S3 Stage-0 copy, or `sops -d` this file with the
+#      Stage-0 repo age key.
+#   2. Pull the newest etcd-<stamp>.db.sops.json from the Synology Longhorn
+#      backup (or the live PVC).
+#   3. SOPS_AGE_KEY_FILE=<this key> sops -d --input-type json \
+#        --output-type binary etcd-<stamp>.db.sops.json > etcd.db
+#   4. talosctl bootstrap --recover-from=etcd.db (see the DR runbook).
+kind: EscrowedAgeKey
+stringData:
+    etcd-snapshot-age.agekey: ENC[AES256_GCM,data:PUxFbu1gedaIpiMcde9c2CgEmySUectk+juiraPtLVH0sFL+tSKkpWP0SA3Jaoy+PeghqmQZAeoyqCeCrfKM13O5HEge6YAOp1G+LWNemvialgDJEg2dJBY3TUFLSnKzHfEcqINAkNTV6Y+XPKQGxBROAfwOjBdgALoZg6Vtf5rCQyO4TwDE8VsljXxUEc4QtYYazTHdhE2EffCI9WOfIBq1joBAKJVAr5miYaPhEyMnm4mmDIlSMw==,iv:9SF8w2Z7J58EigsS6rEMpIJh7txnOYCnZoqzsrDHIk4=,tag:OAqCxvPoIZyfL/sLYpQ5ZA==,type:str]
+sops:
+    kms: []
+    gcp_kms: []
+    azure_kv: []
+    hc_vault: []
+    age:
+        - recipient: age15q49wp6ljn007uqrxvpzyes20tumx4e6xej6ksfvfaehvfmmrd4szfaf66
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBMRVhUSjBJTjlOZlNBUU1V
+            ZHhscUtDbGhqVnBOSDZOcC9oLzQ3ZHI2Vm1JCmZLSDk2bGlyckhJa1lqZ015SkJ1
+            Y3A3U1lBazUvMUJaOWh2UGxBT2NtOXMKLS0tIEJGRXphRmlGMWdGVjB2UDdVcFhX
+            QmYrMzloYUNnV3VCOUUzLy9jcjV6TkkKIX8aWToR1zx4NPKqDFh++XSCwcrtVFMM
+            yu1xdUIH95pzAzzwlJ6aX7UJgUWPBxT+RlLLsBE+YO3EhgPG4KBxiQ==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-07-11T21:47:28Z"
+    mac: ENC[AES256_GCM,data:HG/o995p2S5DoWl0l5x5y0Nrx7Pgc9rQawCGwlhI/TxOTffv5nJxbyKGpv/t1HTD70kVZ+2oIGO79UWaBQqHN2xWA/F2dw3QOEh4mwLmudh5O30nb/+rOSkkBL3SIRFUP0cvs3uX7+f+YiQxn/Lsu4Pl1cWSlR4d7vDcTa17QjA=,iv:3iNJ2izWKKEmtokLSD/4e+/8jbmQY5GK7hbGBDHNVJo=,tag:W8pU9EtbZJ0aA0QEQXvOaQ==,type:str]
+    pgp: []
+    encrypted_regex: ^(data|stringData)$
+    version: 3.9.4

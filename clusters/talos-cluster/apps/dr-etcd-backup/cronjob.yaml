@@ -1,0 +1,122 @@
+# Daily etcd snapshot -> encrypt -> Longhorn PVC (ADR-0006 Stage-1 retarget).
+#
+# Two-container pattern copied from talos-drift: the talosctl init container
+# (image digest kept in lockstep with talos-drift's) saves the snapshot to a
+# shared emptyDir over apid, then the sops container encrypts it whole-file to
+# the escrowed age recipient and prunes old dailies. Runs as a plain
+# restricted pod; apid reachability comes from the namespace's scoped
+# etcd-backup-egress CiliumNetworkPolicy (pod egress is masqueraded to the
+# node IP, which the Talos ingress-apid filter admits - see the namespace
+# comment).
+#
+# Snapshots are taken from cp1's etcd member; any member serves the full
+# keyspace. If cp1 is down the Job fails visibly and retries next day - a
+# down control-plane node is already an operator-attention event. Runs 03:00
+# UTC; the etcd-daily-backup Longhorn RecurringJob ships the volume to the
+# Synology at 03:47.
+#
+# The age RECIPIENT below is the public (encrypt-only) half; the private half
+# is escrowed OFF-cluster (S3 Stage-0 + docs/dr-escrow/, repo-key encrypted).
+# The cluster cannot decrypt its own archived snapshots by design.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-snapshot
+  namespace: dr-etcd-backup
+  labels:
+    app.kubernetes.io/name: etcd-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: etcd-backup
+            app.kubernetes.io/component: backup
+        spec:
+          serviceAccountName: etcd-backup
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: snapshot
+              image: ghcr.io/siderolabs/talosctl@sha256:6382e6f6f8b08ab7c5cc9f77446cfd79975fe0055c0a6d73455a9dc6a6c4b98d
+              imagePullPolicy: IfNotPresent
+              args:
+                - --talosconfig=/var/run/talos/talosconfig
+                - --nodes=10.69.112.63
+                - --endpoints=10.69.112.63
+                - etcd
+                - snapshot
+                - /work/etcd.db
+              volumeMounts:
+                - name: talosconfig
+                  mountPath: /var/run/talos/talosconfig
+                  subPath: talosconfig
+                  readOnly: true
+                - name: work
+                  mountPath: /work
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+          containers:
+            - name: encrypt
+              image: ghcr.io/getsops/sops@sha256:0bc8915bce25ea3bf0f3e27a74cb5ad092488e6e5245af384816d628ed7fd426
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - /opt/etcd-backup/encrypt.sh
+              env:
+                - name: AGE_RECIPIENT
+                  value: age18scjc2mepug263cnqmkxe6drne6mqs5h77y9j3fh3fuxshxesuhsyh0vhx
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: data
+                  mountPath: /data
+                - name: encrypt-script
+                  mountPath: /opt/etcd-backup
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+          volumes:
+            - name: talosconfig
+              secret:
+                secretName: etcd-backup-talosconfig
+                defaultMode: 0440
+            - name: work
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: data
+              persistentVolumeClaim:
+                claimName: etcd-snapshots
+            - name: encrypt-script
+              configMap:
+                name: etcd-backup-encrypt-script
+                defaultMode: 0555
+            - name: tmp
+              emptyDir: {}
