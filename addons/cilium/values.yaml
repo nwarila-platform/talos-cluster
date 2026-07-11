@@ -47,8 +47,16 @@ securityContext:
 # Flux-owned GatewayClass and every `helm upgrade` then fails the ownership
 # check. Force the chart to never manage it; Flux remains sole owner.
 gatewayAPI:
+  enabled: true
   gatewayClass:
     create: "false"
+
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    enabled: true
 
 # -----------------------------------------------------------------------------
 # Transparent encryption — WireGuard (Cilium 1.19.4), pod-to-pod only.

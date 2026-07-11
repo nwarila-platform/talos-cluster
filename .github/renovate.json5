@@ -28,6 +28,12 @@
       versioningTemplate: "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}",
     },
   ],
+  flux: {
+    managerFilePatterns: [
+      "/^clusters/talos-cluster/flux-system/gotk-components\\.ya?ml$/",
+      "/^clusters/talos-cluster/apps/.+\\.ya?ml$/",
+    ],
+  },
   packageRules: [
     {
       matchManagers: ["github-actions"],
