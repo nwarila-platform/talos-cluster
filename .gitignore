@@ -302,6 +302,7 @@
 !/docs/compliance/README.md
 !/docs/explanation/
 !/docs/explanation/architecture.md
+!/docs/explanation/kubernetes-talos-primer.md
 !/docs/runbooks/
 !/docs/runbooks/bootstrap-out-of-band.md
 !/docs/runbooks/dr-generate-root-breakglass.md

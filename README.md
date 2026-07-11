@@ -1,15 +1,26 @@
-# TDNHQ-TALCL01
+# talos-cluster
+
+A real Talos Kubernetes homelab platform managed by Flux GitOps: first-party image signatures are enforced at admission, upstream image families remain audit-only, and full topology is public by a documented threat-model decision.
+
+## Overview
+
+This is the source-of-truth repository for a real Talos Kubernetes homelab. Talos machine state is generated from `cluster/config.env` and `cluster/patches/`, while Kubernetes platform and application state is reconciled by Flux from `clusters/talos-cluster/`. Secrets have two paths: SOPS-encrypted Secret manifests in git for bootstrap and platform material, and Vault/Vault Secrets Operator runtime flows where those integrations are implemented. Admission policy enforces first-party image signatures while upstream Flux, Cilium, Kyverno, and VSO image families remain audit-only pending TD-0001/TD-0002. Disaster recovery is tiered and unfinished: Stage-0 S3 is rebuild-critical only, etcd snapshots are not live-scheduled until retargeted, and restore is not accepted until drilled.
+
+Architecture diagrams: [docs/explanation/architecture.md](docs/explanation/architecture.md).
+
+> **Transparency and threat model:** [ADR-0025](docs/decision-records/repo/0025-deliberate-transparency-public-repo.md) records full topology disclosure as a deliberate reconnaissance risk acceptance, not an authentication boundary or substitute for secret hygiene and network boundaries.
+
+New to Kubernetes or Talos? See [docs/explanation/kubernetes-talos-primer.md](docs/explanation/kubernetes-talos-primer.md).
 
 ## Table of Contents
 
-1. [What Is This?](#what-is-this)
-2. [How It Works (The Big Picture)](#how-it-works-the-big-picture)
+1. [Overview](#overview)
+2. [Current Architecture](#current-architecture)
 3. [Our Specific Cluster](#our-specific-cluster)
 4. [What Software Is Installed](#what-software-is-installed)
-5. [Current Architecture](#current-architecture)
-6. [Repository Layout](#repository-layout)
-7. [What You Need Before Starting](#what-you-need-before-starting)
-8. [Setup From Scratch (Full Walkthrough)](#setup-from-scratch-full-walkthrough)
+5. [Repository Layout](#repository-layout)
+6. [What You Need Before Starting](#what-you-need-before-starting)
+7. [Setup From Scratch (Full Walkthrough)](#setup-from-scratch-full-walkthrough)
    - [Step 1: Install the Tools](#step-1-install-the-tools)
    - [Step 2: Clone This Repository](#step-2-clone-this-repository)
    - [Step 3: Generate Machine Configs](#step-3-generate-machine-configs)
@@ -22,7 +33,7 @@
    - [Step 10: Reconcile GitOps Addons](#step-10-reconcile-gitops-addons)
    - [Step 11: Verify Everything Works](#step-11-verify-everything-works)
    - [Step 12: Back Up Your Secrets](#step-12-back-up-your-secrets)
-9. [Day-to-Day Operations](#day-to-day-operations)
+8. [Day-to-Day Operations](#day-to-day-operations)
    - [Checking Cluster Health](#checking-cluster-health)
    - [Changing a Cluster Setting](#changing-a-cluster-setting)
    - [Upgrading Talos to a New Version](#upgrading-talos-to-a-new-version)
@@ -30,69 +41,29 @@
    - [Removing a Worker Node](#removing-a-worker-node)
    - [Recovering Secrets on a New Machine](#recovering-secrets-on-a-new-machine)
    - [Deploying Your Own Application](#deploying-your-own-application)
-10. [CI/CD (Automated Pipelines)](#cicd-automated-pipelines)
-11. [Security](#security)
-12. [Troubleshooting](#troubleshooting)
-13. [Quick Reference (All Commands)](#quick-reference-all-commands)
-14. [Glossary](#glossary)
+9. [CI/CD (Automated Pipelines)](#cicd-automated-pipelines)
+10. [Security](#security)
+11. [Troubleshooting](#troubleshooting)
+12. [Quick Reference (All Commands)](#quick-reference-all-commands)
+13. [Glossary](#glossary)
 
 ---
 
-## What Is This?
+## Current Architecture
 
-This repository contains everything needed to deploy, manage, and operate a **Kubernetes cluster** running on **TalosOS**.
+This repository has two reconciliation paths:
 
-Here's what those terms mean in plain language:
+- **Talos machine state** is generated from `cluster/config.env` and `cluster/patches/`, then applied with the Makefile and scripts in `scripts/`.
+- **Kubernetes application state** is reconciled by Flux from `clusters/talos-cluster/`. Helm-based addons use `helm.toolkit.fluxcd.io/v2` `HelmRelease` resources, while Kustomize resources cover Gateway API CRDs, namespace hardening, tenant scaffolding, and encrypted secrets.
 
-- **Kubernetes** is a system that runs applications inside lightweight packages called "containers." Instead of installing software directly on a computer, you put it in a container that can run anywhere. Kubernetes manages many of these containers across multiple computers, making sure they stay running, can handle traffic, and recover from failures.
+The current cluster stack is:
 
-- **TalosOS** is the operating system installed on each computer (called a "node") in the cluster. Unlike a conventional server OS, TalosOS is *immutable* — you cannot SSH into it, you cannot install software on it, and you cannot change files on it. It is managed entirely through an API (a programmatic interface). This makes it extremely secure and consistent. If a node has a problem, you don't debug it — you replace it.
-
-- **A cluster** is a group of computers working together as one. Ours has 6 physical machines (nodes).
-
-This repository is the rebuild source for the cluster. Machine-readable node endpoints, role partition, VIP, bootstrap node, and version pins live in `cluster/config.env`; the human asset table lives in `systems`; and their overlapping fields are checked in CI. If the cluster were to be destroyed, this repo (plus the secrets stored in S3) is the material needed to rebuild it from scratch.
-
----
-
-## How It Works (The Big Picture)
-
-The cluster has two types of nodes:
-
-### Control Plane Nodes (the "managers")
-
-These run the Kubernetes brain — the software that decides where containers should run, monitors health, and responds to commands. We have **3 control plane nodes** for high availability. If one goes down, the others keep the cluster running.
-
-They share a **Virtual IP (VIP)** — a single IP address (10.69.112.62) that always points to whichever control plane node is currently active. This means tools and applications always connect to the same address, even if the active node changes.
-
-### Worker Nodes (the "doers")
-
-These run your actual applications. When you deploy a container, it gets placed on a worker node. We have **3 worker nodes**.
-
-### The Flow
-
-```
-You (on your computer)
-  |
-  v
-VIP 10.69.112.62
-  |
-  +-- control plane nodes listed in systems and cluster/config.env
-
-Kubernetes schedules application pods onto:
-  +-- worker nodes listed in systems and cluster/config.env
-```
-
-Use `systems` for the human node inventory and `cluster/config.env` for machine-readable node endpoints, role partition, VIP, and bootstrap data. [ADR-0002](docs/decision-records/repo/0002-use-short-talos-hostnames.md) explains the short hostname convention.
-
-When you run a command like `kubectl apply -f my-app.yaml`, here's what happens:
-
-1. Your command goes to the VIP (10.69.112.62)
-2. The active control plane node receives it
-3. Kubernetes decides which worker node should run your app
-4. The worker node downloads and starts the container
-5. Your app is now running and accessible
-
----
+- **GitOps:** Flux `v2.8.8` bootstraps from `clusters/talos-cluster/flux-system/` and reconciles app and tenant manifests from this repository.
+- **Networking and ingress:** Cilium `1.19.4` replaces kube-proxy and is the Gateway API dataplane. Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass` live under `clusters/talos-cluster/apps/gateway-api/`.
+- **Policy:** Kyverno `3.8.1` is reconciled by Flux. First-party image signatures for `ghcr.io/nwarila-platform/*`, `ghcr.io/nwarila/*`, and `ghcr.io/the-hero-wars-guys/*` are enforced, so unsigned or unverified images are blocked at admission; upstream Flux, Cilium, Kyverno, and VSO images remain audit-only pending a re-signing registry (TD-0001/TD-0002).
+- **Storage:** Longhorn `1.11.2` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
+- **Secrets:** SOPS with age encrypts Kubernetes Secret payload fields in git; Flux decrypts them at reconcile time using the in-cluster `sops-age` secret.
+- **Safety net:** GitHub Actions validate configs, scan for secrets and compliance issues, and keep organization ADR mirrors synchronized. Flux also runs the `talos-drift-readonly` CronJob in-cluster to detect reduced read-only drift for version pins, node InternalIPs, and Flux health.
 
 ## Our Specific Cluster
 
@@ -138,26 +109,6 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 | **metrics-server** | 3.13.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` and autoscaling signals. |
 | **Longhorn** | 1.11.2 | Provides replicated block storage and the default `StorageClass`. | Applications that need persistent volumes get storage backed by the Talos `longhorn` user volume. |
 | **postfinance/kubelet-csr-approver** | 1.2.14 | Automatically approves kubelet serving certificate requests that match this cluster's node identity rules. | Allows metrics-server to validate kubelet TLS against the cluster CA without manual certificate approval loops. |
-
----
-
-## Current Architecture
-
-This repository has two reconciliation paths:
-
-- **Talos machine state** is generated from `cluster/config.env` and `cluster/patches/`, then applied with the Makefile and scripts in `scripts/`.
-- **Kubernetes application state** is reconciled by Flux from `clusters/talos-cluster/`. Helm-based addons use `helm.toolkit.fluxcd.io/v2` `HelmRelease` resources, while Kustomize resources cover Gateway API CRDs, namespace hardening, tenant scaffolding, and encrypted secrets.
-
-The current cluster stack is:
-
-- **GitOps:** Flux `v2.8.8` bootstraps from `clusters/talos-cluster/flux-system/` and reconciles app and tenant manifests from this repository.
-- **Networking and ingress:** Cilium `1.19.4` replaces kube-proxy and is the Gateway API dataplane. Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass` live under `clusters/talos-cluster/apps/gateway-api/`.
-- **Policy:** Kyverno `3.8.1` is reconciled by Flux. First-party image signatures for `ghcr.io/nwarila-platform/*`, `ghcr.io/nwarila/*`, and `ghcr.io/the-hero-wars-guys/*` are enforced, so unsigned or unverified images are blocked at admission; upstream Flux, Cilium, Kyverno, and VSO images remain audit-only pending a re-signing registry (TD-0001/TD-0002).
-- **Storage:** Longhorn `1.11.2` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
-- **Secrets:** SOPS with age encrypts Kubernetes Secret payload fields in git; Flux decrypts them at reconcile time using the in-cluster `sops-age` secret.
-- **Safety net:** GitHub Actions validate configs, scan for secrets and compliance issues, and keep organization ADR mirrors synchronized. Flux also runs the `talos-drift-readonly` CronJob in-cluster to detect reduced read-only drift for version pins, node InternalIPs, and Flux health.
-
----
 
 ## Repository Layout
 
@@ -271,8 +222,8 @@ Install `talosctl`, `kubectl`, and `helm` as described in [What You Need Before 
 ### Step 2: Clone This Repository
 
 ```bash
-git clone https://github.com/YOUR_ORG/TDNHQ-TALCL01.git
-cd TDNHQ-TALCL01
+git clone https://github.com/nwarila-platform/talos-cluster.git
+cd talos-cluster
 ```
 
 Verify prerequisites:

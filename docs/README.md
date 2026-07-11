@@ -36,6 +36,9 @@ Runbooks are composite operational how-to documents under ADR-0002.
 - [Architecture Diagrams](explanation/architecture.md) - explains the current
   GitOps reconciliation flow and trust boundaries from committed manifests and
   accepted decisions.
+- [Kubernetes And Talos Primer](explanation/kubernetes-talos-primer.md) -
+  preserves the plain-language Kubernetes, TalosOS, node-role, VIP, and command
+  flow introduction moved out of the root README.
 
 ## Reference
 
