@@ -1,0 +1,42 @@
+# Scoped Talos client credential for the etcd snapshot CronJob.
+#
+# Minted with `talosctl config new --roles os:etcd:backup --crt-ttl 17520h`
+# (client cert O=os:etcd:backup, expires 2028-07-10 - rotation is booked in
+# the ADR-0006 amendment). The role authorizes `talosctl etcd snapshot` and
+# NOTHING else - config reads and node lifecycle ops are PermissionDenied
+# (both verified live 2026-07-11, including a real 109 MB snapshot).
+#
+# Encrypted with SOPS (repo age key); Flux decrypts at reconcile via the
+# sops-age Secret. NOTE: the SOPS MAC covers metadata.name - renaming this
+# Secret requires re-encrypting, not hand-editing.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: etcd-backup-talosconfig
+    namespace: dr-etcd-backup
+    labels:
+        app.kubernetes.io/name: etcd-backup
+        app.kubernetes.io/component: backup
+type: Opaque
+stringData:
+    talosconfig: ENC[AES256_GCM,data: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,iv:4FpAJwhIEj4We4zARX0Qqh5lEjmNTnxF1r1a1pZLk2c=,tag:SUelePtPLoUyPpL6DjhayQ==,type:str]
+sops:
+    kms: []
+    gcp_kms: []
+    azure_kv: []
+    hc_vault: []
+    age:
+        - recipient: age15q49wp6ljn007uqrxvpzyes20tumx4e6xej6ksfvfaehvfmmrd4szfaf66
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA4OVJ5UjBBOExYU2gxV0VE
+            Y3RzN0lndjJQRDVZd2c4bUNPdmExQ3NJN1FjCmNKaXlHNXNUQTdWNjVlMFZmOWl6
+            Qm1XSVJtaTNJWVEyeS9XNVpVbHlNU2MKLS0tIGJIQnVMY3E1K000Wm9nRTB3SHh5
+            Rnh1N2NQb0t6TUUvOHBoNnJhWEUvclUKtPR8dZ5d9xFCf5HIK7ALIsPxHPdIH5lU
+            qWGuJhd6xPmyfIoB5/1x0A1fuAiaOvm5dyLvDFdScOtYGmlbj+rDQw==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-07-11T21:32:40Z"
+    mac: ENC[AES256_GCM,data:rVf6DbNgAODcQOx6OxizGK1GEsOPTFMmpoMsWbo3phTIHudwiyk7MYesMq6bTuDFpTYjZKc18i0y/sBBqYpdlsVrMVfbYCUxkNH4zL7jwCH6Y+Mu88mn44JZu6HH4zolQ+x6cLGUQ3UYf1DVphIWDLRfntoAccHOa7ciSS08R3A=,iv:mS7PgUU8MGfG6V3QsmGgO0BZoCUrRRztRL6AwPyfqLc=,tag:NMI4jG2FXij1FjbtUiVzDg==,type:str]
+    pgp: []
+    encrypted_regex: ^(data|stringData)$
+    version: 3.9.4
