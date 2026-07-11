@@ -9,7 +9,8 @@
 # API is the per-namespace default-deny egress NetworkPolicy (plus apid's own
 # mTLS + RBAC), NOT the node firewall; this namespace therefore carries a
 # default-deny and grants the snapshot pod a single scoped CiliumNetworkPolicy
-# egress rule to the control-plane apid endpoints.
+# egress rule to the control-plane apid (via the kube-apiserver Cilium entity;
+# a CIDR list does not match the reserved identity CP node IPs carry).
 #
 # Other controls:
 #   - single-purpose namespace: only the etcd-backup CronJob belongs here;

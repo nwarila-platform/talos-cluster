@@ -1,9 +1,19 @@
 # The single network capability the snapshot pod gets: apid (tcp/50000) on the
-# three control-plane nodes, where the etcd members live. Everything else stays
-# closed by the namespace default-deny. No DNS rule: talosctl targets literal
-# IPs, and the encryption step is offline. Same pattern as
-# tenants/talos-drift/ciliumnetworkpolicy-egress.yaml, narrowed to the
-# control plane.
+# control-plane nodes, where the etcd members live. Everything else stays closed
+# by the namespace default-deny. No DNS rule: talosctl targets literal IPs and
+# the encryption step is offline.
+#
+# IMPORTANT — why `toEntities: kube-apiserver` and NOT a `toCIDRSet` of the CP
+# node IPs: control-plane node IPs carry Cilium's reserved `kube-apiserver`
+# identity, and a plain CIDR rule does NOT match reserved-identity traffic
+# (this cluster runs default enable-remote-node-identity with no
+# policy-cidr-match-mode). A toCIDRSet of 10.69.112.63/64/65 silently matches
+# nothing for these nodes and the snapshot times out dialing apid. The proven
+# path is the kube-apiserver entity — the same rule tenants/talos-drift uses to
+# reach control-plane apid. toPorts pins it to apid only (tighter than
+# talos-drift, which leaves that entity un-port-restricted). The kube-apiserver
+# identity covers exactly the three control-plane nodes (cp1/cp2/cp3), all
+# valid etcd snapshot sources.
 #
 # (hostNetwork pods would be outside namespaced policy; this job runs as a
 # normal restricted pod precisely so this allow-list governs it.)
@@ -18,10 +28,8 @@ spec:
       app.kubernetes.io/name: etcd-backup
       app.kubernetes.io/component: backup
   egress:
-    - toCIDRSet:
-        - cidr: 10.69.112.63/32
-        - cidr: 10.69.112.64/32
-        - cidr: 10.69.112.65/32
+    - toEntities:
+        - kube-apiserver
       toPorts:
         - ports:
             - port: "50000"

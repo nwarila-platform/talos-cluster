@@ -100,8 +100,14 @@ Chosen option: **Option 1.**
 
 - **Namespace** `dr-etcd-backup`: PSA `restricted`, default-deny
   NetworkPolicy, and one scoped `CiliumNetworkPolicy` granting the snapshot
-  pod egress to the three control-plane IPs on tcp/50000 only (no DNS — targets
-  are literal IPs; encryption is offline).
+  pod egress to the control-plane apid (tcp/50000) only, via the
+  `kube-apiserver` Cilium entity (no DNS — talosctl targets literal IPs;
+  encryption is offline). The entity — not a CIDR list — is required: control-
+  plane node IPs carry Cilium's reserved `kube-apiserver` identity, and a plain
+  CIDR rule does not match reserved-identity traffic under this cluster's
+  default identity config, so a `toCIDRSet` of the CP IPs silently matches
+  nothing and the snapshot times out. The `kube-apiserver` identity resolves to
+  exactly the three control-plane nodes (the etcd hosts).
 - **Credential**: `talosctl config new --roles os:etcd:backup --crt-ttl 17520h`
   (expires **2028-07-10**), SOPS-encrypted in git, decrypted by Flux. Verified
   live: it takes a real snapshot and is `PermissionDenied` for machine-config
