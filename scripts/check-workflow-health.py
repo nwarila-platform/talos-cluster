@@ -34,8 +34,12 @@ class ExceptionDetail:
 # check fails until the stale exception is removed.
 EXCEPTIONS = {
     "org-adr-sync.yaml": ExceptionDetail(
-        tracking="P0.1",
-        reason="startup_failure under the current org-ADR sync ownership gate",
+        tracking="TD-0004",
+        reason=(
+            "neutralized to workflow_dispatch-only; NWarila/drift-gate not on "
+            "the Actions allowlist so any run startup-fails; gate restoration "
+            "tracked TD-0004 / P0.1"
+        ),
     ),
     "sync-deploy-repos.yaml": ExceptionDetail(
         tracking="P0.1",

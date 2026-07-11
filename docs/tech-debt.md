@@ -9,6 +9,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0001 | Cilium + Kyverno images cannot be signature-enforced at admission | Open | **High** |
 | TD-0002 | Flux image-signature enforcement deferred | Open | Medium |
 | TD-0003 | Strict Diataxis quadrant-directory layout not implemented | Open | Medium |
+| TD-0004 | Org-ADR drift gate neutralized pending allowlist restoration | Open | **High** |
 
 ---
 
@@ -194,9 +195,51 @@ cycle fixes the false compliance claim and records the layout gap instead.
 
 ---
 
+## TD-0004 — Org-ADR drift gate neutralized pending allowlist restoration
+
+**Opened:** 2026-07-11 · **Status:** Open · **Priority:** High ·
+**See:** P0.1 (owner console Actions allowlist item);
+[Org ADR Sync workflow]; [Workflow-health sweep].
+
+### Gap
+The PR-time org-ADR drift gate is non-functional. The workflow calls
+`NWarila/drift-gate`, but the repository's Actions policy uses
+`allowed_actions: selected` and the action is not allowlisted. GitHub rejects
+each run before starting any jobs, so the intended `org-adr / verify` check is
+never posted.
+
+### Current state
+`org-adr-sync.yaml` is neutralized, not fixed. Its automatic `pull_request` and
+`schedule` triggers have been removed, leaving `workflow_dispatch` only. This
+stops adding failures on every PR and weekly schedule but does not restore
+PR-time enforcement. The real drift-gate step remains in place so a manual run
+will exercise the intended gate once P0.1 restores the allowlist.
+
+### Options to close
+1. Complete P0.1 by allowlisting `NWarila/drift-gate` under the repository's
+   selected Actions policy, then restore PR-time triggering after a green run
+   proves the `org-adr / verify` check posts.
+2. Vendor an inline `checkout` + Python replacement in this repository that owns
+   the manifest-drift logic, then restore PR-time triggering around that in-repo
+   gate.
+
+### Closure criteria
+- PRs run an org-ADR drift gate automatically.
+- The gate fails closed on manifest drift and posts the `org-adr / verify`
+  check.
+- The `org-adr-sync.yaml` workflow-health exception can be removed without the
+  sweep failing as stale or non-excepted red.
+
+### References
+P0.1; [Org ADR Sync workflow]; [Workflow-health sweep].
+
+---
+
 [ADR-0010]: decision-records/repo/0010-adopt-kyverno-policy-engine.md
 [ADR-0002]: decision-records/org/0002-adopt-diataxis-documentation-framework.md
 [Docs index](README.md): README.md
+[Org ADR Sync workflow]: ../.github/workflows/org-adr-sync.yaml
+[Workflow-health sweep]: ../scripts/check-workflow-health.py
 [cosign #4708]: https://github.com/sigstore/cosign/issues/4708
 [Kyverno IVP feedback #14036]: https://github.com/kyverno/kyverno/discussions/14036
 [Cilium image-signature docs]: https://docs.cilium.io/en/stable/configuration/verify-image-signatures/
