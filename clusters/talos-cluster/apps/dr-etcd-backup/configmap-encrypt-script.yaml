@@ -1,0 +1,47 @@
+# Encrypt-and-prune step of the etcd snapshot CronJob. Runs in the official
+# sops image (Debian; sops embeds age, so no extra binary is needed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etcd-backup-encrypt-script
+  namespace: dr-etcd-backup
+  labels:
+    app.kubernetes.io/name: etcd-backup
+    app.kubernetes.io/component: backup
+data:
+  encrypt.sh: |
+    #!/bin/sh
+    # Encrypt the snapshot the init container wrote to /work, land it on the
+    # Longhorn-backed /data volume, prune old local dailies.
+    set -eu
+
+    # sops discovers .sops.yaml config by walking up from the CWD and errors
+    # if a found config has no matching rule; pin the CWD to the config-free
+    # work dir so the explicit --age recipient is always authoritative.
+    cd /work
+
+    SNAP=/work/etcd.db
+    MIN_BYTES=10000000
+
+    [ -s "$SNAP" ] || { echo "FATAL: $SNAP missing or empty" >&2; exit 1; }
+    SIZE=$(stat -c%s "$SNAP")
+    if [ "$SIZE" -lt "$MIN_BYTES" ]; then
+      echo "FATAL: snapshot is $SIZE bytes (< $MIN_BYTES) - refusing to ship a truncated snapshot" >&2
+      exit 1
+    fi
+
+    STAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
+    OUT="/data/etcd-$STAMP.db.sops.json"
+    sops --encrypt --age "$AGE_RECIPIENT" \
+      --input-type binary --output-type json "$SNAP" > "$OUT.partial"
+    mv "$OUT.partial" "$OUT"
+    echo "encrypted: $SIZE bytes -> $OUT ($(stat -c%s "$OUT") bytes)"
+
+    # Local retention: newest 14 dailies. The Longhorn RecurringJob keeps its
+    # own 14 volume backups on the Synology; this only bounds the live volume.
+    ls -1 /data/etcd-*.db.sops.json | sort | head -n -14 | while read -r old; do
+      rm -- "$old"
+      echo "pruned: $old"
+    done
+
+    df -k /data | tail -1
