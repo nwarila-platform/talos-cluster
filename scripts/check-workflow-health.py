@@ -33,25 +33,17 @@ class ExceptionDetail:
 # deliberately self-cleaning: if the workflow disappears or becomes healthy, the
 # check fails until the stale exception is removed.
 EXCEPTIONS = {
-    "org-adr-sync.yaml": ExceptionDetail(
-        tracking="TD-0004",
-        reason=(
-            "neutralized to workflow_dispatch-only; NWarila/drift-gate not on "
-            "the Actions allowlist so any run startup-fails; gate restoration "
-            "tracked TD-0004 / P0.1"
-        ),
-    ),
-    "sync-deploy-repos.yaml": ExceptionDetail(
-        tracking="P0.1",
-        reason="startup_failure in the owner-gated deploy-repository sync path",
-    ),
     "kubescape.yaml": ExceptionDetail(
         tracking="P0.4",
         reason="0 lifetime successes while the required self-hosted runner is unavailable",
     ),
+    # The workflow file is deleted (retired by ADR-0026; the in-cluster
+    # dr-etcd-backup CronJob replaced it), but GitHub keeps listing the
+    # workflow object while its run history exists. Remove this entry when the
+    # stale-exception check reports "workflow no longer exists".
     "etcd-snapshot.yaml": ExceptionDetail(
-        tracking="P1.4",
-        reason="0 lifetime successes pending the Stage-1 backup/runner path",
+        tracking="ADR-0026",
+        reason="retired and deleted; red run history predates retirement",
     ),
 }
 

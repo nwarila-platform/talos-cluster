@@ -247,7 +247,6 @@
 !/.github/actionlint.yaml
 !/.github/renovate.json5
 !/.github/workflows/
-!/.github/workflows/etcd-snapshot.yaml
 !/.github/workflows/kubescape.yaml
 !/.github/workflows/onboard-tenant.yaml
 !/.github/workflows/arc-smoke.yaml
@@ -296,7 +295,6 @@
 !/scripts/check-text-encoding.py
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
-!/scripts/etcd-snapshot.sh
 !/scripts/generate.sh
 !/scripts/render-readme-versions.py
 !/scripts/render-talos-drift-expected.py
@@ -372,6 +370,7 @@
 !/docs/decision-records/repo/0023-nwarila-signed-image-for-dr-restore-driver.md
 !/docs/decision-records/repo/0024-two-layer-enforcement-of-restore-validator-boundary.md
 !/docs/decision-records/repo/0025-deliberate-transparency-public-repo.md
+!/docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
