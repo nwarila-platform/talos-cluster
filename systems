@@ -1,17 +1,11 @@
-Management Virtual IP (VIP)
-10.69.112.62
+VIP 10.69.112.62
 
-
-Management (Talos hostname / asset name / IP):
-cp1  TDNHQ-TLOMGT01  10.69.112.63   (bootstrap)
-cp2  TDNHQ-TLOMGT02  10.69.112.64
-cp3  TDNHQ-TLOMGT03  10.69.112.65
-
-
-Workers (Talos hostname / asset name / IP):
-w1   TDNHQ-TLOWRK01  10.69.112.68
-w2   TDNHQ-TLOWRK02  10.69.112.69
-w3   TDNHQ-TLOWRK03  10.69.112.70
-
+HOSTNAME  ASSET_NAME     ROLE           IP            INSTALL_DISK   NIC   BOOTSTRAP
+cp1       TDNHQ-TLOMGT01 control-plane  10.69.112.63 /dev/nvme0n1   eno1  yes
+cp2       TDNHQ-TLOMGT02 control-plane  10.69.112.64 /dev/nvme0n1   eno1  no
+cp3       TDNHQ-TLOMGT03 control-plane  10.69.112.65 /dev/nvme0n1   eno1  no
+w1        TDNHQ-TLOWRK01 worker         10.69.112.68 /dev/nvme0n1   eno1  no
+w2        TDNHQ-TLOWRK02 worker         10.69.112.69 /dev/nvme0n1   eno1  no
+w3        TDNHQ-TLOWRK03 worker         10.69.112.70 /dev/nvme0n1   eno1  no
 
 Hostname convention: see docs/decision-records/repo/0002-use-short-talos-hostnames.md

@@ -51,7 +51,7 @@ Here's what those terms mean in plain language:
 
 - **A cluster** is a group of computers working together as one. Ours has 6 physical machines (nodes).
 
-This repository is the **single source of truth** for the entire cluster. Every setting, every configuration, every version number lives here. If the cluster were to be destroyed, this repo (plus the secrets stored in S3) is everything you need to rebuild it from scratch.
+This repository is the rebuild source for the cluster. Machine-readable node endpoints, role partition, VIP, bootstrap node, and version pins live in `cluster/config.env`; the human asset table lives in `systems`; and their overlapping fields are checked in CI. If the cluster were to be destroyed, this repo (plus the secrets stored in S3) is the material needed to rebuild it from scratch.
 
 ---
 
@@ -77,15 +77,13 @@ You (on your computer)
   v
 VIP 10.69.112.62
   |
-  +-- cp1 / TDNHQ-TLOMGT01 / 10.69.112.63 (bootstrap control plane)
-  +-- cp2 / TDNHQ-TLOMGT02 / 10.69.112.64 (control plane)
-  +-- cp3 / TDNHQ-TLOMGT03 / 10.69.112.65 (control plane)
+  +-- control plane nodes listed in systems and cluster/config.env
 
 Kubernetes schedules application pods onto:
-  +-- w1 / TDNHQ-TLOWRK01 / 10.69.112.68 (worker)
-  +-- w2 / TDNHQ-TLOWRK02 / 10.69.112.69 (worker)
-  +-- w3 / TDNHQ-TLOWRK03 / 10.69.112.70 (worker)
+  +-- worker nodes listed in systems and cluster/config.env
 ```
+
+Use `systems` for the human node inventory and `cluster/config.env` for machine-readable node endpoints, role partition, VIP, and bootstrap data. [ADR-0002](docs/decision-records/repo/0002-use-short-talos-hostnames.md) explains the short hostname convention.
 
 When you run a command like `kubectl apply -f my-app.yaml`, here's what happens:
 
@@ -101,14 +99,12 @@ When you run a command like `kubectl apply -f my-app.yaml`, here's what happens:
 
 ### Node Inventory
 
-| Hostname | Asset Name | Role | IP Address | Install Disk | NIC |
-|----------|------------|------|------------|-------------|-----|
-| cp1 | TDNHQ-TLOMGT01 | Control Plane (Bootstrap) | 10.69.112.63 | /dev/nvme0n1 | eno1 |
-| cp2 | TDNHQ-TLOMGT02 | Control Plane | 10.69.112.64 | /dev/nvme0n1 | eno1 |
-| cp3 | TDNHQ-TLOMGT03 | Control Plane | 10.69.112.65 | /dev/nvme0n1 | eno1 |
-| w1  | TDNHQ-TLOWRK01 | Worker | 10.69.112.68 | /dev/nvme0n1 | eno1 |
-| w2  | TDNHQ-TLOWRK02 | Worker | 10.69.112.69 | /dev/nvme0n1 | eno1 |
-| w3  | TDNHQ-TLOWRK03 | Worker | 10.69.112.70 | /dev/nvme0n1 | eno1 |
+The canonical inventory is split by audience:
+
+- `cluster/config.env` is the machine source of truth for short hostname/IP endpoints, role partition, VIP, bootstrap node, and version pins.
+- `systems` is the human source of truth for short hostnames, asset names, roles, IPs, install disks, NICs, and the bootstrap marker.
+
+Their overlapping fields are checked by `scripts/check-node-inventory-sync.py` in CI. See [ADR-0002](docs/decision-records/repo/0002-use-short-talos-hostnames.md) for the hostname convention.
 
 **Virtual IP (VIP):** 10.69.112.62 — shared between the three control plane nodes. This is the address you use for all Kubernetes API access.
 
@@ -170,7 +166,7 @@ This is a tracked-layout summary, not a byte-for-byte `git ls-files` dump. Use `
 
 | Path | Purpose |
 |------|---------|
-| `cluster/config.env` | Single source of truth for cluster identity, node inventory, and Talos/Kubernetes/Cilium/Longhorn version pins. |
+| `cluster/config.env` | Machine source of truth for cluster identity, node endpoints, role partition, VIP, bootstrap node, and Talos/Kubernetes/Cilium/Longhorn version pins; overlapping fields are CI-guarded against `systems`. |
 | `cluster/patches/` | Talos strategic-merge patches for common, control-plane, worker, firewall, volume, and node-specific machine settings. |
 | `clusters/talos-cluster/flux-system/` | Flux bootstrap manifests and repository sync definition. |
 | `clusters/talos-cluster/apps/` | Flux-reconciled platform apps: deploy repo references, Gateway API, kubelet CSR approver, Kyverno, metrics-server, namespace hardening, encrypted Vault AWS access material, and read-only drift detection. |
@@ -182,7 +178,7 @@ This is a tracked-layout summary, not a byte-for-byte `git ls-files` dump. Use `
 | `.sops.yaml` | SOPS/age encryption policy for Kubernetes Secret payload fields. |
 | `.github/CODEOWNERS`, `.github/renovate.json5`, `.pre-commit-config.yaml`, `.editorconfig` | Repository governance, dependency update, local validation, and editor-formatting controls. |
 | `Makefile` | Operator command entry point. Run `make help` to see supported commands. |
-| `systems` | Node inventory cross-reference between Talos hostnames, physical asset names, and IP addresses. |
+| `systems` | Canonical human node inventory table with short hostnames, asset names, roles, IPs, install disks, NICs, and bootstrap marker; not used to generate or apply cluster configs, and CI-guarded against `cluster/config.env`. |
 
 ### Local Secret Mirror
 
@@ -305,15 +301,11 @@ make generate
 ==> Generating Talos secrets bundle...
 ==> Generating base machine configs...
 ==> Generating per-node control plane configs...
-    cp1 (10.69.112.63) → hostname: cp1
-    cp2 (10.69.112.64) → hostname: cp2
-    cp3 (10.69.112.65) → hostname: cp3
 ==> Generating per-node worker configs...
-    w1 (10.69.112.68) → hostname: w1
-    w2 (10.69.112.69) → hostname: w2
-    w3 (10.69.112.70) → hostname: w3
 ==> Generation complete!
 ```
+
+The per-node names and IPs come from `cluster/config.env`; use `systems` for the asset-name, install-disk, and NIC cross-reference.
 
 **Where do the files go?** Into the `.s3/` folder (which is gitignored and never committed).
 
@@ -644,7 +636,7 @@ make upgrade NODES="w1"
 
 ### Adding a New Worker Node
 
-1. **Edit `cluster/config.env`** — add the new node to the `WORKER_NODES` line, using the next short-name ordinal (`w4`, `w5`, …) and recording the asset name in `systems`:
+1. **Edit `cluster/config.env` and `systems`** — add the new node to the `WORKER_NODES` line using the next short-name ordinal (`w4`, `w5`, …), and add the complete `systems` row with asset name, `worker` role, IP, install disk, NIC, and `no` bootstrap marker:
 
    ```bash
    WORKER_NODES="w1:10.69.112.68 w2:10.69.112.69 w3:10.69.112.70 w4:10.69.112.71"
@@ -705,7 +697,7 @@ make upgrade NODES="w1"
    kubectl delete node w2
    ```
 
-3. Remove the node from `WORKER_NODES` in `cluster/config.env` and delete `cluster/patches/w2.yaml`.
+3. Remove the node from `WORKER_NODES` in `cluster/config.env`, remove its complete row from `systems`, and delete `cluster/patches/w2.yaml`.
 
 4. Power off or repurpose the physical machine.
 

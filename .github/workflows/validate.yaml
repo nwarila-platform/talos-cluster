@@ -142,6 +142,9 @@ jobs:
       - name: "Guard: Longhorn addon values match Flux HelmRelease"
         run: python3 scripts/check-longhorn-values-sync.py
 
+      - name: "Guard: node inventory matches config.env"
+        run: python3 scripts/check-node-inventory-sync.py
+
       - name: Render cluster Kustomize tree
         run: kubectl kustomize clusters/talos-cluster >/dev/null
 
