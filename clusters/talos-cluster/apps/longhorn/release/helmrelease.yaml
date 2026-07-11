@@ -74,6 +74,14 @@ spec:
       # Chart default is 0 (disabled).
       concurrentAutomaticEngineUpgradePerNodeLimit: 1
 
+      # Auto-attach detached volumes for their RecurringJob runs (chart default
+      # false). The etcd-snapshot DR volume (longhorn-etcd-snapshot StorageClass)
+      # is attached only for the few minutes its snapshot CronJob runs; without
+      # this the etcd-daily-backup RecurringJob silently skips the detached
+      # volume and the Stage-1 etcd leg never reaches the Synology target. The
+      # Vault volume is unaffected (always attached by the running StatefulSet).
+      allowRecurringJobWhileVolumeDetached: true
+
     defaultBackupStore:
       # DR Stage 1 backup target: a dedicated Btrfs NFS share on the Synology
       # RS3621rpxs (TCNHQ-BKUP01, 10.69.128.115) on its own storage VLAN. NFS is
