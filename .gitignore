@@ -286,6 +286,7 @@
 !/scripts/check-vault-restore-validator-boundaries.selftest.py
 !/scripts/check-workflow-health.py
 !/scripts/onboard-tenant.sh
+!/scripts/open-sync-pr.sh
 !/scripts/dr/
 !/scripts/dr/apply-vault-snapshot-backup-live.sh
 !/scripts/dr/nfs-interim-setup.sh
