@@ -234,6 +234,7 @@
 !/.github/workflows/sync-deploy-repos.yaml
 !/.github/workflows/validate.yaml
 !/.github/workflows/workflow-health.yaml
+!/.github/workflows/auto-regenerate-derived-artifacts.yaml
 
 # -- Cluster: Talos machine config patches + version pinning ------------------
 !/cluster/
@@ -275,6 +276,7 @@
 !/scripts/drift-check.sh
 !/scripts/etcd-snapshot.sh
 !/scripts/generate.sh
+!/scripts/render-readme-versions.py
 !/scripts/render-talos-drift-expected.py
 !/scripts/kubescape-scan.sh
 !/scripts/kubescape-json-to-sarif.py

@@ -1,0 +1,253 @@
+# =============================================================================
+# Auto-regenerate derived artifacts for same-repo Renovate version PRs.
+#
+# This is pull_request_target because it must push generated files back to the
+# PR branch. The first step is a hard gate: no PR-head checkout and no App token
+# minting happen unless the PR is same-repo, renovate/*, and touches only the
+# allowlisted version-source/generated files.
+# =============================================================================
+name: Auto-Regenerate Derived Artifacts
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "cluster/config.env"
+      - "clusters/talos-cluster/flux-system/gotk-components.yaml"
+      - "clusters/talos-cluster/apps/gateway-api/kustomization.yaml"
+      - "clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml"
+      - "clusters/talos-cluster/apps/metrics-server/helmrelease.yaml"
+      - "clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml"
+      - "README.md"
+      - "clusters/talos-cluster/apps/talos-drift/expected.env"
+
+permissions: {}
+
+concurrency:
+  group: auto-regen-derived-artifacts-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    name: Regenerate README and drift expected state
+    runs-on: nwarila-repo-sync-arc-ci
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Gate same-repo Renovate PR and allowlisted files
+        id: gate
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GH_API_URL: ${{ github.api_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if [ "${BASE_REF}" != "main" ]; then
+            echo "Skipping: PR base is ${BASE_REF}, not main."
+            exit 0
+          fi
+
+          if [ "${HEAD_REPO}" != "${GH_REPOSITORY}" ]; then
+            echo "Skipping: fork PR ${HEAD_REPO} cannot use auto-regeneration."
+            exit 0
+          fi
+
+          case "${HEAD_REF}" in
+            renovate/*) ;;
+            *)
+              echo "Skipping: branch ${HEAD_REF} is not a renovate/* branch."
+              exit 0
+              ;;
+          esac
+
+          if ! python3 <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          allowlist = {
+              "cluster/config.env",
+              "clusters/talos-cluster/flux-system/gotk-components.yaml",
+              "clusters/talos-cluster/apps/gateway-api/kustomization.yaml",
+              "clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml",
+              "clusters/talos-cluster/apps/metrics-server/helmrelease.yaml",
+              "clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml",
+              "README.md",
+              "clusters/talos-cluster/apps/talos-drift/expected.env",
+          }
+
+          api_url = os.environ["GH_API_URL"].rstrip("/")
+          repo = os.environ["GH_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          pr_number = os.environ["PR_NUMBER"]
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          files = []
+          page = 1
+          while True:
+              url = f"{api_url}/repos/{repo}/pulls/{pr_number}/files?per_page=100&page={page}"
+              request = urllib.request.Request(url, headers=headers)
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      payload = json.load(response)
+              except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                  print(f"Could not resolve PR changed files: {exc}", file=sys.stderr)
+                  sys.exit(1)
+
+              if not payload:
+                  break
+
+              files.extend(item.get("filename", "") for item in payload)
+              if len(payload) < 100:
+                  break
+              page += 1
+
+          changed = sorted(path for path in files if path)
+          disallowed = [path for path in changed if path not in allowlist]
+
+          print("Changed files:")
+          for path in changed:
+              print(f"- {path}")
+
+          if disallowed:
+              print("Disallowed files:", file=sys.stderr)
+              for path in disallowed:
+                  print(f"- {path}", file=sys.stderr)
+              sys.exit(1)
+          PY
+          then
+            echo "Skipping: changed-file allowlist gate failed."
+            exit 0
+          fi
+
+          echo "allowed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify the mounted App key is present and PEM-shaped
+        if: steps.gate.outputs.allowed == 'true'
+        run: |
+          set -euo pipefail
+          key=/opt/repo-sync/private-key.pem
+          test -s "${key}"
+          grep -q "PRIVATE KEY" "${key}"
+          echo "repo-sync App key present and PEM-shaped"
+
+      - name: Load PEM into a step output
+        id: readkey
+        if: steps.gate.outputs.allowed == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "pem<<__PEM_EOF__"
+            cat /opt/repo-sync/private-key.pem
+            echo "__PEM_EOF__"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Mint talos-cluster WRITE token
+        id: token_rw
+        if: steps.gate.outputs.allowed == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: "4080021"
+          private-key: ${{ steps.readkey.outputs.pem }}
+          owner: nwarila-platform
+          repositories: talos-cluster
+          permission-contents: write
+
+      - name: Checkout gated PR head
+        if: steps.gate.outputs.allowed == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ steps.token_rw.outputs.token }}
+          persist-credentials: false
+
+      - name: Regenerate derived artifacts
+        if: steps.gate.outputs.allowed == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/render-readme-versions.py
+          python3 scripts/render-talos-drift-expected.py
+
+      - name: Commit and push if generated artifacts changed
+        if: steps.gate.outputs.allowed == 'true'
+        env:
+          BOT_EMAIL: 294612239+nwarila-repo-sync[bot]@users.noreply.github.com
+          BOT_NAME: nwarila-repo-sync[bot]
+          GH_TOKEN: ${{ steps.token_rw.outputs.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet --exit-code; then
+            echo "No generated artifact drift; nothing to commit."
+            exit 0
+          fi
+
+          git diff --name-only > "${RUNNER_TEMP}/generated-files.txt"
+          echo "Changed files after regeneration:"
+          sed 's/^/- /' "${RUNNER_TEMP}/generated-files.txt"
+
+          unexpected=0
+          while IFS= read -r path; do
+            case "${path}" in
+              README.md|clusters/talos-cluster/apps/talos-drift/expected.env) ;;
+              *)
+                echo "Unexpected generator change: ${path}" >&2
+                unexpected=1
+                ;;
+            esac
+          done < "${RUNNER_TEMP}/generated-files.txt"
+
+          if [ "${unexpected}" -ne 0 ]; then
+            exit 1
+          fi
+
+          git add -- README.md clusters/talos-cluster/apps/talos-drift/expected.env
+          if git diff --cached --quiet --exit-code; then
+            echo "No generated artifact drift after staging; nothing to commit."
+            exit 0
+          fi
+
+          bot_identity="${BOT_NAME} <${BOT_EMAIL}>"
+          GIT_COMMITTER_NAME="${BOT_NAME}" \
+          GIT_COMMITTER_EMAIL="${BOT_EMAIL}" \
+            git -c commit.gpgsign=false commit \
+              --author="${bot_identity}" \
+              -m "chore: regenerate version-derived artifacts" \
+              -m "Regenerate README version pins and talos-drift expected state from canonical version sources."
+
+          askpass_dir="$(mktemp -d "${RUNNER_TEMP%/}/git-askpass.XXXXXX")"
+          cleanup() {
+            rm -rf "${askpass_dir}"
+          }
+          trap cleanup EXIT
+
+          askpass_file="${askpass_dir}/askpass.sh"
+          cat > "${askpass_file}" <<'ASKPASS_EOF'
+          #!/usr/bin/env sh
+          case "$1" in
+            *Username*) printf '%s\n' "x-access-token" ;;
+            *Password*) printf '%s\n' "$GH_TOKEN" ;;
+            *) printf '%s\n' "$GH_TOKEN" ;;
+          esac
+          ASKPASS_EOF
+          chmod 700 "${askpass_file}"
+
+          export GIT_ASKPASS="${askpass_file}"
+          export GIT_TERMINAL_PROMPT=0
+          git push "https://github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"
