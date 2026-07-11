@@ -33,9 +33,8 @@
 10. [CI/CD (Automated Pipelines)](#cicd-automated-pipelines)
 11. [Security](#security)
 12. [Troubleshooting](#troubleshooting)
-13. [Windows / Git Bash Notes](#windows--git-bash-notes)
-14. [Quick Reference (All Commands)](#quick-reference-all-commands)
-15. [Glossary](#glossary)
+13. [Quick Reference (All Commands)](#quick-reference-all-commands)
+14. [Glossary](#glossary)
 
 ---
 
@@ -47,7 +46,7 @@ Here's what those terms mean in plain language:
 
 - **Kubernetes** is a system that runs applications inside lightweight packages called "containers." Instead of installing software directly on a computer, you put it in a container that can run anywhere. Kubernetes manages many of these containers across multiple computers, making sure they stay running, can handle traffic, and recover from failures.
 
-- **TalosOS** is the operating system installed on each computer (called a "node") in the cluster. Unlike Windows or a regular Linux install, TalosOS is *immutable* — you cannot SSH into it, you cannot install software on it, and you cannot change files on it. It is managed entirely through an API (a programmatic interface). This makes it extremely secure and consistent. If a node has a problem, you don't debug it — you replace it.
+- **TalosOS** is the operating system installed on each computer (called a "node") in the cluster. Unlike a conventional server OS, TalosOS is *immutable* — you cannot SSH into it, you cannot install software on it, and you cannot change files on it. It is managed entirely through an API (a programmatic interface). This makes it extremely secure and consistent. If a node has a problem, you don't debug it — you replace it.
 
 - **A cluster** is a group of computers working together as one. Ours has 6 physical machines (nodes).
 
@@ -190,13 +189,14 @@ The `.s3/` directory is a local, gitignored mirror of the production S3 secret b
 
 You need 3 command-line tools installed on your computer. Here's exactly what they are and how to get them:
 
+Operator tooling targets Linux/macOS; Windows is not a supported operator environment.
+
 ### 1. `talosctl` — Talos Node Manager
 
 **What it does:** Sends commands to TalosOS nodes. Used to apply configs, bootstrap the cluster, check health, view logs, and upgrade nodes.
 
 **How to install:**
 
-- **Windows:** Visit [https://github.com/siderolabs/talos/releases](https://github.com/siderolabs/talos/releases), download `talosctl-windows-amd64.exe`, rename it to `talosctl.exe`, and place it in a folder on your PATH (e.g., `C:\Users\YourName\bin\`).
 - **macOS:** `brew install siderolabs/tap/talosctl`
 - **Linux:** `curl -sL https://talos.dev/install | sh`
 
@@ -214,7 +214,6 @@ You should see output matching the `TALOS_VERSION` pin in `cluster/config.env`.
 
 **How to install:**
 
-- **Windows:** `choco install kubernetes-cli` (if you have Chocolatey), or download from [https://kubernetes.io/docs/tasks/tools/install-kubectl-windows/](https://kubernetes.io/docs/tasks/tools/install-kubectl-windows/)
 - **macOS:** `brew install kubectl`
 - **Linux:** `curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin/`
 
@@ -232,7 +231,6 @@ You should see output mentioning `Client Version: v1.32.x` (or similar).
 
 **How to install:**
 
-- **Windows:** `choco install kubernetes-helm` or download from [https://github.com/helm/helm/releases](https://github.com/helm/helm/releases)
 - **macOS:** `brew install helm`
 - **Linux:** `curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash`
 
@@ -398,12 +396,6 @@ kubectl get nodes
 ### Step 8: Install Cilium (Networking)
 
 The cluster currently has no networking between pods. The nodes show "NotReady" because there's no CNI installed. Cilium is our CNI.
-
-**If you're on Windows / Git Bash**, you MUST run this first to prevent path mangling:
-
-```bash
-export MSYS_NO_PATHCONV=1
-```
 
 Add the Cilium Helm repository and install:
 
@@ -800,12 +792,6 @@ The cluster has multiple layers of security:
 
 **Fix:** Install Cilium (Step 8).
 
-### Cilium pods stuck in `Init:CreateContainerError`
-
-**Cause (Windows only):** Git Bash translated Unix paths (like `/sys/fs/cgroup`) to Windows paths.
-
-**Fix:** Set `export MSYS_NO_PATHCONV=1` before running `helm install`. Uninstall the broken release with `helm uninstall cilium -n kube-system` and reinstall.
-
 ### kube-apiserver crash-looping
 
 **Cause:** Usually a configuration error in the control plane patch (e.g., duplicate values in PodSecurity exemptions).
@@ -869,30 +855,6 @@ talosctl config endpoint 10.69.112.63 10.69.112.64 10.69.112.65 --talosconfig .s
    ```
 
 3. If it doesn't respond: The node may need to be physically checked (network cable, power, BIOS boot order).
-
----
-
-## Windows / Git Bash Notes
-
-If you are running these commands from Git Bash (MSYS2) on Windows, there is one critical thing to know:
-
-**Git Bash automatically converts Unix-style paths to Windows paths.** For example, `/sys/fs/cgroup` becomes `C:/Program Files/Git/sys/fs/cgroup`. This breaks Helm values that contain Unix paths.
-
-**The fix:** Before running ANY `helm` command, set this environment variable:
-
-```bash
-export MSYS_NO_PATHCONV=1
-```
-
-You can add this to your `~/.bashrc` to make it permanent:
-
-```bash
-echo 'export MSYS_NO_PATHCONV=1' >> ~/.bashrc
-```
-
-This does NOT affect other tools — it only disables path conversion for the current session.
-
----
 
 ## Quick Reference (All Commands)
 
