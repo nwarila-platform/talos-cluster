@@ -59,7 +59,7 @@ This repository has two reconciliation paths:
 The current cluster stack is:
 
 - **GitOps:** Flux `v2.8.8` bootstraps from `clusters/talos-cluster/flux-system/` and reconciles app and tenant manifests from this repository.
-- **Networking and ingress:** Cilium `1.19.4` replaces kube-proxy and is the Gateway API dataplane. Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass` live under `clusters/talos-cluster/apps/gateway-api/`.
+- **Networking and ingress:** Cilium `1.19.5` replaces kube-proxy and is the Gateway API dataplane. Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass` live under `clusters/talos-cluster/apps/gateway-api/`.
 - **Policy:** Kyverno `3.8.1` is reconciled by Flux. First-party image signatures for `ghcr.io/nwarila-platform/*`, `ghcr.io/nwarila/*`, and `ghcr.io/the-hero-wars-guys/*` are enforced, so unsigned or unverified images are blocked at admission; upstream Flux, Cilium, Kyverno, and VSO images remain audit-only pending a re-signing registry (TD-0001/TD-0002).
 - **Storage:** Longhorn `1.11.2` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
 - **Secrets:** SOPS with age encrypts Kubernetes Secret payload fields in git; Flux decrypts them at reconcile time using the in-cluster `sops-age` secret.
@@ -101,7 +101,7 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 |----------|---------|-------------|----------------|
 | **TalosOS** | v1.13.2 | The operating system on each node. Secure, immutable, API-managed. | It's the foundation: every node runs this instead of Ubuntu, CentOS, etc. |
 | **Kubernetes** | v1.36.0 | The container orchestration platform. Manages all running applications. | It's the core: this is what makes the cluster a cluster. |
-| **Cilium** | 1.19.4 | Handles pod networking, replaces kube-proxy, and provides the Gateway API dataplane. | Without a CNI (Container Network Interface), containers on different nodes cannot talk to each other. |
+| **Cilium** | 1.19.5 | Handles pod networking, replaces kube-proxy, and provides the Gateway API dataplane. | Without a CNI (Container Network Interface), containers on different nodes cannot talk to each other. |
 | **CoreDNS** | bundled with Kubernetes | Translates service names to IP addresses inside the cluster. | So containers can find each other by name, such as `database`, instead of memorizing IP addresses. |
 | **Flux** | v2.8.8 | Reconciles the Kubernetes manifests under `clusters/talos-cluster/`. | Keeps Git as the operational source of truth after bootstrap. |
 | **Kyverno** | 3.8.1 | Provides Kubernetes admission policy, enforcing first-party image signatures while auditing upstream families. | Gives the cluster a policy engine without requiring ad hoc manual admission checks. |
