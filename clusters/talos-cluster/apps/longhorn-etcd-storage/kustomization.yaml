@@ -1,0 +1,10 @@
+# etcd-snapshot DR storage policy (ADR-0006 Stage-1 retarget).
+#
+# Namespace-independent policy layer: the StorageClass + RecurringJob only. The
+# PVC and the dedicated etcd-snapshot-arc-ci runner scale set (which mounts it)
+# land in a follow-up, in the runner's namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - storageclass.yaml
+  - recurringjob.yaml

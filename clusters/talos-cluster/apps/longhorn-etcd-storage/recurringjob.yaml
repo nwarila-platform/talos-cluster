@@ -1,0 +1,21 @@
+# Longhorn RecurringJob: daily backup of the etcd-snapshot volume to Stage-1
+# (Synology, the longhorn-system default backupTarget). Mirrors vault-daily-backup.
+#
+# Bound to volumes via the longhorn-etcd-snapshot StorageClass recurringJobSelector
+# (isGroup: false), NOT the "default" group, so etcd snapshot retention stays
+# independent of Vault's. Cron runs after the etcd-snapshot workflow writes the
+# day's snapshot to the PVC (workflow ~03:00 UTC once re-enabled).
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: etcd-daily-backup
+  namespace: longhorn-system
+spec:
+  name: etcd-daily-backup
+  task: backup
+  cron: "47 3 * * *"
+  retain: 14
+  concurrency: 1
+  labels:
+    backup.nwarila.io/workload: etcd
+    backup.nwarila.io/stage: dr-stage-1
