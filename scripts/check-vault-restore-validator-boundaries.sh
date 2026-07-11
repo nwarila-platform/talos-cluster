@@ -278,7 +278,12 @@ LONGHORN_DATAPLANE_KINDS = {
 }
 APPROVED_LONGHORN_DATAPLANE = {
     ("RecurringJob", LONGHORN_NS, "vault-daily-backup"),
+    ("RecurringJob", LONGHORN_NS, "etcd-daily-backup"),
 }
+# Approved RecurringJobs must stay non-destructive: task "backup" only. Longhorn
+# also accepts snapshot-delete/snapshot-cleanup/filesystem-trim tasks, which can
+# destroy restore points on the live data-vault volume under an approved name.
+APPROVED_RECURRINGJOB_TASKS = {"backup"}
 
 
 def load_text(path):
@@ -971,12 +976,22 @@ def assert_no_unexpected_longhorn_dataplane(documents, source_label):
 
         key = (kind, namespace(document), name(document))
         if key in APPROVED_LONGHORN_DATAPLANE:
+            if kind == "RecurringJob":
+                task = (document.get("spec") or {}).get("task")
+                if task not in APPROVED_RECURRINGJOB_TASKS:
+                    add_error(
+                        f"{source_label} approved RecurringJob "
+                        f"{namespace(document)}/{name(document)} carries "
+                        f"spec.task {task!r}; approved RecurringJobs must keep "
+                        "spec.task: backup - other tasks can delete snapshots or "
+                        "trim the live data-vault volume under an approved name"
+                    )
             continue
 
         add_error(
             f"{source_label} unexpected Longhorn data-plane "
             f"{kind}/{namespace(document)}/{name(document)}; git may declare only "
-            "the approved backup RecurringJob - a Volume fromBackup or extra "
+            "the approved backup RecurringJobs - a Volume fromBackup or extra "
             "RecurringJob can restore/destroy the live data-vault volume"
         )
 

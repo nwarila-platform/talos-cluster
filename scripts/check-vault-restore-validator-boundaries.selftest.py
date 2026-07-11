@@ -457,6 +457,48 @@ def cases() -> list[Case]:
             cronjob_with_ssa_ignore,
         ),
         Case(
+            "rj-unapproved-name",
+            "RecurringJob in longhorn-system with an unapproved name",
+            False,
+            lambda: probe_file(
+                "rj-unapproved-name",
+                """
+                apiVersion: longhorn.io/v1beta2
+                kind: RecurringJob
+                metadata:
+                  name: guard-selftest-unapproved-backup
+                  namespace: longhorn-system
+                spec:
+                  name: guard-selftest-unapproved-backup
+                  task: backup
+                  cron: "0 0 * * *"
+                  retain: 1
+                  concurrency: 1
+                """,
+            ),
+        ),
+        Case(
+            "rj-destructive-task",
+            "approved RecurringJob name carrying a destructive task",
+            False,
+            lambda: probe_file(
+                "rj-destructive-task",
+                """
+                apiVersion: longhorn.io/v1beta2
+                kind: RecurringJob
+                metadata:
+                  name: vault-daily-backup
+                  namespace: longhorn-system
+                spec:
+                  name: vault-daily-backup
+                  task: snapshot-delete
+                  cron: "0 0 * * *"
+                  retain: 1
+                  concurrency: 1
+                """,
+            ),
+        ),
+        Case(
             "benign-configmap",
             "ConfigMap in kube-system remains outside the validator footprint",
             True,
