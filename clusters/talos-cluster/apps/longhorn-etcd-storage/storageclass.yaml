@@ -1,0 +1,21 @@
+# StorageClass for etcd-snapshot DR volumes (ADR-0006 Stage-1 retarget).
+#
+# Volumes provisioned here are auto-bound to the etcd-daily-backup RecurringJob
+# via recurringJobSelector, which backs them up to the Stage-1 Synology target
+# (the longhorn-system default backupTarget). reclaimPolicy: Retain because a DR
+# volume must survive an accidental PVC delete.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-etcd-snapshot
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "3"
+  fsType: ext4
+  dataLocality: disabled
+  recurringJobSelector: '[{"name":"etcd-daily-backup","isGroup":false}]'

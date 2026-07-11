@@ -159,6 +159,10 @@
 !/clusters/talos-cluster/apps/longhorn-vault-storage/node-tags.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/recurringjob-vault-backup.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/storageclass.yaml
+!/clusters/talos-cluster/apps/longhorn-etcd-storage/
+!/clusters/talos-cluster/apps/longhorn-etcd-storage/kustomization.yaml
+!/clusters/talos-cluster/apps/longhorn-etcd-storage/storageclass.yaml
+!/clusters/talos-cluster/apps/longhorn-etcd-storage/recurringjob.yaml
 !/clusters/talos-cluster/apps/metrics-server/
 !/clusters/talos-cluster/apps/metrics-server/helmrelease.yaml
 !/clusters/talos-cluster/apps/metrics-server/helmrepository.yaml
