@@ -6,3 +6,4 @@ resources:
   - networkpolicy-default-deny.yaml
   - ciliumnetworkpolicy-egress.yaml
   - pvc.yaml
+  - talosconfig.sops.yaml
