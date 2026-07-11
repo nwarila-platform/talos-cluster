@@ -214,8 +214,9 @@ control-plane disks and/or overwrites Vault Raft state.
 
 ### Neutral
 
-- The old `scripts/etcd-snapshot.sh` remains useful as implementation material
-  but its S3 upload target is no longer the desired end state.
+- The old `scripts/etcd-snapshot.sh` remained available as implementation
+  material until [ADR-0026](0026-in-cluster-etcd-snapshot-pipeline.md) landed
+  the in-cluster pipeline and deleted it (2026-07-11).
 - A temporary S3 snapshot can still be chosen by the owner as an emergency
   stopgap, but it is not the accepted architecture.
 
