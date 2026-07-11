@@ -20,6 +20,11 @@ etcd state anymore; Stage-0 S3 storage for rebuild-critical secrets remains
 correct. The existing script and workflow may still be reused as implementation
 material after they are retargeted to Stage-1.
 
+**Update (2026-07-11):** the retarget landed as a ground-up in-cluster
+pipeline — see [ADR-0026](0026-in-cluster-etcd-snapshot-pipeline.md). The
+S3-era workflow (`.github/workflows/etcd-snapshot.yaml`) and script
+(`scripts/etcd-snapshot.sh`) are deleted; they never ran successfully.
+
 ## TL;DR
 
 A scheduled GitHub Actions workflow (`.github/workflows/etcd-snapshot.yaml`) runs `scripts/etcd-snapshot.sh` daily at 03:00 UTC. The script captures an etcd bbolt snapshot via `talosctl etcd snapshot` from a non-bootstrap CP and uploads it KMS-encrypted to `s3://793496711039-terraform/nwarila-platform/talos-cluster/etcd-snapshots/YYYY-MM-DD/snapshot-HHMMSSZ.db`. Combined with the existing `secrets/secrets.yaml` mirror in the same bucket, this is sufficient to recover the cluster via `talosctl bootstrap --recover-from` after a CP-quorum failure. The cycle that introduces this ADR sets up the capture path; restore-testing against a sacrificial cluster is out of scope and tracked as a follow-up.

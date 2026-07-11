@@ -228,8 +228,11 @@ Source files verified for this diagram:
 `docs/decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md`,
 `docs/runbooks/dr-stage1-backup.md`,
 `docs/runbooks/restore-drill-backup-dr.md`,
-`.github/workflows/etcd-snapshot.yaml`,
-`scripts/etcd-snapshot.sh`,
+`docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md`,
+`clusters/talos-cluster/apps/dr-etcd-backup/cronjob.yaml`,
+`clusters/talos-cluster/apps/dr-etcd-backup/ciliumnetworkpolicy-egress.yaml`,
+`clusters/talos-cluster/apps/longhorn-etcd-storage/storageclass.yaml`,
+`clusters/talos-cluster/apps/longhorn-etcd-storage/recurringjob.yaml`,
 `clusters/talos-cluster/apps/vault/base/vault-statefulset.yaml`,
 `clusters/talos-cluster/apps/vault/base/vault.hcl`,
 `clusters/talos-cluster/apps/longhorn-vault-storage/storageclass.yaml`,
@@ -266,12 +269,12 @@ flowchart TD
     VaultDailyBackup["Longhorn RecurringJob vault-daily-backup<br/>backup cron 17 8 daily, retain 14"]
     Synology["TCNHQ-BKUP01 Synology NFS<br/>10.69.128.115:/volume1/longhorn-backup<br/>Btrfs RAID6 with immutable snapshots"]
     CurrentVaultDR["Current Vault DR artifact<br/>Longhorn volume backups<br/>no retained Raft snapshots today"]
+    EtcdCronJob["CronJob etcd-snapshot in dr-etcd-backup<br/>talosctl os:etcd:backup role, 03:00 daily<br/>whole-file age encryption, escrowed key"]
+    EtcdPVC["PVC etcd-snapshots<br/>storageClassName longhorn-etcd-snapshot<br/>14 encrypted local dailies"]
+    EtcdDailyBackup["Longhorn RecurringJob etcd-daily-backup<br/>backup cron 47 3 daily, retain 14<br/>detached-volume backup enabled"]
   end
 
   subgraph NotLive["Accepted or present, but NOT LIVE"]
-    EtcdWorkflow["etcd Snapshot workflow<br/>workflow_dispatch only<br/>schedule disabled"]
-    EtcdScript["scripts/etcd-snapshot.sh<br/>S3 implementation material"]
-    EtcdStage1["Accepted Stage 1 etcd snapshots<br/>retarget to local Stage 1 required"]
     VaultSnapshotRole["vault-snapshot-backup role and policy<br/>read sys/storage/raft/snapshot"]
     VaultRaftSnapshots["Vault Raft snapshots<br/>none retained today"]
     RestoreValidator["CronJob dr-restore-driver<br/>suspend true<br/>schedule 0 6 31 2 *"]
@@ -286,8 +289,9 @@ flowchart TD
   VaultDailyBackup --> Synology
   Synology --> CurrentVaultDR
 
-  EtcdWorkflow -. "manual only" .-> EtcdScript
-  EtcdScript -. "not the accepted live target" .-> EtcdStage1
+  EtcdCronJob --> EtcdPVC
+  EtcdPVC --> EtcdDailyBackup
+  EtcdDailyBackup --> Synology
   VaultSnapshotRole -. "foundation only; no scheduled capture" .-> VaultRaftSnapshots
   VaultRaftSnapshots -. "not current Vault DR source" .-> CurrentVaultDR
   RestoreValidator -. "inert and owner-supervised only" .-> ValidatorGuard
@@ -295,6 +299,6 @@ flowchart TD
 
   classDef live fill:#eaf5ea,stroke:#2e7d32,stroke-width:2px;
   classDef notlive fill:#fff8e1,stroke:#8a6d00,stroke-width:2px,stroke-dasharray: 5 5;
-  class Stage0Local,S3Sync,S3Bucket,VaultPVC,LonghornVault,VaultDailyBackup,Synology,CurrentVaultDR,LiveLegend live;
-  class EtcdWorkflow,EtcdScript,EtcdStage1,VaultSnapshotRole,VaultRaftSnapshots,RestoreValidator,ValidatorGuard,FutureValidator,NotLiveLegend notlive;
+  class Stage0Local,S3Sync,S3Bucket,VaultPVC,LonghornVault,VaultDailyBackup,Synology,CurrentVaultDR,EtcdCronJob,EtcdPVC,EtcdDailyBackup,LiveLegend live;
+  class VaultSnapshotRole,VaultRaftSnapshots,RestoreValidator,ValidatorGuard,FutureValidator,NotLiveLegend notlive;
 ```

@@ -4,7 +4,7 @@ A real Talos Kubernetes homelab platform managed by Flux GitOps: first-party ima
 
 ## Overview
 
-This is the source-of-truth repository for a real Talos Kubernetes homelab. Talos machine state is generated from `cluster/config.env` and `cluster/patches/`, while Kubernetes platform and application state is reconciled by Flux from `clusters/talos-cluster/`. Secrets have two paths: SOPS-encrypted Secret manifests in git for bootstrap and platform material, and Vault/Vault Secrets Operator runtime flows where those integrations are implemented. Admission policy enforces first-party image signatures while upstream Flux, Cilium, Kyverno, and VSO image families remain audit-only pending TD-0001/TD-0002. Disaster recovery is tiered and unfinished: Stage-0 S3 is rebuild-critical only, etcd snapshots are not live-scheduled until retargeted, and restore is not accepted until drilled.
+This is the source-of-truth repository for a real Talos Kubernetes homelab. Talos machine state is generated from `cluster/config.env` and `cluster/patches/`, while Kubernetes platform and application state is reconciled by Flux from `clusters/talos-cluster/`. Secrets have two paths: SOPS-encrypted Secret manifests in git for bootstrap and platform material, and Vault/Vault Secrets Operator runtime flows where those integrations are implemented. Admission policy enforces first-party image signatures while upstream Flux, Cilium, Kyverno, and VSO image families remain audit-only pending TD-0001/TD-0002. Disaster recovery is tiered: Stage-0 S3 holds rebuild-critical secrets only, daily in-cluster etcd and Vault snapshot jobs ship operational state to the Stage-1 Synology backup target, and restore is not accepted until drilled.
 
 Architecture diagrams: [docs/explanation/architecture.md](docs/explanation/architecture.md).
 
@@ -657,15 +657,16 @@ This downloads all secrets from the AWS S3 bucket. You then have full access to 
 ### Disaster Recovery
 
 Stage-0 S3 storage holds rebuild-critical secrets and access material only.
-Operational state snapshots move to the future Stage-1 local backup server:
-etcd snapshots for Kubernetes state, Vault Raft snapshots for PKI/trust state,
-and later Longhorn/PV data.
-
-The old `etcd Snapshot` workflow is manual-only and remains disabled for
-scheduled use until it is retargeted to Stage-1. ADR-0006 is superseded by
-[ADR-0014](docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md),
-which defines the backup/DR architecture, cadence, retention, interim capture
-posture, and monitoring requirements.
+Operational state ships to the Stage-1 Synology backup target
+([ADR-0014](docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md),
+[ADR-0021](docs/decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md)):
+Longhorn volume backups daily (Vault data included), and etcd snapshots via the
+in-cluster `dr-etcd-backup` CronJob
+([ADR-0026](docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md))
+- captured with a snapshot-only Talos role, whole-file encrypted to an
+off-cluster-escrowed age key, landed on a Longhorn volume, and shipped by the
+`etcd-daily-backup` RecurringJob. The ADR-0006-era GitHub Actions S3 workflow
+is retired (deleted; it never ran successfully).
 
 Restore is not accepted as working until it is drilled. Use
 [Backup And DR Restore Drill](docs/runbooks/restore-drill-backup-dr.md) for the
@@ -698,7 +699,6 @@ Repository-owned GitHub Actions workflows include:
 |---------|---------------|--------------|
 | Validate | `validate.yaml` | Runs PR validation for scripts, YAML, generated Talos configs, and secret hygiene. |
 | Security | `security.yaml` | Runs Gitleaks and the config audit on PRs, weekly schedule, and manual dispatch. |
-| etcd snapshot | `etcd-snapshot.yaml` | Manual-only placeholder pending Stage-1 local backup server retargeting. |
 | Compliance | `kubescape.yaml` | Runs the pinned Kubescape CIS Kubernetes scan and uploads SARIF to GitHub Code Scanning. |
 | ARC smoke | `arc-smoke.yaml` | Manually verifies the `nwarila-talos-arc-ci` runner scale set can execute a job. |
 | Tenant onboarding | `onboard-tenant.yaml` | Manually scaffolds tenant namespace and network-policy manifests. |
@@ -713,7 +713,7 @@ Kubernetes ServiceAccount. The reduced detector covers version pins, node
 InternalIPs, and Flux health. It intentionally does not cover Talos
 machine-config drift because `machineconfig` is admin-only.
 
-Talos apply and upgrade remain manual/loop operations from an operator workstation using `make apply` and `make upgrade`. CI-based Talos apply was intentionally removed so public-repo workflows do not hold a Talos admin config. The etcd snapshot and Kubescape workflows require self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
+Talos apply and upgrade remain manual/loop operations from an operator workstation using `make apply` and `make upgrade`. CI-based Talos apply was intentionally removed so public-repo workflows do not hold a Talos admin config. The Kubescape workflow requires self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
 
 ---
 
