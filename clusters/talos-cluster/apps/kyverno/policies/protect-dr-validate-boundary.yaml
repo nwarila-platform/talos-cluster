@@ -363,7 +363,10 @@ spec:
                     operator: GreaterThan
                     value: 0
 
-    # 7. Only the approved Longhorn backup RecurringJob is allowed; destructive or extra tasks are denied.
+    # 7. Only the approved Longhorn backup RecurringJobs are allowed; destructive or extra tasks are denied.
+    #    Approved: vault-daily-backup (Vault PVC, ADR-0021/0022) and etcd-daily-backup (etcd snapshot
+    #    volume, ADR-0006 Stage-1 retarget). Both must keep spec.task: backup. Mirrored by
+    #    APPROVED_LONGHORN_DATAPLANE in the static CI guard.
     - name: no-unapproved-longhorn-recurringjob
       match:
         any:
@@ -372,13 +375,16 @@ spec:
               operations: [CREATE, UPDATE]
       validate:
         message: >-
-          The only approved Longhorn RecurringJob is vault-daily-backup with spec.task: backup.
+          The only approved Longhorn RecurringJobs are vault-daily-backup and etcd-daily-backup,
+          each with spec.task: backup.
         deny:
           conditions:
             any:
               - key: "{{ request.object.metadata.name }}"
-                operator: NotEquals
-                value: vault-daily-backup
+                operator: NotIn
+                value:
+                  - vault-daily-backup
+                  - etcd-daily-backup
               - key: "{{ request.object.spec.task || '' }}"
                 operator: NotEquals
                 value: backup
