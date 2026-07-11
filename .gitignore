@@ -71,6 +71,7 @@
 !/clusters/talos-cluster/apps/dr-etcd-backup/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/ciliumnetworkpolicy-egress.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/pvc.yaml
+!/clusters/talos-cluster/apps/dr-etcd-backup/talosconfig.sops.yaml
 !/clusters/talos-cluster/apps/vault-restore-validator/
 !/clusters/talos-cluster/apps/vault-restore-validator/README.md
 !/clusters/talos-cluster/apps/vault-restore-validator/kustomization.yaml
