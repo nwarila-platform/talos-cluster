@@ -7,3 +7,5 @@ resources:
   - ciliumnetworkpolicy-egress.yaml
   - pvc.yaml
   - talosconfig.sops.yaml
+  - configmap-encrypt-script.yaml
+  - cronjob.yaml
