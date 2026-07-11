@@ -1,0 +1,16 @@
+# Default-deny for the namespace. Combined with the scoped etcd-backup-egress
+# CiliumNetworkPolicy this IS the layer that separates pods from the Talos
+# management API: apid ingress filtering on the nodes admits masqueraded pod
+# traffic (it arrives from the node's own IP), so only namespace egress policy
+# decides which pods may reach apid. The snapshot pod gets exactly
+# control-plane:50000; every other flow in this namespace stays denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dr-etcd-backup-default-deny
+  namespace: dr-etcd-backup
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

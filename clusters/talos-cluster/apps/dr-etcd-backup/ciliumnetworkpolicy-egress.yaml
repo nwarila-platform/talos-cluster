@@ -1,0 +1,28 @@
+# The single network capability the snapshot pod gets: apid (tcp/50000) on the
+# three control-plane nodes, where the etcd members live. Everything else stays
+# closed by the namespace default-deny. No DNS rule: talosctl targets literal
+# IPs, and the encryption step is offline. Same pattern as
+# tenants/talos-drift/ciliumnetworkpolicy-egress.yaml, narrowed to the
+# control plane.
+#
+# (hostNetwork pods would be outside namespaced policy; this job runs as a
+# normal restricted pod precisely so this allow-list governs it.)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: etcd-backup-egress
+  namespace: dr-etcd-backup
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: etcd-backup
+      app.kubernetes.io/component: backup
+  egress:
+    - toCIDRSet:
+        - cidr: 10.69.112.63/32
+        - cidr: 10.69.112.64/32
+        - cidr: 10.69.112.65/32
+      toPorts:
+        - ports:
+            - port: "50000"
+              protocol: TCP

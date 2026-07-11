@@ -6,6 +6,7 @@ resources:
   - actions-runner-controller
   - cilium
   - dr-backup
+  - dr-etcd-backup
   - gateway-api
   - kubelet-csr-approver
   - kyverno

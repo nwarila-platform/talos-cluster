@@ -1,0 +1,24 @@
+# Landing volume for age-encrypted etcd snapshots. The longhorn-etcd-snapshot
+# StorageClass auto-binds the etcd-daily-backup RecurringJob (via its
+# recurringJobSelector), which ships the volume to the Stage-1 Synology backup
+# target daily (retain 14). Local retention on the volume itself is the
+# snapshot CronJob's job.
+#
+# 5Gi sizing: a current snapshot is ~104 MB (age encryption adds ~no overhead),
+# so this holds weeks of local dailies with headroom for etcd growth; the
+# StorageClass allows expansion if that ever tightens.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: etcd-snapshots
+  namespace: dr-etcd-backup
+  labels:
+    app.kubernetes.io/name: etcd-backup
+    app.kubernetes.io/component: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-etcd-snapshot
+  resources:
+    requests:
+      storage: 5Gi
