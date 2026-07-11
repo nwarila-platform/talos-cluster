@@ -10,6 +10,9 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0002 | Flux image-signature enforcement deferred | Open | Medium |
 | TD-0003 | Strict Diataxis quadrant-directory layout not implemented | Open | Medium |
 | TD-0004 | Org-ADR drift gate neutralized pending allowlist restoration | Open | **High** |
+| TD-0005 | Stage-1 offsite/offline copy remains future work | Open | Medium |
+| TD-0006 | Backup-target transport and share-at-rest crypto remain accepted residuals | Open | Low |
+| TD-0007 | NAS administrative and appliance isolation trust boundary accepted residuals | Open | Low |
 
 ---
 
@@ -235,8 +238,99 @@ P0.1; [Org ADR Sync workflow]; [Workflow-health sweep].
 
 ---
 
+## TD-0005 — Stage-1 offsite/offline copy remains future work
+
+**Opened:** 2026-07-11 · **Status:** Open · **Priority:** Medium ·
+**See:** [ADR-0021]; [DR Stage 1 limitations].
+
+### Gap
+Stage-1 Longhorn backups currently provide accepted LOCAL operational recovery on
+the Synology NAS, but the offsite/offline copy required to complete the
+3-2-1-1-0 posture remains future work.
+
+### Current state and mitigation
+This is an accepted residual. Stage-1 is accepted LOCAL operational recovery
+today: the current target is an always-on Synology appliance with RAID6+Btrfs, a
+dedicated NFS share, and NAS-side immutable snapshots; it replaces the retired
+session-bound WSL target and is the operational recovery layer today. The
+remaining gap is the maturation path to an offsite or offline copy after the
+on-site target is stable and retention is proven.
+
+### Closure criteria
+- A documented offsite or offline copy path exists for the Stage-1 backup data.
+- Retention, access control, and restore procedure for that copy are documented.
+- A restore or integrity-validation drill proves the offsite/offline copy is usable
+  without relying on the local NAS as the only backup target.
+
+### References
+[ADR-0021]; [DR Stage 1 limitations].
+
+---
+
+## TD-0006 — Backup-target transport and share-at-rest crypto remain accepted residuals
+
+**Opened:** 2026-07-11 · **Status:** Open · **Priority:** Low ·
+**See:** [ADR-0021]; [DR Stage 1 limitations].
+
+### Gap
+The Stage-1 backup target uses unencrypted NFS transport (AUTH_SYS, no TLS/krb5p),
+and the Synology share is not encrypted at rest.
+
+### Current state and mitigation
+This is an accepted residual for the current Vault-Raft backup payload. The backup
+path is mitigated by the isolated storage VLAN, per-host NFS export scoping, and
+the barrier-encrypted Vault-Raft payload inside the Longhorn backup. The escalation
+trigger is explicit: revisit this posture before backing up non-barrier-encrypted
+sensitive PVs here.
+
+### Closure criteria
+- Backup transport uses authenticated encryption or an approved replacement with
+  equivalent confidentiality and integrity properties.
+- The backup share is encrypted at rest, or an ADR records why the replacement
+  posture is sufficient for all payload classes stored there.
+- Before any non-barrier-encrypted sensitive PV is backed up here, this entry is
+  revisited and either closed by controls above or updated with explicit risk
+  acceptance.
+
+### References
+[ADR-0021]; [DR Stage 1 limitations].
+
+---
+
+## TD-0007 — NAS administrative and appliance isolation trust boundary accepted residuals
+
+**Opened:** 2026-07-11 · **Status:** Open · **Priority:** Low ·
+**See:** [ADR-0021]; [DR Stage 1 limitations].
+
+### Gap
+Two accepted residuals remain in the NAS administrative and isolation boundary:
+- DSM administrative residual: a DSM administrator can delete snapshots outside the
+  7-day WORM lock.
+- Appliance isolation residual: the Synology appliance is shared with unrelated
+  business backups and is not a dedicated backup host.
+
+### Current state and mitigation
+The DSM administrative residual is mitigated by the 7-day immutable-snapshot lock,
+and the setup DSM-admin credentials are rotated and never stored in-cluster. The
+appliance isolation residual is mitigated by using a dedicated `longhorn-backup`
+share, a 100 GB quota, and per-host NFS export scoping for the Talos nodes.
+
+### Closure criteria
+- DSM administrative residual: snapshot retention has a control that prevents or
+  independently detects privileged deletion outside the current 7-day WORM lock.
+- Appliance isolation residual: the Stage-1 backup target runs on dedicated backup
+  infrastructure, or an ADR explicitly accepts the shared-appliance posture with
+  reviewed compensating controls.
+
+### References
+[ADR-0021]; [DR Stage 1 limitations].
+
+---
+
 [ADR-0010]: decision-records/repo/0010-adopt-kyverno-policy-engine.md
 [ADR-0002]: decision-records/org/0002-adopt-diataxis-documentation-framework.md
+[ADR-0021]: decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md
+[DR Stage 1 limitations]: runbooks/dr-stage1-backup.md#limitations-and-intent
 [Docs index](README.md): README.md
 [Org ADR Sync workflow]: ../.github/workflows/org-adr-sync.yaml
 [Workflow-health sweep]: ../scripts/check-workflow-health.py

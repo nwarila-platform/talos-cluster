@@ -268,6 +268,8 @@ retired session-bound WSL target. Remaining gaps:
   — a separate trust boundary; the setup admin credentials are rotated and never
   stored in-cluster.
 
+These residuals are ratified in the tech-debt register as TD-0005 (offsite copy), TD-0006 (transport/at-rest crypto), and TD-0007 (NAS admin/isolation trust boundary) in [docs/tech-debt.md](../tech-debt.md).
+
 The durable direction remains:
 
 - 3 production copies through Longhorn replica placement where appropriate;
