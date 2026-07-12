@@ -11,8 +11,9 @@ labels:
       app.kubernetes.io/part-of: deploy-vault
     includeSelectors: false
 
-# Pin the Vault image by DIGEST, never a tag (ADR-0006). The validation
-# workflow fails the build on any tag-pinned image reference.
+# Pin the Vault image by DIGEST, never a tag (ADR-0006).
+# scripts/check-image-digest-sync.py (validate.yaml) fails CI on tag-pinned
+# first-party images and on digest drift between duplicate references.
 images:
   - name: ghcr.io/nwarila-platform/ubi9-hashicorp-vault
     digest: sha256:f4c4422b5a8ec5a56db67b937b429e655e5fd73e2c7c9a308e1636520fb5f244

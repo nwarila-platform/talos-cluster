@@ -39,7 +39,9 @@ verification.
 
 - **Digest pin:** Kustomize `images:` maps the image to
   `digest: sha256:f4c4422b5a8ec5a56db67b937b429e655e5fd73e2c7c9a308e1636520fb5f244`
-  (the verified `main` build). The validation workflow fails on any `:tag` ref.
+  (the verified `main` build). `scripts/check-image-digest-sync.py` in the
+  validation workflow fails on explicit `:tag` refs for first-party images and
+  on duplicate concrete digest refs for the same image name that drift apart.
 - **Package visibility:** the GHCR image package is public. Do not add registry
   pull secrets for this image; if pulls fail with `ImagePullBackOff`, fix GHCR
   package visibility.
@@ -54,7 +56,8 @@ verification.
 
 `cosign verify` / `gh attestation verify` of the pinned digest succeed; a
 Kyverno PolicyReport records a pass for the Vault pods; the validation workflow
-rejects tag-pinned images and stale registry pull-secret requirements.
+runs `scripts/check-image-digest-sync.py`, which rejects tag-pinned first-party
+images and duplicate image-name digest drift.
 
 ## Consequences
 
