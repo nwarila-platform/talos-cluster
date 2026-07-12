@@ -220,12 +220,12 @@ The PR-time org-ADR drift gate is non-functional. The workflow calls
 each run before starting any jobs, so the intended `org-adr / verify` check is
 never posted.
 
-### Current state
-`org-adr-sync.yaml` is neutralized, not fixed. Its automatic `pull_request` and
-`schedule` triggers have been removed, leaving `workflow_dispatch` only. This
-stops adding failures on every PR and weekly schedule but does not restore
-PR-time enforcement. The real drift-gate step remains in place so a manual run
-will exercise the intended gate once P0.1 restores the allowlist.
+### Current state (at open time)
+`org-adr-sync.yaml` was neutralized, not fixed. Its automatic `pull_request` and
+`schedule` triggers had been removed, leaving `workflow_dispatch` only. This
+stopped adding failures on every PR and weekly schedule but did not restore
+PR-time enforcement. The real drift-gate step remained in place so a manual run
+would exercise the intended gate once P0.1 restored the allowlist.
 
 ### Options to close
 1. Complete P0.1 by allowlisting `NWarila/drift-gate` under the repository's

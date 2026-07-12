@@ -317,6 +317,7 @@
 !/scripts/check-vault-restore-validator-boundaries.sh
 !/scripts/check-vault-restore-validator-boundaries.selftest.py
 !/scripts/check-workflow-health.py
+!/scripts/check-workflow-health.selftest.py
 !/scripts/onboard-tenant.sh
 !/scripts/open-sync-pr.sh
 !/scripts/dr/
