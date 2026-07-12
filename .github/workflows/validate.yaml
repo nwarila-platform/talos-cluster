@@ -176,6 +176,12 @@ jobs:
       - name: "Guard self-test: image digest guard bites"
         run: python3 scripts/check-image-digest-sync.selftest.py
 
+      - name: "Guard: first-party images are signature-Enforce-covered"
+        run: python3 scripts/check-image-signature-enforcement.py
+
+      - name: "Guard self-test: image-signature-enforcement guard bites"
+        run: python3 scripts/check-image-signature-enforcement.selftest.py
+
       - name: "Guard self-test: workflow-health stale-exception logic"
         run: python3 scripts/check-workflow-health.selftest.py
 
