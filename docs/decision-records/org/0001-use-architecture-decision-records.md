@@ -297,3 +297,5 @@ Subsequent ADRs should keep only the rows that genuinely apply to the decision a
 | Date       | Change                                      | Reason                                                    | Author/Role                       | Body-diff? |
 | ---------- | ------------------------------------------- | --------------------------------------------------------- | --------------------------------- | ---------- |
 | 2026-06-02 | Adopted the living ADR lifecycle guardrails. | Keep accepted ADRs current while preserving auditability. | Portfolio maintainer / governance | Yes        |
+
+<!-- FAILS-CLOSED TEST DRIFT MARKER (throwaway, do not merge) -->
