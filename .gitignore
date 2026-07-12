@@ -299,6 +299,8 @@
 !/scripts/check-sops-encrypted.selftest.py
 !/scripts/check-doc-links.py
 !/scripts/check-doc-links.selftest.py
+!/scripts/check-doc-schedule-claims.py
+!/scripts/check-doc-schedule-claims.selftest.py
 !/scripts/check-cilium-values-sync.py
 !/scripts/check-firewall-management-ports.py
 !/scripts/check-kubelet-csr-approver-values-sync.py
