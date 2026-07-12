@@ -1,0 +1,40 @@
+# WHY: The shared arc.nwarila.io/role: runner CNP is matched by both
+# nwarila-talos-arc-ci and the hwg-talos-arc-ci tenant scale set. Kube-apiserver
+# and AWS egress are platform-only, so they must bind to the platform scale set
+# label to preserve tenant isolation.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-nwarila-talos-platform-egress
+  namespace: arc-runners
+spec:
+  endpointSelector:
+    matchLabels:
+      actions.github.com/scale-set-name: nwarila-talos-arc-ci
+  egress:
+    - toFQDNs:
+        - matchName: awscli.amazonaws.com
+        - matchName: sts.amazonaws.com
+        - matchPattern: "sts.*.amazonaws.com"
+        - matchPattern: "s3.*.amazonaws.com"
+        - matchPattern: "*.s3.*.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # WHY (#266): control-plane node IPs carry Cilium's reserved kube-apiserver
+    # identity, so this entity rule matches API-server endpoints that CIDR rules do not.
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+    # WHY (#266): the L2-announced kube VIP may not resolve to the reserved
+    # kube-apiserver identity, so this CIDR fallback admits direct VIP traffic.
+    - toCIDR:
+        - 10.69.112.62/32
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP

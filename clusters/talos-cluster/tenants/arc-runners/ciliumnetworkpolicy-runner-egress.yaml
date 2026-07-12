@@ -30,28 +30,7 @@ spec:
         - matchName: objects-origin.githubusercontent.com
         - matchName: github-releases.githubusercontent.com
         - matchName: github-registry-files.githubusercontent.com
-        - matchName: awscli.amazonaws.com
-        - matchName: sts.amazonaws.com
-        - matchPattern: "sts.*.amazonaws.com"
-        - matchPattern: "s3.*.amazonaws.com"
-        - matchPattern: "*.s3.*.amazonaws.com"
       toPorts:
         - ports:
             - port: "443"
-              protocol: TCP
-    # WHY (#266): control-plane node IPs carry Cilium's reserved kube-apiserver
-    # identity, so this entity rule matches API-server endpoints that CIDR rules do not.
-    - toEntities:
-        - kube-apiserver
-      toPorts:
-        - ports:
-            - port: "6443"
-              protocol: TCP
-    # WHY (#266): the L2-announced kube VIP may not resolve to the reserved
-    # kube-apiserver identity, so this CIDR fallback admits direct VIP traffic.
-    - toCIDR:
-        - 10.69.112.62/32
-      toPorts:
-        - ports:
-            - port: "6443"
               protocol: TCP
