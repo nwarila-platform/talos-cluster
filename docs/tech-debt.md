@@ -9,7 +9,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0001 | Cilium + Kyverno images cannot be signature-enforced at admission | Open | **High** |
 | TD-0002 | Flux image-signature enforcement deferred | Open | Medium |
 | TD-0003 | Strict Diataxis quadrant-directory layout not implemented | Open | Medium |
-| TD-0004 | Org-ADR drift gate neutralized pending allowlist restoration | Open | **High** |
+| TD-0004 | Org-ADR drift gate neutralized pending allowlist restoration | Resolved | **High** |
 | TD-0005 | Stage-1 offsite/offline copy remains future work | Open | Medium |
 | TD-0006 | Backup-target transport and share-at-rest crypto remain accepted residuals | Open | Low |
 | TD-0007 | NAS administrative and appliance isolation trust boundary accepted residuals | Open | Low |
@@ -200,9 +200,18 @@ cycle fixes the false compliance claim and records the layout gap instead.
 
 ## TD-0004 — Org-ADR drift gate neutralized pending allowlist restoration
 
-**Opened:** 2026-07-11 · **Status:** Open · **Priority:** High ·
-**See:** P0.1 (owner console Actions allowlist item);
+**Opened:** 2026-07-11 · **Status:** Resolved · **Priority:** High ·
+**Resolved:** 2026-07-12 · **See:** P0.1 (owner console Actions allowlist item);
 [Org ADR Sync workflow]; [Workflow-health sweep].
+
+### Resolution
+P0.1 allowlisted `NWarila/drift-gate`, and dispatch run 29153562800
+proved the `org-adr / verify` check posts. PR-time triggering is restored in
+`org-adr-sync.yaml` with `pull_request` on `branches: [main]` plus concurrency.
+Claude live verification on 2026-07-12 confirmed the gate GREEN on the restoring
+PR and proven fails-closed on a deliberate drift PR (see `_handoff/PLAN.md` §10).
+The `org-adr-sync.yaml` workflow-health exception requirement is already
+satisfied because `scripts/check-workflow-health.py` has no such exception.
 
 ### Gap
 The PR-time org-ADR drift gate is non-functional. The workflow calls
