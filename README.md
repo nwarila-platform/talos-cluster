@@ -61,7 +61,7 @@ The current cluster stack is:
 - **GitOps:** Flux `v2.9.0` bootstraps from `clusters/talos-cluster/flux-system/` and reconciles app and tenant manifests from this repository.
 - **Networking and ingress:** Cilium `1.19.5` replaces kube-proxy and is the Gateway API dataplane. Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass` live under `clusters/talos-cluster/apps/gateway-api/`.
 - **Policy:** Kyverno `3.8.1` is reconciled by Flux. First-party image signatures for `ghcr.io/nwarila-platform/*`, `ghcr.io/nwarila/*`, and `ghcr.io/the-hero-wars-guys/*` are enforced, so unsigned or unverified images are blocked at admission; upstream Flux, Cilium, Kyverno, and VSO images remain audit-only pending a re-signing registry (TD-0001/TD-0002).
-- **Storage:** Longhorn `1.11.2` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
+- **Storage:** Longhorn `1.12.0` is the default replicated block-storage layer and writes to the Talos `longhorn` user volume at `/var/mnt/longhorn`.
 - **Secrets:** SOPS with age encrypts Kubernetes Secret payload fields in git; Flux decrypts them at reconcile time using the in-cluster `sops-age` secret.
 - **Safety net:** GitHub Actions validate configs, scan for secrets and compliance issues, and keep organization ADR mirrors synchronized. Flux also runs the `talos-drift-readonly` CronJob in-cluster to detect reduced read-only drift for version pins, node InternalIPs, and Flux health.
 
@@ -107,7 +107,7 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 | **Kyverno** | 3.8.1 | Provides Kubernetes admission policy, enforcing first-party image signatures while auditing upstream families. | Gives the cluster a policy engine without requiring ad hoc manual admission checks. |
 | **Gateway API CRDs** | v1.4.1 | Defines the Kubernetes Gateway API resources used with Cilium. | Uses the upstream Gateway API model for application routing. |
 | **metrics-server** | 3.13.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` and autoscaling signals. |
-| **Longhorn** | 1.11.2 | Provides replicated block storage and the default `StorageClass`. | Applications that need persistent volumes get storage backed by the Talos `longhorn` user volume. |
+| **Longhorn** | 1.12.0 | Provides replicated block storage and the default `StorageClass`. | Applications that need persistent volumes get storage backed by the Talos `longhorn` user volume. |
 | **postfinance/kubelet-csr-approver** | 1.2.14 | Automatically approves kubelet serving certificate requests that match this cluster's node identity rules. | Allows metrics-server to validate kubelet TLS against the cluster CA without manual certificate approval loops. |
 
 ## Repository Layout
@@ -404,7 +404,7 @@ Flux owns the remaining Kubernetes platform addons under `clusters/talos-cluster
 - `postfinance/kubelet-csr-approver` `1.2.14`
 - `metrics-server` `3.13.0`
 - `kyverno` `3.8.1`
-- `longhorn` `1.11.2`
+- `longhorn` `1.12.0`
 - Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass`
 - namespace hardening and tenant envelopes
 
@@ -426,7 +426,7 @@ metrics-server now uses chart defaults and validates kubelet serving certificate
 
 **Longhorn storage** is now Flux-managed at `clusters/talos-cluster/apps/longhorn/`.
 The `longhorn` HelmRelease adopts the existing release, pins chart version
-`1.11.2`, and inlines values that mirror `addons/longhorn/values.yaml`.
+`1.12.0`, and inlines values that mirror `addons/longhorn/values.yaml`.
 The `longhorn-system` namespace is declared with the privileged PodSecurity
 labels because Longhorn instance-manager and engine pods require privileged mode
 (hostPath and raw block-device access).
