@@ -298,6 +298,8 @@
 !/scripts/check-kubelet-csr-approver-values-sync.selftest.py
 !/scripts/check-longhorn-values-sync.py
 !/scripts/check-node-inventory-sync.py
+!/scripts/check-node-patch-consistency.py
+!/scripts/check-node-patch-consistency.selftest.py
 !/scripts/check-text-encoding.py
 !/scripts/diff-vs-live.py
 !/scripts/drift-check.sh
