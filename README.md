@@ -99,7 +99,7 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 
 | Software | Version | What It Does | Why We Need It |
 |----------|---------|-------------|----------------|
-| **TalosOS** | v1.13.2 | The operating system on each node. Secure, immutable, API-managed. | It's the foundation: every node runs this instead of Ubuntu, CentOS, etc. |
+| **TalosOS** | v1.13.5 | The operating system on each node. Secure, immutable, API-managed. | It's the foundation: every node runs this instead of Ubuntu, CentOS, etc. |
 | **Kubernetes** | v1.36.0 | The container orchestration platform. Manages all running applications. | It's the core: this is what makes the cluster a cluster. |
 | **Cilium** | 1.19.5 | Handles pod networking, replaces kube-proxy, and provides the Gateway API dataplane. | Without a CNI (Container Network Interface), containers on different nodes cannot talk to each other. |
 | **CoreDNS** | bundled with Kubernetes | Translates service names to IP addresses inside the cluster. | So containers can find each other by name, such as `database`, instead of memorizing IP addresses. |
