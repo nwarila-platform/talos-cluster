@@ -59,7 +59,7 @@ spec:
         # AWS_SHARED_CREDENTIALS_FILE serve path) so the KMS unseal behaves
         # identically. The role (vault-unseal-runtime) is KMS-only.
         - name: aws-signing-helper
-          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper@sha256:ed1d1940c015fce013ace82a0b7215c82b8b0217a7c9425b1ceca4946c9eb98f
+          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper
           restartPolicy: Always
           args:
             - update
@@ -97,7 +97,7 @@ spec:
             - name: aws-creds
               mountPath: /aws/creds
         - name: aws-creds-bootstrap
-          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper@sha256:ed1d1940c015fce013ace82a0b7215c82b8b0217a7c9425b1ceca4946c9eb98f
+          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper
           args:
             - update
             - --once
@@ -140,7 +140,7 @@ spec:
           # running deploy-vault/vault-0 pod 2026-06-23) so the drill Vault is
           # version-identical to live — required for the Part 2 snapshot restore
           # to be a faithful rehearsal.
-          image: ghcr.io/nwarila-platform/ubi9-hashicorp-vault@sha256:f4c4422b5a8ec5a56db67b937b429e655e5fd73e2c7c9a308e1636520fb5f244
+          image: ghcr.io/nwarila-platform/ubi9-hashicorp-vault
           args:
             - server
             - -config=/vault/config/vault.hcl

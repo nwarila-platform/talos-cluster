@@ -54,7 +54,7 @@ spec:
         # ADR-0008 / ADR-0011; talos-cluster ADR-0012. Image: from-source
         # GOFIPS140 helper, digest-pinned + cosign-verified.
         - name: aws-signing-helper
-          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper@sha256:ed1d1940c015fce013ace82a0b7215c82b8b0217a7c9425b1ceca4946c9eb98f
+          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper
           restartPolicy: Always
           args:
             - update
@@ -99,7 +99,7 @@ spec:
         # start. The native sidecar above keeps it refreshed for the pod's life
         # (covering in-pod Vault container restarts past the ~1h credential TTL).
         - name: aws-creds-bootstrap
-          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper@sha256:ed1d1940c015fce013ace82a0b7215c82b8b0217a7c9425b1ceca4946c9eb98f
+          image: ghcr.io/nwarila-platform/ubi9-aws-signing-helper
           args:
             - update
             - --once
