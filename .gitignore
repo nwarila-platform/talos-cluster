@@ -290,6 +290,8 @@
 !/scripts/build-maintenance-iso.sh
 !/scripts/check-image-digest-sync.py
 !/scripts/check-image-digest-sync.selftest.py
+!/scripts/check-image-signature-enforcement.py
+!/scripts/check-image-signature-enforcement.selftest.py
 !/scripts/check-renovate-coverage.py
 !/scripts/check-renovate-coverage.selftest.py
 !/scripts/check-sops-encrypted.py
