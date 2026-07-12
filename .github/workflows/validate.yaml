@@ -157,6 +157,12 @@ jobs:
       - name: "Guard self-test: image digest guard bites"
         run: python3 scripts/check-image-digest-sync.selftest.py
 
+      - name: "Guard: no orphaned Renovate annotations"
+        run: python3 scripts/check-renovate-coverage.py
+
+      - name: "Guard self-test: renovate-coverage guard bites"
+        run: python3 scripts/check-renovate-coverage.selftest.py
+
       - name: "Guard: Longhorn addon values match Flux HelmRelease"
         run: python3 scripts/check-longhorn-values-sync.py
 
