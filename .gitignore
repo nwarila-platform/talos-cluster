@@ -293,6 +293,8 @@
 !/scripts/check-image-digest-sync.selftest.py
 !/scripts/check-image-signature-enforcement.py
 !/scripts/check-image-signature-enforcement.selftest.py
+!/scripts/check-runner-cnp-github-parity.py
+!/scripts/check-runner-cnp-github-parity.selftest.py
 !/scripts/check-renovate-coverage.py
 !/scripts/check-renovate-coverage.selftest.py
 !/scripts/check-sops-encrypted.py
