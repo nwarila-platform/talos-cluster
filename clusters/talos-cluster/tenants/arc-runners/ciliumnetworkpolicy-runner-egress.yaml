@@ -29,6 +29,8 @@ spec:
         - matchName: objects.githubusercontent.com
         - matchName: objects-origin.githubusercontent.com
         - matchName: github-releases.githubusercontent.com
+        # GitHub's successor release-asset CDN host (observed in run-29202032007 timeout, 2026-07-12).
+        - matchName: release-assets.githubusercontent.com
         - matchName: github-registry-files.githubusercontent.com
       toPorts:
         - ports:
