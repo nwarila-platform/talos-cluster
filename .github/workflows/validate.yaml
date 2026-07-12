@@ -1,20 +1,12 @@
 # =============================================================================
-# Validate — runs on every PR touching cluster configs, addons, or scripts
+# Validate - always runs on PRs so it can become a required check and so doc
+# guards cover README, explanation, compliance, and other documentation changes.
 # =============================================================================
 name: Validate
 
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "cluster/**"
-      - "clusters/**"
-      - "addons/**"
-      - "docs/decision-records/**"
-      - "docs/runbooks/**"
-      - "scripts/**"
-      - ".github/workflows/**"
-      - "Makefile"
 
 permissions:
   contents: read
