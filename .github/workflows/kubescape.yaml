@@ -14,13 +14,11 @@
 name: Kubescape
 
 on:
-  # Schedule disabled 2026-07-12 pending the AWS trust fix: the PLATFORM role's
-  # OIDC trust rejects this repo's subjects (runs 29203106034 + 29203637015;
-  # ref-form and environment-form were both denied). Terminal fix: dedicated
-  # read-only scanner role in the terraform framework (booked, roadmap ledger).
-  # Re-enable the cron in the same PR that lands the role.
-  # schedule:
-  #   - cron: "23 5 * * *"
+  # Daily scan uses the dedicated read-only scanner role
+  # github_nwarila-platform_talos-cluster_kubescape, with GitHub OIDC
+  # conditions pinned to nwarila-platform/talos-cluster, Kubescape, and main.
+  schedule:
+    - cron: "23 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -78,14 +76,22 @@ jobs:
           echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
           "${RUNNER_TEMP}/bin/aws" --version
 
-      - name: Configure AWS credentials (kubeconfig pull only)
+      - name: Configure AWS credentials (dedicated kubescape kubeconfig reader)
         uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_PLATFORM }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_KUBESCAPE }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Pull kubeconfig from S3
-        run: bash scripts/s3-sync.sh pull
+        run: |
+          set -euo pipefail
+          source cluster/config.env
+          mkdir -p "${LOCAL_S3_DIR}/configs"
+          # The prefix also holds the SOPS age key, admin talosconfig, and
+          # secrets bundle. This scan needs one object; single-object cp plus
+          # the scanner role's single-key GetObject policy collapses the
+          # runner blast radius to the kubeconfig itself.
+          aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX%/}/configs/kubeconfig" "${LOCAL_S3_DIR}/configs/kubeconfig"
 
       - name: Run kubescape scan (emit SARIF)
         id: scan
