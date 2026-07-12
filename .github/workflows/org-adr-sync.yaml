@@ -1,16 +1,20 @@
 name: Org ADR Sync
 
-# NWarila/drift-gate is not on the repo Actions allowlist
-# (allowed_actions: selected), so any run startup-fails with 0 jobs.
-# Auto-triggers were removed to end the perpetual 148/148 red history.
-# Kept dispatch-only so it works as-is once the gate is restored; see
-# TD-0004 / P0.1.
+# RESTORED: NWarila/drift-gate is allowlisted via P0.1.
+# PR-time enforcement is active again (TD-0004 closed) and posts
+# the `org-adr / verify` check on every pull request to main.
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
   checks: write
+
+concurrency:
+  group: org-adr-sync-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   baseline:
