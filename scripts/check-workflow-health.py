@@ -35,7 +35,7 @@ class ExceptionDetail:
 EXCEPTIONS = {
     "kubescape.yaml": ExceptionDetail(
         tracking="P0.4",
-        reason="0 lifetime successes while the required self-hosted runner is unavailable",
+        reason="0 lifetime successes; schedule disabled pending the AWS OIDC trust fix (dedicated read-only scanner role booked in the roadmap ledger)",
     ),
     # The workflow file is deleted (retired by ADR-0026; the in-cluster
     # dr-etcd-backup CronJob replaced it), but GitHub keeps listing the

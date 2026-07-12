@@ -14,9 +14,13 @@
 name: Kubescape
 
 on:
-  # Daily runs revived 2026-07-12 per the P0.4 owner decision; target the existing in-cluster ARC scale set nwarila-talos-arc-ci.
-  schedule:
-    - cron: "23 5 * * *"
+  # Schedule disabled 2026-07-12 pending the AWS trust fix: the PLATFORM role's
+  # OIDC trust rejects this repo's subjects (runs 29203106034 + 29203637015;
+  # ref-form and environment-form were both denied). Terminal fix: dedicated
+  # read-only scanner role in the terraform framework (booked, roadmap ledger).
+  # Re-enable the cron in the same PR that lands the role.
+  # schedule:
+  #   - cron: "23 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -29,12 +33,6 @@ jobs:
     name: CIS K8s scan
     runs-on: nwarila-talos-arc-ci
     timeout-minutes: 15
-    # PROBE: the PLATFORM role's OIDC trust is hypothesized to expect the
-    # platform-apply environment subject (run-29203106034 STS denial, 2026-07-12).
-    # No reviewers/wait on this environment, so the daily schedule cannot deadlock.
-    # Interim over-privilege (apply-grade role for a read-only pull) is accepted and
-    # owned: a dedicated read-only scanner role is booked in the roadmap ledger.
-    environment: platform-apply
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
