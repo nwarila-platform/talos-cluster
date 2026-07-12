@@ -48,6 +48,19 @@ jobs:
         run: |
           yamllint -d '{extends: default, rules: {line-length: {max: 200}, truthy: {check-keys: false}, comments: {min-spaces-from-content: 1}}}' cluster/ addons/
 
+      - name: "Lint: GitHub Actions workflows (actionlint, pinned + checksum-verified)"
+        run: |
+          set -euo pipefail
+          ACTIONLINT_VERSION=$(grep '^ACTIONLINT_VERSION=' cluster/config.env | cut -d'"' -f2)
+          [ -n "${ACTIONLINT_VERSION}" ] || { echo "ACTIONLINT_VERSION missing from cluster/config.env"; exit 1; }
+          ver="${ACTIONLINT_VERSION#v}"
+          base="https://github.com/rhysd/actionlint/releases/download/${ACTIONLINT_VERSION}"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "actionlint_${ver}_linux_amd64.tar.gz" "${base}/actionlint_${ver}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "actionlint_${ver}_checksums.txt" "${base}/actionlint_${ver}_checksums.txt"
+          grep "  actionlint_${ver}_linux_amd64.tar.gz$" "actionlint_${ver}_checksums.txt" | sha256sum -c -
+          tar -xzf "actionlint_${ver}_linux_amd64.tar.gz" actionlint
+          ./actionlint -color
+
   maintenance-iso:
     name: Maintenance ISO Guard
     runs-on: ubuntu-latest
@@ -156,6 +169,9 @@ jobs:
 
       - name: "Guard self-test: image digest guard bites"
         run: python3 scripts/check-image-digest-sync.selftest.py
+
+      - name: "Guard self-test: workflow-health stale-exception logic"
+        run: python3 scripts/check-workflow-health.selftest.py
 
       - name: "Guard: no orphaned Renovate annotations"
         run: python3 scripts/check-renovate-coverage.py
