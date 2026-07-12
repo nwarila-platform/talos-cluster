@@ -20,6 +20,12 @@ configMapGenerator:
     files:
       - vault-drill.hcl
 
+images:
+  - name: ghcr.io/nwarila-platform/ubi9-hashicorp-vault
+    digest: sha256:f4c4422b5a8ec5a56db67b937b429e655e5fd73e2c7c9a308e1636520fb5f244
+  - name: ghcr.io/nwarila-platform/ubi9-aws-signing-helper
+    digest: sha256:ed1d1940c015fce013ace82a0b7215c82b8b0217a7c9425b1ceca4946c9eb98f
+
 # Keep the ConfigMap name stable (no content hash) so the runbook/guard can
 # reference it deterministically.
 generatorOptions:
