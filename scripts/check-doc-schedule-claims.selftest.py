@@ -53,11 +53,25 @@ def base_files() -> dict[str, str]:
     return {
         "docs/claims.md": """
         daily CronJob claim
+        hourly CronJob claim
+        weekly workflow claim
         time claim is 03:00 UTC
         retain 14 claim
         no schedule workflow claim
         """,
-        "manifests/daily-cronjob.yaml": """
+        "manifests/freq-src.yaml": """
+        apiVersion: batch/v1
+        kind: CronJob
+        spec:
+          schedule: "0 3 * * *"
+        """,
+        "manifests/hourly-src.yaml": """
+        apiVersion: batch/v1
+        kind: CronJob
+        spec:
+          schedule: "17 * * * *"
+        """,
+        "manifests/time-src.yaml": """
         apiVersion: batch/v1
         kind: CronJob
         spec:
@@ -69,6 +83,12 @@ def base_files() -> dict[str, str]:
         spec:
           cron: "47 3 * * *"
           retain: 14
+        """,
+        ".github/workflows/weekly-src.yaml": """
+        name: Weekly
+        on:
+          schedule:
+            - cron: "0 6 * * 1"
         """,
         ".github/workflows/no-schedule.yaml": """
         name: No Schedule
@@ -84,15 +104,31 @@ def base_claims(guard: Any) -> tuple[Any, ...]:
             name="daily-cronjob",
             doc_path="docs/claims.md",
             anchor_regex=r"daily CronJob claim",
-            source_path="manifests/daily-cronjob.yaml",
+            source_path="manifests/freq-src.yaml",
             source_kind="cronjob_schedule",
             expected="daily",
+        ),
+        guard.Claim(
+            name="hourly-cronjob",
+            doc_path="docs/claims.md",
+            anchor_regex=r"hourly CronJob claim",
+            source_path="manifests/hourly-src.yaml",
+            source_kind="cronjob_schedule",
+            expected="hourly",
+        ),
+        guard.Claim(
+            name="weekly-workflow",
+            doc_path="docs/claims.md",
+            anchor_regex=r"weekly workflow claim",
+            source_path=".github/workflows/weekly-src.yaml",
+            source_kind="workflow_cron",
+            expected="weekly",
         ),
         guard.Claim(
             name="exact-time",
             doc_path="docs/claims.md",
             anchor_regex=r"time claim is 03:00 UTC",
-            source_path="manifests/daily-cronjob.yaml",
+            source_path="manifests/time-src.yaml",
             source_kind="cronjob_schedule",
             expected="time=03:00",
         ),
@@ -130,11 +166,14 @@ def run_case(guard: Any, case: Case) -> CaseResult:
         result = guard.check_claims(root, case.claims)
         output = "\n".join(guard.format_result(result))
         actual_rc = guard.exit_code(result)
-        claim_ok = case.expected_claim is None or case.expected_claim in output
+        claim_ok = (
+            case.expected_claim is None
+            or f"  - {case.expected_claim}:" in output
+        )
         passed = actual_rc == case.expected_rc and claim_ok
         expected = f"rc={case.expected_rc}"
         if case.expected_claim is not None:
-            expected += f", output contains {case.expected_claim}"
+            expected += f", output contains failure prefix for {case.expected_claim}"
         actual = f"rc={actual_rc}, output={output!r}"
         return CaseResult(case.name, expected, actual, passed)
 
@@ -154,7 +193,7 @@ def cases(guard: Any) -> Sequence[Case]:
         claims=claims,
         files=merged_files(
             {
-                "manifests/daily-cronjob.yaml": """
+                "manifests/freq-src.yaml": """
                 apiVersion: batch/v1
                 kind: CronJob
                 spec:
@@ -166,12 +205,46 @@ def cases(guard: Any) -> Sequence[Case]:
         expected_claim="daily-cronjob",
     )
 
+    hourly = Case(
+        name="hourly-contradiction",
+        claims=claims,
+        files=merged_files(
+            {
+                "manifests/hourly-src.yaml": """
+                apiVersion: batch/v1
+                kind: CronJob
+                spec:
+                  schedule: "0 3 * * *"
+                """,
+            }
+        ),
+        expected_rc=1,
+        expected_claim="hourly-cronjob",
+    )
+
+    weekly = Case(
+        name="weekly-contradiction",
+        claims=claims,
+        files=merged_files(
+            {
+                ".github/workflows/weekly-src.yaml": """
+                name: Weekly
+                on:
+                  schedule:
+                    - cron: "23 5 * * *"
+                """,
+            }
+        ),
+        expected_rc=1,
+        expected_claim="weekly-workflow",
+    )
+
     exact_time = Case(
         name="exact-time-contradiction",
         claims=claims,
         files=merged_files(
             {
-                "manifests/daily-cronjob.yaml": """
+                "manifests/time-src.yaml": """
                 apiVersion: batch/v1
                 kind: CronJob
                 spec:
@@ -207,6 +280,8 @@ def cases(guard: Any) -> Sequence[Case]:
         files=merged_files(
             {
                 "docs/claims.md": """
+                hourly CronJob claim
+                weekly workflow claim
                 time claim is 03:00 UTC
                 retain 14 claim
                 no schedule workflow claim
@@ -225,6 +300,8 @@ def cases(guard: Any) -> Sequence[Case]:
                 "docs/claims.md": """
                 daily CronJob claim
                 daily CronJob claim
+                hourly CronJob claim
+                weekly workflow claim
                 time claim is 03:00 UTC
                 retain 14 claim
                 no schedule workflow claim
@@ -256,6 +333,8 @@ def cases(guard: Any) -> Sequence[Case]:
     return (
         clean,
         frequency,
+        hourly,
+        weekly,
         exact_time,
         retain,
         zero_anchor,

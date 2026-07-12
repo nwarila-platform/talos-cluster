@@ -66,6 +66,22 @@ class CheckResult:
         return not self.failures
 
 
+# Claim inventory rationale:
+# - This table is deliberately curated. It covers live schedule and retention
+#   claims whose truth is available in this repository, without sweeping prose
+#   that should remain historical or aspirational.
+# - ADR-0006 and ADR-0014 target tables are excluded because they are
+#   superseded/aspirational and literally headed "target".
+# - docs/decision-records/README.md index blurbs are excluded because they are
+#   historical summaries of decision records, not current schedule assertions.
+# - vault-restore-validator claims are excluded because the CronJob is
+#   deliberately inert (ADR-0024) and docs byte-match that suspended manifest.
+# - Renovate cadence claims are excluded because renovate.json5 is a distinct
+#   source class; that belongs in a future SM8c-style guard.
+# - Synology DSM-side runbook/ADR-0021 claims such as "daily, retain 30" are
+#   excluded because DSM UI configuration has no in-repo source of truth.
+# - Same-doc restatements use one anchor per doc per source. A covered anchor
+#   already forces edits to that file to preserve the live-truth mapping.
 CLAIMS: tuple[Claim, ...] = (
     Claim(
         name="readme-intro-etcd-snapshot-daily",
@@ -116,6 +132,14 @@ CLAIMS: tuple[Claim, ...] = (
         expected="weekly",
     ),
     Claim(
+        name="adr0025-security-workflow-weekly",
+        doc_path="docs/decision-records/repo/0025-deliberate-transparency-public-repo.md",
+        anchor_regex=r"requests and on a weekly schedule\.",
+        source_path=".github/workflows/security.yaml",
+        source_kind="workflow_cron",
+        expected="weekly",
+    ),
+    Claim(
         name="readme-org-adr-sync-no-schedule",
         doc_path="README.md",
         anchor_regex=r"\| Org ADR sync \| `org-adr-sync\.yaml` \| Mirrors organization ADRs into `docs/decision-records/org/` on PRs and manual dispatch\. \|",
@@ -132,12 +156,44 @@ CLAIMS: tuple[Claim, ...] = (
         expected="hourly",
     ),
     Claim(
+        name="adr0003-talos-drift-hourly",
+        doc_path="docs/decision-records/repo/0003-repo-as-cluster-source-of-truth.md",
+        anchor_regex=r"Flux reconciles `clusters/talos-cluster/apps/talos-drift/`, which runs hourly in-cluster",
+        source_path="clusters/talos-cluster/apps/talos-drift/cronjob.yaml",
+        source_kind="cronjob_schedule",
+        expected="hourly",
+    ),
+    Claim(
         name="kubescape-workflow-header-daily",
         doc_path=".github/workflows/kubescape.yaml",
         anchor_regex=r"# Kubescape . daily CIS K8s Benchmark compliance scan",
         source_path=".github/workflows/kubescape.yaml",
         source_kind="workflow_cron",
         expected="daily",
+    ),
+    Claim(
+        name="compliance-readme-kubescape-daily",
+        doc_path="docs/compliance/README.md",
+        anchor_regex=r"\[Kubescape\]\(https://kubescape\.io/\) runs daily via `.github/workflows/kubescape\.yaml`",
+        source_path=".github/workflows/kubescape.yaml",
+        source_kind="workflow_cron",
+        expected="daily",
+    ),
+    Claim(
+        name="adr0009-kubescape-daily",
+        doc_path="docs/decision-records/repo/0009-stig-cis-compliance-baseline.md",
+        anchor_regex=r"\[`kubescape`\]\(https://kubescape\.io/\) runs daily via `.github/workflows/kubescape\.yaml`",
+        source_path=".github/workflows/kubescape.yaml",
+        source_kind="workflow_cron",
+        expected="daily",
+    ),
+    Claim(
+        name="workflow-health-header-weekly",
+        doc_path=".github/workflows/workflow-health.yaml",
+        anchor_regex=r"# Workflow Health - weekly guard against silent pipeline death",
+        source_path=".github/workflows/workflow-health.yaml",
+        source_kind="workflow_cron",
+        expected="weekly",
     ),
     Claim(
         name="adr0026-tldr-etcd-cronjob-daily",
@@ -322,14 +378,19 @@ def first_workflow_cron(path: Path) -> str:
     if not isinstance(schedules, list) or not schedules:
         raise ValueError(f"{path} has no on.schedule entries")
 
+    crons: list[str] = []
     for schedule in schedules:
         if isinstance(schedule, dict) and "cron" in schedule:
             cron = schedule["cron"]
             if not isinstance(cron, str):
                 raise ValueError(f"{path} on.schedule cron must be a string")
-            return cron
+            crons.append(cron)
 
-    raise ValueError(f"{path} has no on.schedule cron value")
+    if len(crons) > 1:
+        raise ValueError(f"{path} has multiple on.schedule cron values: {', '.join(crons)}")
+    if not crons:
+        raise ValueError(f"{path} has no on.schedule cron value")
+    return crons[0]
 
 
 def workflow_schedule_block(path: Path) -> tuple[bool, list[str]]:
