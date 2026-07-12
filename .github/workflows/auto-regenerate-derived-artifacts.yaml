@@ -19,6 +19,8 @@ on:
       - "clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml"
       - "clusters/talos-cluster/apps/metrics-server/helmrelease.yaml"
       - "clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml"
+      - "clusters/talos-cluster/apps/cilium/release/helmrelease.yaml"
+      - "clusters/talos-cluster/apps/longhorn/release/helmrelease.yaml"
       - "README.md"
       - "clusters/talos-cluster/apps/talos-drift/expected.env"
 
@@ -82,6 +84,8 @@ jobs:
               "clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml",
               "clusters/talos-cluster/apps/metrics-server/helmrelease.yaml",
               "clusters/talos-cluster/apps/kubelet-csr-approver/helmrelease.yaml",
+              "clusters/talos-cluster/apps/cilium/release/helmrelease.yaml",
+              "clusters/talos-cluster/apps/longhorn/release/helmrelease.yaml",
               "README.md",
               "clusters/talos-cluster/apps/talos-drift/expected.env",
           }
