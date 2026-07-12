@@ -164,6 +164,12 @@ jobs:
       - name: "Guard self-test: SOPS-encrypted guard bites"
         run: python3 scripts/check-sops-encrypted.selftest.py
 
+      - name: "Guard: internal doc links resolve"
+        run: python3 scripts/check-doc-links.py
+
+      - name: "Guard self-test: doc-link guard bites"
+        run: python3 scripts/check-doc-links.selftest.py
+
       - name: "Guard: first-party image digests are pinned and in sync"
         run: python3 scripts/check-image-digest-sync.py
 

@@ -86,4 +86,4 @@ pod for system-level operations), request a per-namespace exemption via:
 - [Kubernetes Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
 - [Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
 - [Cilium Gateway API + NetworkPolicy](https://docs.cilium.io/en/v1.19/network/servicemesh/gateway-api/)
-- [ADR-0009](../../../docs/decision-records/repo/0009-stig-cis-compliance-baseline.md) — the compliance baseline this template implements
+- [ADR-0009](../../../../docs/decision-records/repo/0009-stig-cis-compliance-baseline.md) — the compliance baseline this template implements

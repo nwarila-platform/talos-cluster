@@ -29,7 +29,7 @@ ADR-0006 built etcd snapshot automation as a scheduled GitHub Actions workflow
 uploading to S3 with KMS. It never ran successfully: scheduled use was disabled
 in 2026-06 when ADR-0014 retargeted operational snapshots to a Stage-1 local
 backup server, the `self-hosted` runner it requires does not exist
-([no-self-hosted-runners posture](0016-isolated-arc-runner-for-repo-sync.md)
+([no-self-hosted-runners posture](0016-deliver-on-cluster-ci-secrets-via-sops-file-mount.md)
 notwithstanding — the repo-sync runner is deliberately single-purpose), and the
 static AWS operator key it depended on is dead. Meanwhile the Stage-1 server
 now exists (Synology `TCNHQ-BKUP01`, ADR-0021), Longhorn ships volumes to it
@@ -253,7 +253,7 @@ Retires the implementation half of [ADR-0006](0006-etcd-snapshot-automation.md)
   makes the RecurringJob/StorageClass pieces declarative.
 - [ADR-0024](0024-two-layer-enforcement-of-restore-validator-boundary.md) —
   the guard layers that allowlist this pipeline's RecurringJob.
-- [ADR-0016](0016-isolated-arc-runner-for-repo-sync.md) — the single-purpose
+- [ADR-0016](0016-deliver-on-cluster-ci-secrets-via-sops-file-mount.md) — the single-purpose
   runner posture that rules out Option 3.
 
 ## Compliance Notes
