@@ -157,6 +157,12 @@ jobs:
       - name: "Guard: Cilium addon values and version match Flux HelmRelease"
         run: python3 scripts/check-cilium-values-sync.py
 
+      - name: "Guard: kubelet-csr-approver addon values match Flux HelmRelease"
+        run: python3 scripts/check-kubelet-csr-approver-values-sync.py
+
+      - name: "Guard self-test: kubelet-csr-approver values guard bites"
+        run: python3 scripts/check-kubelet-csr-approver-values-sync.selftest.py
+
       - name: "Guard: node inventory matches config.env"
         run: python3 scripts/check-node-inventory-sync.py
 
