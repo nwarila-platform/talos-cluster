@@ -5,3 +5,4 @@ resources:
   - networkpolicy-default-deny.yaml
   - networkpolicy-allow-dns.yaml
   - ciliumnetworkpolicy-runner-egress.yaml
+  - ciliumnetworkpolicy-nwarila-platform-egress.yaml

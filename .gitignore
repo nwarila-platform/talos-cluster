@@ -200,6 +200,7 @@
 !/clusters/talos-cluster/tenants/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-runners/
 !/clusters/talos-cluster/tenants/arc-runners/ciliumnetworkpolicy-runner-egress.yaml
+!/clusters/talos-cluster/tenants/arc-runners/ciliumnetworkpolicy-nwarila-platform-egress.yaml
 !/clusters/talos-cluster/tenants/arc-runners/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-runners/namespace.yaml
 !/clusters/talos-cluster/tenants/arc-runners/networkpolicy-allow-dns.yaml
