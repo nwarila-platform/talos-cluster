@@ -178,8 +178,8 @@ This decision is confirmed when:
 2. The `deploy-vault` namespace remains the stable runtime namespace for Vault.
 3. The generated tenant envelope can safely remain tracked without implying that
    Vault is still delivered by deploy-repo discovery.
-4. The fold-invariant CI guard remains part of pull request validation for
-   changes touching cluster, script, workflow, or decision-record paths.
+4. The fold-invariant CI guard remains part of pull request validation because
+   the Validate workflow runs on every pull request targeting `main`.
 
 ## Supersedes
 
