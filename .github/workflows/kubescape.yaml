@@ -77,7 +77,7 @@ jobs:
       - name: Configure AWS credentials (kubeconfig pull only)
         uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_PLATFORM }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Pull kubeconfig from S3
