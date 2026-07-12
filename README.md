@@ -703,7 +703,7 @@ Repository-owned GitHub Actions workflows include:
 | ARC smoke | `arc-smoke.yaml` | Manually verifies the `nwarila-talos-arc-ci` runner scale set can execute a job. |
 | Tenant onboarding | `onboard-tenant.yaml` | Manually scaffolds tenant namespace and network-policy manifests. |
 | Deploy repo sync | `sync-deploy-repos.yaml` | Discovers deployment repositories and refreshes the generated Flux deploy app entries. |
-| Org ADR sync | `org-adr-sync.yaml` | Mirrors organization ADRs into `docs/decision-records/org/` on PRs, schedule, and manual dispatch. |
+| Org ADR sync | `org-adr-sync.yaml` | Mirrors organization ADRs into `docs/decision-records/org/` on PRs and manual dispatch. |
 | Org ADR auto-sync | `org-adr-auto-sync.yaml` | Scheduled/manual automation for keeping mirrored org ADRs current. |
 
 Runtime drift detection is no longer a GitHub Actions workflow. Flux reconciles
