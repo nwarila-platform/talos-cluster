@@ -139,6 +139,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-yaml
 
+      - name: "Guard: declared SOPS secrets are actually encrypted"
+        run: python3 scripts/check-sops-encrypted.py
+
+      - name: "Guard self-test: SOPS-encrypted guard bites"
+        run: python3 scripts/check-sops-encrypted.selftest.py
+
       - name: "Guard: first-party image digests are pinned and in sync"
         run: python3 scripts/check-image-digest-sync.py
 
