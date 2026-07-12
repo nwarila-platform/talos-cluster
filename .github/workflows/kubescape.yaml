@@ -29,6 +29,12 @@ jobs:
     name: CIS K8s scan
     runs-on: nwarila-talos-arc-ci
     timeout-minutes: 15
+    # PROBE: the PLATFORM role's OIDC trust is hypothesized to expect the
+    # platform-apply environment subject (run-29203106034 STS denial, 2026-07-12).
+    # No reviewers/wait on this environment, so the daily schedule cannot deadlock.
+    # Interim over-privilege (apply-grade role for a read-only pull) is accepted and
+    # owned: a dedicated read-only scanner role is booked in the roadmap ledger.
+    environment: platform-apply
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
