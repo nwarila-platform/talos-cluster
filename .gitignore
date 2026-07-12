@@ -294,6 +294,8 @@
 !/scripts/check-sops-encrypted.selftest.py
 !/scripts/check-cilium-values-sync.py
 !/scripts/check-firewall-management-ports.py
+!/scripts/check-kubelet-csr-approver-values-sync.py
+!/scripts/check-kubelet-csr-approver-values-sync.selftest.py
 !/scripts/check-longhorn-values-sync.py
 !/scripts/check-node-inventory-sync.py
 !/scripts/check-text-encoding.py
