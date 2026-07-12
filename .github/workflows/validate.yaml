@@ -188,6 +188,12 @@ jobs:
       - name: "Guard self-test: image-signature-enforcement guard bites"
         run: python3 scripts/check-image-signature-enforcement.selftest.py
 
+      - name: "Guard: ARC runner GitHub-egress CNP host sets match"
+        run: python3 scripts/check-runner-cnp-github-parity.py
+
+      - name: "Guard self-test: runner CNP GitHub-egress parity guard bites"
+        run: python3 scripts/check-runner-cnp-github-parity.selftest.py
+
       - name: "Guard self-test: workflow-health stale-exception logic"
         run: python3 scripts/check-workflow-health.selftest.py
 
