@@ -32,16 +32,7 @@ class ExceptionDetail:
 # Known persistent-red workflows adjudicated in P1.6 Phase 2. Each exception is
 # deliberately self-cleaning: if the workflow disappears or becomes healthy, the
 # check fails until the stale exception is removed.
-EXCEPTIONS = {
-    # The workflow file is deleted (retired by ADR-0026; the in-cluster
-    # dr-etcd-backup CronJob replaced it), but GitHub keeps listing the
-    # workflow object while its run history exists. Remove this entry when the
-    # stale-exception check reports "workflow no longer exists".
-    "etcd-snapshot.yaml": ExceptionDetail(
-        tracking="ADR-0026",
-        reason="retired and deleted; red run history predates retirement",
-    ),
-}
+EXCEPTIONS = {}
 
 
 @dataclass(frozen=True)
