@@ -139,6 +139,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-yaml
 
+      - name: "Guard: first-party image digests are pinned and in sync"
+        run: python3 scripts/check-image-digest-sync.py
+
+      - name: "Guard self-test: image digest guard bites"
+        run: python3 scripts/check-image-digest-sync.selftest.py
+
       - name: "Guard: Longhorn addon values match Flux HelmRelease"
         run: python3 scripts/check-longhorn-values-sync.py
 

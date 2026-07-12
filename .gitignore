@@ -288,6 +288,8 @@
 !/scripts/apply.sh
 !/scripts/bootstrap.sh
 !/scripts/build-maintenance-iso.sh
+!/scripts/check-image-digest-sync.py
+!/scripts/check-image-digest-sync.selftest.py
 !/scripts/check-cilium-values-sync.py
 !/scripts/check-firewall-management-ports.py
 !/scripts/check-longhorn-values-sync.py
