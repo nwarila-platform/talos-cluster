@@ -152,6 +152,7 @@
 !/clusters/talos-cluster/apps/kyverno/policies/restrict-vso-org-pull-secrets.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/protect-dr-validate-boundary.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures-enforced.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
 !/clusters/talos-cluster/apps/kyverno/release/helmrepository.yaml
@@ -392,6 +393,7 @@
 !/docs/decision-records/repo/0024-two-layer-enforcement-of-restore-validator-boundary.md
 !/docs/decision-records/repo/0025-deliberate-transparency-public-repo.md
 !/docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md
+!/docs/decision-records/repo/0027-fail-closed-first-party-image-admission.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/

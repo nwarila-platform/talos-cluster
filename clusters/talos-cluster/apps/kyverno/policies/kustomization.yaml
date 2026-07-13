@@ -9,3 +9,4 @@ resources:
   - restrict-vso-org-pull-secrets.yaml
   - protect-dr-validate-boundary.yaml
   - verify-image-signatures.yaml
+  - verify-image-signatures-enforced.yaml

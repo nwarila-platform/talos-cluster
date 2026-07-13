@@ -1,0 +1,118 @@
+# ClusterPolicy: verify-image-signatures-enforced
+#
+# Fail-closed cosign keyless signature verification for first-party images.
+# Owner decision 2026-07-13: fail closed for first-party images everywhere the
+# Kyverno admission webhook applies, including deploy-vault. The accepted
+# availability tradeoff is that while Kyverno, GHCR, or sigstore/rekor is
+# unreachable, first-party pods cannot be created or restarted; running pods are
+# unaffected because admission is create-time.
+#
+# Superset invariant: the matchConditions CEL must match a superset of every
+# imageReferences glob below. If an enforced image can match Kyverno's
+# verifyImages glob but not this API-server CEL, the API server never calls the
+# fail-closed webhook and the image is admitted unverified.
+#
+# Real trap: a failurePolicy: Fail policy with empty matchConditions falls into
+# Kyverno's shared cluster-wide fail webhook for mutate or verifyImages rules.
+# That would make pod admission in every non-excluded namespace depend on
+# Kyverno reachability. Non-empty matchConditions make Kyverno create a
+# dedicated fine-grained webhook for this policy instead.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures-enforced
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Verify Image Signatures (First-Party Enforced)
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Fail-closed keyless cosign signature verification for first-party
+      nwarila, nwarila-platform, and the-hero-wars-guys images, scoped by
+      API-server matchConditions so unrelated pods do not enter this
+      availability boundary.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  webhookConfiguration:
+    failurePolicy: Fail
+    matchConditions:
+      - name: first-party-image-present
+        expression: >-
+          object != null && (
+            (has(object.spec.containers) && object.spec.containers.exists(c,
+              c.image.startsWith('ghcr.io/nwarila/') ||
+              c.image.startsWith('ghcr.io/nwarila-platform/') ||
+              c.image.startsWith('ghcr.io/the-hero-wars-guys/'))) ||
+            (has(object.spec.initContainers) && object.spec.initContainers.exists(c,
+              c.image.startsWith('ghcr.io/nwarila/') ||
+              c.image.startsWith('ghcr.io/nwarila-platform/') ||
+              c.image.startsWith('ghcr.io/the-hero-wars-guys/'))) ||
+            (has(object.spec.ephemeralContainers) && object.spec.ephemeralContainers.exists(c,
+              c.image.startsWith('ghcr.io/nwarila/') ||
+              c.image.startsWith('ghcr.io/nwarila-platform/') ||
+              c.image.startsWith('ghcr.io/the-hero-wars-guys/')))
+          )
+  rules:
+    - name: verify-nwarila-platform-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/nwarila-platform/*"
+          failureAction: Enforce
+          mutateDigest: false
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: "^https://github\\.com/nwarila-platform/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
+    - name: verify-nwarila-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/nwarila/*"
+          failureAction: Enforce
+          mutateDigest: false
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: "^https://github\\.com/[Nn][Ww]arila/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
+    - name: verify-herowars-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/the-hero-wars-guys/*"
+          imageRegistryCredentials:
+            allowInsecureRegistry: false
+            secrets:
+              - ghcr-pull
+          failureAction: Enforce
+          mutateDigest: false
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: "^https://github\\.com/the-hero-wars-guys/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"
