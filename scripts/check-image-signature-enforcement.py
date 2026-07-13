@@ -20,10 +20,10 @@ Deliberate scope:
   guard-generated first-party Pod matchConditions expression.
 - Reject fail-closed mutate/verifyImages policies with empty matchConditions
   because Kyverno places them in the shared cluster-wide fail webhook.
-- Reject first-party images in namespaces excluded from Kyverno's inherited
-  webhook namespaceSelector, and reject Kyverno HelmRelease defaultRegistry
-  values that would break the raw-image CEL versus normalized-image glob
-  superset invariant.
+- Reject first-party images in namespaces covered by Kyverno's exemption
+  surface: the inherited webhook namespaceSelector plus Kyverno resourceFilters.
+  Also reject Kyverno HelmRelease defaultRegistry values that would break the
+  raw-image CEL versus normalized-image glob superset invariant.
 
 Deliberately out of scope:
 - Verifying image digests or tags. That is check-image-digest-sync.py's job.
@@ -58,9 +58,15 @@ FIRST_PARTY_IMAGE_PREFIXES = tuple(
     org_glob[:-1] for org_glob in FIRST_PARTY_ORG_GLOBS
 )
 FIRST_PARTY_MATCH_CONDITION_NAME = "first-party-image-present"
-KYVERNO_WEBHOOK_EXCLUDED_NAMESPACES = {"kube-system", "kyverno"}
+KYVERNO_EXEMPTION_SURFACE_NAMESPACES = {
+    "kube-system",
+    "kyverno",
+    "kube-public",
+    "kube-node-lease",
+}
 KYVERNO_DEFAULT_REGISTRY = "docker.io"
 YAML_SUFFIXES = {".yaml", ".yml"}
+KUSTOMIZATION_FILENAMES = ("kustomization.yaml", "kustomization.yml")
 KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 
 
@@ -340,7 +346,9 @@ def sequence_field(
     return pair[0], pair[1]
 
 
-def document_metadata_name_namespace(document_fields: dict[str, tuple[Node, int]]) -> tuple[str, str | None]:
+def document_metadata_name_namespace(
+    document_fields: dict[str, tuple[Node, int]],
+) -> tuple[str, str | None]:
     metadata_pair = mapping_field(document_fields, "metadata")
     if metadata_pair is None:
         return "<unnamed>", None
@@ -349,6 +357,83 @@ def document_metadata_name_namespace(document_fields: dict[str, tuple[Node, int]
     name = scalar_field(metadata_fields, "name", "<unnamed>") or "<unnamed>"
     namespace = scalar_field(metadata_fields, "namespace")
     return name, namespace
+
+
+def kustomization_path_for_directory(directory: Path) -> Path | None:
+    for filename in KUSTOMIZATION_FILENAMES:
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def kustomization_namespace(path: Path) -> str | None:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            documents = list(yaml.safe_load_all(handle))
+    except (OSError, yaml.YAMLError) as exc:
+        raise GuardUsageError(f"failed to parse {path}: {exc}") from exc
+
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        if document.get("kind") != "Kustomization":
+            continue
+        namespace = document.get("namespace")
+        if isinstance(namespace, str) and namespace.strip():
+            return namespace.strip()
+    return None
+
+
+def nearest_kustomization_namespace(path: Path) -> str | None:
+    for directory in (path.parent, *path.parent.parents):
+        kustomization_path = kustomization_path_for_directory(directory)
+        if kustomization_path is None:
+            continue
+        namespace = kustomization_namespace(kustomization_path)
+        if namespace is not None:
+            return namespace
+    return None
+
+
+def effective_document_namespace(
+    document_fields: dict[str, tuple[Node, int]], path: Path
+) -> tuple[str, str | None]:
+    name, namespace = document_metadata_name_namespace(document_fields)
+    return name, namespace or nearest_kustomization_namespace(path)
+
+
+def kustomization_resource_entries(path: Path) -> tuple[str, ...]:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            documents = list(yaml.safe_load_all(handle))
+    except (OSError, yaml.YAMLError) as exc:
+        raise GuardUsageError(f"failed to parse {path}: {exc}") from exc
+
+    resources: list[str] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        if document.get("kind") != "Kustomization":
+            continue
+        document_resources = document.get("resources")
+        if not isinstance(document_resources, list):
+            continue
+        for resource in document_resources:
+            if isinstance(resource, str) and resource.strip():
+                resources.append(resource.strip())
+    return tuple(resources)
+
+
+def kustomization_resource_targets(
+    directory: Path, resources: tuple[str, ...]
+) -> set[Path]:
+    targets: set[Path] = set()
+    for resource in resources:
+        if "://" in resource:
+            continue
+        targets.add((directory / resource).resolve())
+    return targets
 
 
 def normalize_whitespace(value: str) -> str:
@@ -548,7 +633,7 @@ def parse_yaml_file(
         if document is None:
             continue
         document_fields = mapping_fields(document) if isinstance(document, MappingNode) else {}
-        _name, namespace = document_metadata_name_namespace(document_fields)
+        _name, namespace = effective_document_namespace(document_fields, path)
         refs.extend(extract_refs_from_node(document, path, namespace))
         policy = extract_policy_from_document(document, path)
         if policy is not None:
@@ -648,16 +733,16 @@ def find_violations(
                 )
 
     for policy in policies:
-        if policy.failure_policy != "Fail":
+        if policy.failure_policy == "Ignore":
             continue
         if not policy.has_mutate_rules and not policy.verify_images_blocks:
             continue
         if policy.match_conditions:
             continue
         findings.append(
-            "failurePolicy: Fail policy with mutate or verifyImages rules must "
-            "declare non-empty matchConditions to avoid Kyverno's shared "
-            "cluster-wide fail webhook: "
+            "failurePolicy: Fail/default-Fail policy with mutate or verifyImages "
+            "rules must declare non-empty matchConditions to avoid Kyverno's "
+            "shared cluster-wide fail webhook: "
             f"{display_path(policy.path)}:{policy.line} ({policy.name})"
         )
 
@@ -675,9 +760,9 @@ def find_violations(
                 f"{display_path(ref.path)}:{ref.line} ({ref.name})"
             )
 
-        if ref.namespace in KYVERNO_WEBHOOK_EXCLUDED_NAMESPACES:
+        if ref.namespace in KYVERNO_EXEMPTION_SURFACE_NAMESPACES:
             findings.append(
-                "first-party image is declared in a Kyverno webhook-excluded "
+                "first-party image is declared in a Kyverno-exempt "
                 f"namespace ({ref.namespace}): "
                 f"{display_path(ref.path)}:{ref.line} ({ref.name})"
             )
@@ -689,6 +774,50 @@ def find_violations(
                 f"{KYVERNO_DEFAULT_REGISTRY}: "
                 f"{display_path(setting.path)}:{setting.line} "
                 f"(found {setting.value or '<empty>'})"
+            )
+
+    return findings
+
+
+def policy_resource_membership_findings(
+    policies: list[PolicyDocument],
+) -> list[str]:
+    findings: list[str] = []
+    policy_paths_by_directory: dict[Path, list[PolicyDocument]] = {}
+    for policy in policies:
+        policy_paths_by_directory.setdefault(policy.path.parent, []).append(policy)
+
+    for directory, directory_policies in sorted(
+        policy_paths_by_directory.items(), key=lambda item: display_path(item[0])
+    ):
+        kustomization_path = kustomization_path_for_directory(directory)
+        unique_policy_paths = {
+            policy.path: policy.line for policy in directory_policies
+        }
+        if kustomization_path is None:
+            for policy_path, line in sorted(
+                unique_policy_paths.items(), key=lambda item: display_path(item[0])
+            ):
+                findings.append(
+                    "Kyverno policy file is in a directory without a "
+                    "kustomization.yaml resources list: "
+                    f"{display_path(policy_path)}:{line}"
+                )
+            continue
+
+        resource_targets = kustomization_resource_targets(
+            directory, kustomization_resource_entries(kustomization_path)
+        )
+        for policy_path, line in sorted(
+            unique_policy_paths.items(), key=lambda item: display_path(item[0])
+        ):
+            if policy_path.resolve() in resource_targets:
+                continue
+            findings.append(
+                "Kyverno policy file is not listed in its directory "
+                "kustomization.yaml resources: "
+                f"{display_path(policy_path)}:{line} "
+                f"(kustomization: {display_path(kustomization_path)})"
             )
 
     return findings
@@ -718,6 +847,7 @@ def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
         enforce_blocks,
         kyverno_default_registry_settings,
     )
+    findings.extend(policy_resource_membership_findings(policies))
     return GuardResult(
         paths=paths,
         refs=refs,

@@ -37,6 +37,7 @@ spec:
   background: true
   webhookConfiguration:
     failurePolicy: Fail
+    timeoutSeconds: 30
     matchConditions:
       - name: first-party-image-present
         expression: >-

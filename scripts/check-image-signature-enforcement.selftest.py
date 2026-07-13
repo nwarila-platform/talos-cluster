@@ -188,13 +188,34 @@ def deployment_yaml(image: str = FIRST_PARTY_IMAGE, namespace: str | None = None
     """
 
 
-def kustomization_yaml(image: str = FIRST_PARTY_IMAGE) -> str:
+def kustomization_yaml(
+    image: str = FIRST_PARTY_IMAGE, namespace: str | None = None
+) -> str:
+    namespace_line = f"namespace: {namespace}\n" if namespace else ""
     return f"""
     apiVersion: kustomize.config.k8s.io/v1beta1
     kind: Kustomization
+    {namespace_line.rstrip()}
     images:
       - name: {image}:v1.2.3
     """
+
+
+def write_policy_kustomization(
+    root: Path,
+    resources: tuple[str, ...] = (
+        "verify-image-signatures.yaml",
+        "verify-image-signatures-enforced.yaml",
+    ),
+) -> None:
+    resource_lines = "\n".join(f"  - {resource}" for resource in resources)
+    write_yaml(
+        root / "policies/kustomization.yaml",
+        "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+        "kind: Kustomization\n"
+        "resources:\n"
+        f"{resource_lines}",
+    )
 
 
 def write_base_fixture(
@@ -202,11 +223,15 @@ def write_base_fixture(
     policy: str | None,
     image: str = FIRST_PARTY_IMAGE,
     namespace: str | None = None,
+    kustomize_namespace: str | None = None,
 ) -> None:
     if policy is not None:
         write_yaml(root / "policies/verify-image-signatures-enforced.yaml", policy)
     write_yaml(root / "apps/app/deployment.yaml", deployment_yaml(image, namespace))
-    write_yaml(root / "apps/app/kustomization.yaml", kustomization_yaml(image))
+    write_yaml(
+        root / "apps/app/kustomization.yaml",
+        kustomization_yaml(image, kustomize_namespace),
+    )
 
 
 def write_real_shape_fixture(
@@ -214,13 +239,16 @@ def write_real_shape_fixture(
     enforced_policy: str | None = None,
     image: str = FIRST_PARTY_IMAGE,
     namespace: str | None = None,
+    kustomize_namespace: str | None = None,
 ) -> None:
     write_yaml(root / "policies/verify-image-signatures.yaml", audit_policy_yaml())
+    write_policy_kustomization(root)
     write_base_fixture(
         root,
         enforced_policy if enforced_policy is not None else policy_yaml(),
         image=image,
         namespace=namespace,
+        kustomize_namespace=kustomize_namespace,
     )
 
 
@@ -364,10 +392,64 @@ def fail_mutate_no_matchconditions_fixture(root: Path) -> None:
                       example.com/mutated: "true"
         """,
     )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            "fail-mutate-no-matchconditions.yaml",
+        ),
+    )
+
+
+def fail_mutate_no_webhook_configuration_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root / "policies/fail-mutate-no-webhook-configuration.yaml",
+        """
+        apiVersion: kyverno.io/v1
+        kind: ClusterPolicy
+        metadata:
+          name: fail-mutate-no-webhook-configuration
+        spec:
+          rules:
+            - name: mutate-label
+              mutate:
+                patchStrategicMerge:
+                  metadata:
+                    labels:
+                      example.com/mutated: "true"
+        """,
+    )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            "fail-mutate-no-webhook-configuration.yaml",
+        ),
+    )
 
 
 def first_party_in_excluded_namespace_fixture(root: Path) -> None:
     write_real_shape_fixture(root, namespace="kube-system")
+
+
+def first_party_in_kube_public_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, namespace="kube-public")
+
+
+def first_party_in_kube_node_lease_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, namespace="kube-node-lease")
+
+
+def first_party_in_kustomize_namespace_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, kustomize_namespace="kube-system")
+
+
+def missing_policy_kustomization_resource_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_policy_kustomization(root, ("verify-image-signatures.yaml",))
 
 
 def kyverno_default_registry_ghcr_fixture(root: Path) -> None:
@@ -581,11 +663,46 @@ def main() -> int:
             ("mutate or verifyImages rules must declare non-empty matchConditions",),
         ),
         run_case(
+            "fail-mutate-no-webhook-configuration",
+            1,
+            "D2 absent webhookConfiguration defaults to Fail",
+            fail_mutate_no_webhook_configuration_fixture,
+            ("mutate or verifyImages rules must declare non-empty matchConditions",),
+        ),
+        run_case(
             "first-party-kube-system",
             1,
             "I5 excluded namespace bypass bites",
             first_party_in_excluded_namespace_fixture,
-            ("Kyverno webhook-excluded namespace (kube-system)",),
+            ("Kyverno-exempt namespace (kube-system)",),
+        ),
+        run_case(
+            "first-party-kube-public",
+            1,
+            "D1 resourceFilters kube-public bypass bites",
+            first_party_in_kube_public_fixture,
+            ("Kyverno-exempt namespace (kube-public)",),
+        ),
+        run_case(
+            "first-party-kube-node-lease",
+            1,
+            "D1 resourceFilters kube-node-lease bypass bites",
+            first_party_in_kube_node_lease_fixture,
+            ("Kyverno-exempt namespace (kube-node-lease)",),
+        ),
+        run_case(
+            "first-party-kustomize-namespace",
+            1,
+            "D3 kustomize namespace bypass bites",
+            first_party_in_kustomize_namespace_fixture,
+            ("Kyverno-exempt namespace (kube-system)",),
+        ),
+        run_case(
+            "missing-policy-kustomization-resource",
+            1,
+            "N1 unlisted policy resource bites",
+            missing_policy_kustomization_resource_fixture,
+            ("not listed in its directory kustomization.yaml resources",),
         ),
         run_case(
             "kyverno-defaultregistry-ghcr",

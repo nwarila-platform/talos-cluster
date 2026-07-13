@@ -67,8 +67,8 @@ Pod spec carries a first-party image prefix.
    carry first-party image refs.
 3. Preserve Audit-only posture for third-party families until
    [TD-0001](../../tech-debt.md) and the Flux deferral are deliberately closed.
-4. Keep recovery possible by respecting Kyverno's inherited exclusion of
-   `kube-system` and `kyverno`.
+4. Keep recovery possible by respecting Kyverno's inherited exemption surface,
+   while documenting the namespaces where Kyverno does not evaluate these rules.
 5. Make the API-server CEL scope mechanically coupled to the first-party
    `imageReferences` set so future changes cannot silently shrink the webhook.
 
@@ -90,23 +90,25 @@ Chosen option: **Option 1.**
   `ghcr.io/nwarila/*`, `ghcr.io/nwarila-platform/*`, and
   `ghcr.io/the-hero-wars-guys/*`, with rule-level `failureAction: Enforce`,
   `required: true`, and `mutateDigest: false`.
-- The enforced policy sets `failurePolicy: Fail` and one Pod-shaped CEL
-  `matchConditions` expression covering `containers`, `initContainers`, and
-  `ephemeralContainers`.
+- The enforced policy sets `failurePolicy: Fail`, `timeoutSeconds: 30`, and one
+  Pod-shaped CEL `matchConditions` expression covering `containers`,
+  `initContainers`, and `ephemeralContainers`.
 - Both policies keep `pod-policies.kyverno.io/autogen-controllers: none`, so
   the CEL is evaluated against Pod admission objects rather than controller
   shapes.
-- Fail closed means every namespace where Kyverno's inherited webhook
-  namespace selector applies. That excludes `kube-system` and `kyverno`, which
-  is required for recoverability because Kyverno cannot gate its own recovery
-  path.
+- Fail closed means every namespace where Kyverno admission is not exempted. On
+  this cluster, Kyverno's effective exemption surface is `kube-system` and
+  `kyverno` from the inherited webhook namespace selector, plus `kube-public`
+  and `kube-node-lease` from Kyverno `resourceFilters`. Resources in those four
+  namespaces are admitted without these `verifyImages` rules being evaluated.
 
 The guard `scripts/check-image-signature-enforcement.py` now locks this shape:
 Enforce `verifyImages` policies must set `failurePolicy: Fail`, must use the
 exact canonical first-party CEL generated from the first-party prefix list, and
 must only Enforce first-party image references. It also rejects fail-closed
 mutate or `verifyImages` policies with empty `matchConditions`, first-party
-images declared in `kube-system` or `kyverno`, and Kyverno Helm values that set
+images declared in Kyverno-exempt namespaces, Kyverno policy YAMLs omitted from
+the local policy `kustomization.yaml`, and Kyverno Helm values that set
 `config.defaultRegistry` to anything other than `docker.io`.
 
 ### Attack closed
@@ -160,16 +162,21 @@ this decision, those cases admitted with only a warning.
 
 ## Confirmation
 
-1. `kubectl kustomize clusters/talos-cluster/` renders both ClusterPolicies:
+1. `kubectl kustomize clusters/talos-cluster/apps/kyverno/policies` renders both
+   image-signature ClusterPolicies:
    `verify-image-signatures` with `failurePolicy: Ignore` and the four
    third-party rules, and `verify-image-signatures-enforced` with
-   `failurePolicy: Fail`, non-empty `matchConditions`, and the three
-   first-party rules.
-2. `scripts/check-image-signature-enforcement.py` passes on the repository and
+   `failurePolicy: Fail`, `timeoutSeconds: 30`, non-empty `matchConditions`, and
+   the three first-party rules.
+2. `kubectl kustomize clusters/talos-cluster/` remains a root regression check
+   for the Flux wrapper graph, but it does not render the child
+   `kyverno-policies` Kustomization contents and must not be used as evidence
+   that the policy directory itself renders.
+3. `scripts/check-image-signature-enforcement.py` passes on the repository and
    its selftest proves the new invariants fail when injected defects are
    present, including the original fail-open shape.
-3. `scripts/check-doc-links.py` passes with this ADR linked from the ADR index.
-4. Live post-merge verification must assert the generated fine-grained webhook
+4. `scripts/check-doc-links.py` passes with this ADR linked from the ADR index.
+5. Live post-merge verification must assert the generated fine-grained webhook
    exists, carries the matchConditions, has no reconcile errors in
    `kyverno-admission-controller` logs, denies an unverifiable first-party image
    in server-side dry-run, and still admits the real Vault and tenant images.
@@ -189,24 +196,48 @@ this decision, those cases admitted with only a warning.
 
 - While Kyverno (three replicas), GHCR, or sigstore/Rekor is unreachable,
   first-party pods such as Vault and tenant workloads cannot be created or
-  restarted. Running pods are unaffected because admission is create-time, and
-  Kyverno's image-verify cache (`useCache`, default-on, 60 minute TTL) absorbs a
-  restart of an already verified digest.
-- Break-glass is to delete the generated fine-grained
-  `MutatingWebhookConfiguration` entry. That is emergency-only, not a routine
-  operational path.
+  restarted. Running pods are unaffected because admission is create-time. The
+  enforced webhook uses the Kubernetes maximum `timeoutSeconds: 30` to reduce
+  cold-cache false denials, but slow GHCR or Rekor verification is still enough
+  to deny an otherwise valid first-party pod once the API server timeout expires.
+- Kyverno's image-verify cache (`useCache`, default-on, 60 minute TTL) is
+  per-replica and in-memory across the three admission replicas. It absorbs a
+  restart of an already verified digest only when the serving replica already
+  has that digest cached.
+- Break-glass while Kyverno is healthy is to suspend the Flux Kustomization
+  `kyverno-policies` in `flux-system`, then delete
+  `ClusterPolicy/verify-image-signatures-enforced`. Flux would otherwise
+  re-apply the policy. Deleting only the generated fine-grained
+  `MutatingWebhookConfiguration` does not work while Kyverno's webhook
+  controller runs with `autoUpdateWebhooks=true`, because Kyverno recreates it.
+  The chart-level kill switch `--forceFailurePolicyIgnore=true` can force
+  policies back to fail-open behavior, but it is a broad emergency rollback
+  switch rather than routine operations.
 - During the reconcile that moves rules between the two policies, there is a
   brief window that fails open rather than closed. This is acceptable for the
   single-PR migration.
-- `kube-system` and `kyverno` are excluded by Kyverno's inherited chart-default
-  namespace selector. This is required for recoverability and matches the
-  existing fail-closed validation policies. No first-party image runs there
+- `kube-system`, `kyverno`, `kube-public`, and `kube-node-lease` are outside the
+  effective Kyverno enforcement surface for this control. The first two are
+  excluded by the inherited chart-default webhook namespace selector; the latter
+  two are skipped by Kyverno `resourceFilters`. No first-party image runs there
   today; guard I5 keeps GitOps-delivered first-party images out of those
-  namespaces.
+  namespaces, including kustomize `namespace:` overlays.
+- Kyverno's default `excludeGroups: system:nodes` means kubelet-created static or
+  mirror pods bypass Kyverno admission entirely. This is a third bypass axis,
+  separate from the webhook namespace selector and `resourceFilters`, and is not
+  closed by this ADR.
 - Kyverno glob matching is case- and port-sensitive on the normalized image
   string. Exotic raw forms such as `GHCR.IO/nwarila/evil:v1` or
   `ghcr.io:443/the-hero-wars-guys/evil:v1` match neither the glob nor the CEL.
   That is not a new hole from this change, but it is not closed here.
+- `ghcr.io/nwarila-platform/*` and `ghcr.io/nwarila/*` image packages must stay
+  anonymously readable or the corresponding rules must gain
+  `imageRegistryCredentials` before private packages are deployed. New GHCR
+  packages default to private; without credentials Kyverno cannot fetch the
+  signature and `failurePolicy: Fail` denies the pod. The `ghcr-pull` Secret in
+  the `kyverno` namespace is now an availability dependency for
+  `ghcr.io/the-hero-wars-guys/*` tenant pod creation because those packages are
+  private.
 - The chart value `--forceFailurePolicyIgnore` would force policies back to
   Ignore and silently disable this control. Live state was verified as false;
   this ADR records the dependency.
@@ -230,9 +261,11 @@ this decision, those cases admitted with only a warning.
    Pod admission object before calling the webhook.
 2. Kyverno v1.18 continues to create a dedicated fine-grained webhook for
    policies with non-empty `matchConditions`.
-3. Kyverno's global chart-default namespace selector continues to exclude
-   `kube-system` and `kyverno`.
+3. Kyverno's effective exemption surface remains `kube-system`, `kyverno`,
+   `kube-public`, and `kube-node-lease`.
 4. `config.defaultRegistry` remains unset or `docker.io`.
+5. Kyverno continues to exclude `system:nodes`; kubelet-created static and
+   mirror pods remain outside this control.
 
 ## Supersedes
 
