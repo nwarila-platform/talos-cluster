@@ -46,7 +46,7 @@ spec:
         image:
           pullPolicy: IfNotPresent
           repository: hashicorp/vault-secrets-operator
-          tag: "1.4.0@sha256:5067f53efadcde1a0d380641b190548595d21b895cb2c28f2c800aa744613513"
+          tag: "1.4.1@sha256:9d4c9eb4ec778cfe4b3ab2cf7eecdfddb23a471f0d766d818e726f5b37668c48"
         logging:
           level: info
           timeEncoding: rfc3339
