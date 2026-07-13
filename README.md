@@ -106,7 +106,7 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 | **Flux** | v2.9.0 | Reconciles the Kubernetes manifests under `clusters/talos-cluster/`. | Keeps Git as the operational source of truth after bootstrap. |
 | **Kyverno** | 3.8.1 | Provides Kubernetes admission policy, enforcing first-party image signatures while auditing upstream families. | Gives the cluster a policy engine without requiring ad hoc manual admission checks. |
 | **Gateway API CRDs** | v1.4.1 | Defines the Kubernetes Gateway API resources used with Cilium. | Uses the upstream Gateway API model for application routing. |
-| **metrics-server** | 3.13.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` and autoscaling signals. |
+| **metrics-server** | 3.13.1 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` and autoscaling signals. |
 | **Longhorn** | 1.12.0 | Provides replicated block storage and the default `StorageClass`. | Applications that need persistent volumes get storage backed by the Talos `longhorn` user volume. |
 | **postfinance/kubelet-csr-approver** | 1.2.14 | Automatically approves kubelet serving certificate requests that match this cluster's node identity rules. | Allows metrics-server to validate kubelet TLS against the cluster CA without manual certificate approval loops. |
 
@@ -402,7 +402,7 @@ Do not install a standalone approver here. Flux reconciles the accepted `postfin
 Flux owns the remaining Kubernetes platform addons under `clusters/talos-cluster/apps/`. The committed `HelmRelease` resources install or adopt:
 
 - `postfinance/kubelet-csr-approver` `1.2.14`
-- `metrics-server` `3.13.0`
+- `metrics-server` `3.13.1`
 - `kyverno` `3.8.1`
 - `longhorn` `1.12.0`
 - Gateway API `v1.4.1` CRDs and the `cilium` `GatewayClass`
