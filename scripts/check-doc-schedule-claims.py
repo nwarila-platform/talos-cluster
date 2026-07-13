@@ -454,7 +454,7 @@ def classify_cron(cron: str) -> str:
         return "hourly"
     if is_decimal(minute) and is_decimal(hour) and day_of_month == "*" and month == "*" and day_of_week == "*":
         return "daily"
-    if is_decimal(minute) and is_decimal(hour) and day_of_month == "*" and month == "*" and day_of_week != "*":
+    if is_decimal(minute) and is_decimal(hour) and day_of_month == "*" and month == "*" and is_decimal(day_of_week):
         return "weekly"
     return "other"
 
