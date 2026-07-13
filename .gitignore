@@ -333,6 +333,7 @@
 !/scripts/dr/apply-vault-snapshot-backup-live.sh
 !/scripts/dr/nfs-interim-setup.sh
 !/scripts/sync-deploy-repos.sh
+!/scripts/backup-handoff-ledger.sh
 !/scripts/s3-sync.sh
 !/scripts/test-talos-drift-readonly.py
 !/scripts/upgrade.sh
