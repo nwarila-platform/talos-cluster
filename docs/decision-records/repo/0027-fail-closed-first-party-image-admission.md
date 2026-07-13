@@ -111,6 +111,22 @@ images declared in Kyverno-exempt namespaces, Kyverno policy YAMLs omitted from
 the local policy `kustomization.yaml`, and Kyverno Helm values that set
 `config.defaultRegistry` to anything other than `docker.io`.
 
+### Guard coverage
+
+The guard also pins the Kyverno rule body for the first-party Enforce rules.
+For each canonical first-party org glob, it requires the exact keyless
+`issuer`, `subjectRegExp`, and `rekor.url` tuple recorded in the guard, plus
+`required: true`. Weakening any trust anchor now requires an explicit guard edit
+instead of a one-line policy-only change.
+
+The guard rejects rule-level scope shrink on Enforce rules: `exclude:`,
+`preconditions:`, and any `match` shape other than the unnarrowed Pod form
+`match.any[].resources.kinds == ["Pod"]` fail CI. It also pins both
+image-signature policies to `background: true` and
+`pod-policies.kyverno.io/autogen-controllers: none` so background PolicyReport
+detection stays enabled and Kyverno does not generate controller-shaped rules
+from Pod-shaped CEL.
+
 ### Attack closed
 
 An attacker who can revoke or expire the `ghcr-pull` credential, partition or
@@ -189,8 +205,8 @@ this decision, those cases admitted with only a warning.
   warning.
 - The fail-closed admission dependency is bounded to first-party Pod specs by
   API-server CEL.
-- The guard now tests the failurePolicy and matchConditions class that allowed
-  the original bug to survive.
+- The guard now tests the failurePolicy, matchConditions, and rule-body classes
+  that allowed the original bug and later structural bypasses to survive.
 
 ### Negative
 

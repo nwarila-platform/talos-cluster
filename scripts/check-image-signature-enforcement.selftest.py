@@ -91,21 +91,63 @@ def verify_block(
     action: str | None = "Enforce",
     skip_refs: tuple[str, ...] = (),
     rule_name: str | None = None,
+    required: str | None = "true",
+    issuer: str | None = None,
+    subject_regexp: str | None = None,
+    rekor_url: str | None = None,
+    rule_extra_lines: tuple[str, ...] = (),
+    match_namespaces: tuple[str, ...] = (),
 ) -> str:
     if rule_name is None:
         rule_name = "verify-" + org_glob.removeprefix("ghcr.io/").removesuffix("/*")
     lines = [
         f"    - name: {rule_name}",
-        "      verifyImages:",
-        "        - imageReferences:",
-        f"            - \"{org_glob}\"",
+        "      match:",
+        "        any:",
+        "          - resources:",
+        "              kinds:",
+        "                - Pod",
     ]
+    if match_namespaces:
+        lines.append("              namespaces:")
+        for namespace in match_namespaces:
+            lines.append(f"                - {namespace}")
+    lines.extend(rule_extra_lines)
+    lines.extend(
+        [
+            "      verifyImages:",
+            "        - imageReferences:",
+            f"            - \"{org_glob}\"",
+        ]
+    )
     if skip_refs:
         lines.append("          skipImageReferences:")
         for skip_ref in skip_refs:
             lines.append(f"            - \"{skip_ref}\"")
     if action is not None:
         lines.append(f"          failureAction: {action}")
+    if required is not None:
+        lines.append(f"          required: {required}")
+    canonical = guard.CANONICAL_FIRST_PARTY_ATTESTORS.get(org_glob)
+    if canonical is not None:
+        issuer = issuer if issuer is not None else canonical["issuer"]
+        subject_regexp = (
+            subject_regexp
+            if subject_regexp is not None
+            else canonical["subjectRegExp"]
+        )
+        rekor_url = rekor_url if rekor_url is not None else canonical["rekor.url"]
+        lines.extend(
+            [
+                "          attestors:",
+                "            - entries:",
+                "                - keyless:",
+                f"                    issuer: \"{issuer}\"",
+                f"                    subjectRegExp: '{subject_regexp}'",
+                "                    rekor:",
+                f"                      url: \"{rekor_url}\"",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -119,9 +161,13 @@ def policy_yaml(
     match_expression: str | None = None,
     extra_blocks: tuple[str, ...] = (),
     name: str = "verify-image-signatures-enforced",
+    background: str | None = "true",
+    autogen_controllers: str | None = "none",
+    block_kwargs: dict[str, dict[str, object]] | None = None,
 ) -> str:
     actions = actions or {}
     skips = skips or {}
+    block_kwargs = block_kwargs or {}
     blocks: list[str] = []
     for org_glob in guard.FIRST_PARTY_ORG_GLOBS:
         if org_glob in missing:
@@ -131,6 +177,7 @@ def policy_yaml(
                 org_glob,
                 action=actions.get(org_glob, "Enforce"),
                 skip_refs=skips.get(org_glob, ()),
+                **block_kwargs.get(org_glob, {}),
             )
         )
     blocks.extend(extra_blocks)
@@ -138,13 +185,23 @@ def policy_yaml(
     match_conditions = (
         match_conditions_yaml(match_expression) if include_match_conditions else ""
     )
+    annotations = ""
+    if autogen_controllers is not None:
+        annotations = (
+            "  annotations:\n"
+            "    pod-policies.kyverno.io/autogen-controllers: "
+            f"{autogen_controllers}\n"
+        )
+    background_line = f"  background: {background}\n" if background is not None else ""
     header = f"""\
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: {name}
+{annotations.rstrip()}
 spec:
   validationFailureAction: {validation_action}
+{background_line.rstrip()}
   webhookConfiguration:
     failurePolicy: {failure_policy}
 {match_conditions.rstrip()}
@@ -159,8 +216,11 @@ def audit_policy_yaml() -> str:
     kind: ClusterPolicy
     metadata:
       name: verify-image-signatures
+      annotations:
+        pod-policies.kyverno.io/autogen-controllers: none
     spec:
       validationFailureAction: Audit
+      background: true
       webhookConfiguration:
         failurePolicy: Ignore
       rules:
@@ -470,15 +530,126 @@ def kyverno_default_registry_ghcr_fixture(root: Path) -> None:
     )
 
 
-def run_guard(root: Path) -> GuardRun:
+def attestor_subject_wildcard_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {"subject_regexp": ".*"},
+            },
+        ),
+    )
+
+
+def attestor_required_false_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {"required": "false"},
+            },
+        ),
+    )
+
+
+def attestor_rekor_repointed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {
+                    "rekor_url": "https://rekor.attacker.example",
+                },
+            },
+        ),
+    )
+
+
+def attestor_issuer_changed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {
+                    "issuer": "https://issuer.attacker.example",
+                },
+            },
+        ),
+    )
+
+
+def rule_exclude_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {
+                    "rule_extra_lines": (
+                        "      exclude:",
+                        "        any:",
+                        "          - resources:",
+                        "              namespaces:",
+                        "                - deploy-vault",
+                    ),
+                },
+            },
+        ),
+    )
+
+
+def rule_match_namespaces_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {
+                    "match_namespaces": ("unused-ns",),
+                },
+            },
+        ),
+    )
+
+
+def rule_preconditions_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {
+                    "rule_extra_lines": (
+                        "      preconditions:",
+                        "        all:",
+                        "          - key: \"{{ request.namespace }}\"",
+                        "            operator: Equals",
+                        "            value: never-fire",
+                    ),
+                },
+            },
+        ),
+    )
+
+
+def background_false_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, policy_yaml(background="false"))
+
+
+def autogen_removed_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, policy_yaml(autogen_controllers=None))
+
+
+def run_guard_for_roots(roots: tuple[Path, ...]) -> GuardRun:
     try:
-        result = guard.evaluate_roots((root,))
+        result = guard.evaluate_roots(roots)
     except guard.GuardUsageError as exc:
         return GuardRun(rc=2, findings=[f"usage error: {exc}"])
     return GuardRun(
         rc=guard.exit_code_for_findings(result.findings),
         findings=result.findings,
     )
+
+
+def run_guard(root: Path) -> GuardRun:
+    return run_guard_for_roots((root,))
 
 
 def run_case(
@@ -493,6 +664,34 @@ def run_case(
         fixture(root)
         run = run_guard(root)
 
+    findings_text = "\n".join(run.findings)
+    fragments_present = all(fragment in findings_text for fragment in expected_fragments)
+    empty_matches_rc = (not run.findings and run.rc == 0) or (
+        bool(run.findings) and run.rc == 1
+    )
+    passed = (
+        run.rc == expected_rc
+        and fragments_present
+        and empty_matches_rc
+    )
+    return CaseResult(
+        name=name,
+        expected_rc=expected_rc,
+        actual_rc=run.rc,
+        finding_count=len(run.findings),
+        evidence=evidence,
+        passed=passed,
+        findings=run.findings,
+    )
+
+
+def run_repository_case(
+    name: str,
+    expected_rc: int,
+    evidence: str,
+    expected_fragments: tuple[str, ...] = (),
+) -> CaseResult:
+    run = run_guard_for_roots(tuple(ROOT / root for root in guard.DEFAULT_ROOTS))
     findings_text = "\n".join(run.findings)
     fragments_present = all(fragment in findings_text for fragment in expected_fragments)
     empty_matches_rc = (not run.findings and run.rc == 0) or (
@@ -561,7 +760,75 @@ def print_table(results: list[CaseResult]) -> None:
 
 def main() -> int:
     results = [
+        run_repository_case(
+            "real-repository-tree",
+            0,
+            "actual clusters/addons tree passes",
+        ),
         run_case("real-two-policy-shape", 0, "clean split policy shape", good_fixture),
+        run_case(
+            "attestor-subject-wildcard",
+            1,
+            "I7 subjectRegExp wildcard bites",
+            attestor_subject_wildcard_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "attestor-required-false",
+            1,
+            "I7 required:false bites",
+            attestor_required_false_fixture,
+            ("must set required: true",),
+        ),
+        run_case(
+            "attestor-rekor-repointed",
+            1,
+            "I7 Rekor URL repoint bites",
+            attestor_rekor_repointed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "attestor-issuer-changed",
+            1,
+            "I7 issuer swap bites",
+            attestor_issuer_changed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "rule-exclude",
+            1,
+            "I8 rule exclude bites",
+            rule_exclude_fixture,
+            ("must not declare rule-level exclude",),
+        ),
+        run_case(
+            "rule-match-namespaces",
+            1,
+            "I8 match namespace narrowing bites",
+            rule_match_namespaces_fixture,
+            ("match must exactly equal",),
+        ),
+        run_case(
+            "rule-preconditions",
+            1,
+            "I8 preconditions bite",
+            rule_preconditions_fixture,
+            ("must not declare preconditions",),
+        ),
+        run_case(
+            "policy-background-false",
+            1,
+            "I9 background:false bites",
+            background_false_fixture,
+            ("spec.background: true",),
+        ),
+        run_case(
+            "policy-autogen-removed",
+            1,
+            "I9 autogen removal bites",
+            autogen_removed_fixture,
+            ("autogen-controllers]: none",),
+        ),
         run_case(
             "posture-downgraded-audit",
             1,

@@ -58,6 +58,39 @@ FIRST_PARTY_IMAGE_PREFIXES = tuple(
     org_glob[:-1] for org_glob in FIRST_PARTY_ORG_GLOBS
 )
 FIRST_PARTY_MATCH_CONDITION_NAME = "first-party-image-present"
+CANONICAL_FIRST_PARTY_ATTESTORS = {
+    "ghcr.io/nwarila/*": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subjectRegExp": (
+            "^https://github\\.com/[Nn][Ww]arila/.+/\\.github/workflows/"
+            ".+@refs/(heads/main|tags/v.*)$"
+        ),
+        "rekor.url": "https://rekor.sigstore.dev",
+    },
+    "ghcr.io/nwarila-platform/*": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subjectRegExp": (
+            "^https://github\\.com/nwarila-platform/.+/\\.github/workflows/"
+            ".+@refs/(heads/main|tags/v.*)$"
+        ),
+        "rekor.url": "https://rekor.sigstore.dev",
+    },
+    "ghcr.io/the-hero-wars-guys/*": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subjectRegExp": (
+            "^https://github\\.com/the-hero-wars-guys/.+/\\.github/workflows/"
+            ".+@refs/(heads/main|tags/v.*)$"
+        ),
+        "rekor.url": "https://rekor.sigstore.dev",
+    },
+}
+EXPECTED_ENFORCE_RULE_MATCH = {"any": [{"resources": {"kinds": ["Pod"]}}]}
+IMAGE_SIGNATURE_POLICY_NAMES = (
+    "verify-image-signatures",
+    "verify-image-signatures-enforced",
+)
+AUTOGEN_CONTROLLERS_ANNOTATION = "pod-policies.kyverno.io/autogen-controllers"
+AUTOGEN_CONTROLLERS_VALUE = "none"
 KYVERNO_EXEMPTION_SURFACE_NAMESPACES = {
     "kube-system",
     "kyverno",
@@ -92,9 +125,17 @@ class VerifyImagesBlock:
     image_references: tuple[str, ...]
     skip_image_references: tuple[str, ...]
     action: str
+    required: str | None
+    attestors: object | None
     path: Path
     line: int
     policy_name: str
+    rule_name: str
+    rule_line: int
+    rule_match: object | None
+    rule_match_line: int | None
+    rule_exclude_line: int | None
+    rule_preconditions_line: int | None
 
 
 @dataclass(frozen=True)
@@ -103,6 +144,8 @@ class PolicyDocument:
     kind: str
     path: Path
     line: int
+    background: str | None
+    autogen_controllers: str | None
     failure_policy: str | None
     match_conditions: tuple[MatchCondition, ...]
     verify_images_blocks: tuple[VerifyImagesBlock, ...]
@@ -315,6 +358,23 @@ def string_list(node: Node | None) -> tuple[str, ...]:
     return tuple(values)
 
 
+def node_to_data(node: Node | None) -> object | None:
+    if node is None:
+        return None
+    if isinstance(node, ScalarNode):
+        return node.value
+    if isinstance(node, SequenceNode):
+        return [node_to_data(item) for item in node.value]
+    if isinstance(node, MappingNode):
+        data: dict[str, object | None] = {}
+        for key_node, value_node in node.value:
+            key = scalar_value(key_node)
+            if key is not None:
+                data[key] = node_to_data(value_node)
+        return data
+    return None
+
+
 def scalar_field(
     fields: dict[str, tuple[Node, int]], key: str, default: str | None = None
 ) -> str | None:
@@ -461,6 +521,23 @@ def canonical_first_party_match_expression_normalized() -> str:
     return normalize_whitespace(canonical_first_party_match_expression())
 
 
+def canonical_attestors_for(org_glob: str) -> object:
+    attestor = CANONICAL_FIRST_PARTY_ATTESTORS[org_glob]
+    return [
+        {
+            "entries": [
+                {
+                    "keyless": {
+                        "issuer": attestor["issuer"],
+                        "subjectRegExp": attestor["subjectRegExp"],
+                        "rekor": {"url": attestor["rekor.url"]},
+                    }
+                }
+            ]
+        }
+    ]
+
+
 def extract_match_conditions(
     webhook_fields: dict[str, tuple[Node, int]]
 ) -> tuple[MatchCondition, ...]:
@@ -500,13 +577,23 @@ def extract_policy_from_document(document: Node, path: Path) -> PolicyDocument |
     ):
         return None
 
-    name, _namespace = document_metadata_name_namespace(document_fields)
+    metadata_pair = mapping_field(document_fields, "metadata")
+    metadata_fields = mapping_fields(metadata_pair[0]) if metadata_pair is not None else {}
+    name = scalar_field(metadata_fields, "name", "<unnamed>") or "<unnamed>"
+    annotations_pair = mapping_field(metadata_fields, "annotations")
+    annotation_fields = (
+        mapping_fields(annotations_pair[0]) if annotations_pair is not None else {}
+    )
+    autogen_controllers = scalar_field(
+        annotation_fields, AUTOGEN_CONTROLLERS_ANNOTATION
+    )
 
     spec_pair = mapping_field(document_fields, "spec")
     if spec_pair is None:
         return None
 
     spec_fields = mapping_fields(spec_pair[0])
+    background = scalar_field(spec_fields, "background")
     policy_action = scalar_field(spec_fields, "validationFailureAction", "Audit")
     webhook_pair = mapping_field(spec_fields, "webhookConfiguration")
     webhook_fields = mapping_fields(webhook_pair[0]) if webhook_pair is not None else {}
@@ -519,6 +606,8 @@ def extract_policy_from_document(document: Node, path: Path) -> PolicyDocument |
             kind=kind,
             path=path,
             line=node_line(document),
+            background=background,
+            autogen_controllers=autogen_controllers,
             failure_policy=failure_policy,
             match_conditions=match_conditions,
             verify_images_blocks=(),
@@ -531,6 +620,20 @@ def extract_policy_from_document(document: Node, path: Path) -> PolicyDocument |
         if not isinstance(rule, MappingNode):
             continue
         rule_fields = mapping_fields(rule)
+        rule_name = scalar_field(rule_fields, "name", "<unnamed>") or "<unnamed>"
+        rule_match_pair = mapping_field(rule_fields, "match")
+        rule_match = (
+            node_to_data(rule_match_pair[0]) if rule_match_pair is not None else None
+        )
+        rule_match_line = rule_match_pair[1] if rule_match_pair is not None else None
+        rule_exclude_line = (
+            rule_fields["exclude"][1] if "exclude" in rule_fields else None
+        )
+        rule_preconditions_line = (
+            rule_fields["preconditions"][1]
+            if "preconditions" in rule_fields
+            else None
+        )
         if "mutate" in rule_fields:
             has_mutate_rules = True
         verify_images_pair = rule_fields.get("verifyImages")
@@ -550,14 +653,24 @@ def extract_policy_from_document(document: Node, path: Path) -> PolicyDocument |
                 block_fields.get("skipImageReferences", (None, 0))[0]
             )
             action = scalar_field(block_fields, "failureAction", policy_action)
+            required = scalar_field(block_fields, "required")
+            attestors = node_to_data(block_fields.get("attestors", (None, 0))[0])
             blocks.append(
                 VerifyImagesBlock(
                     image_references=image_references,
                     skip_image_references=skip_image_references,
                     action=action or "Audit",
+                    required=required,
+                    attestors=attestors,
                     path=path,
                     line=node_line(block),
                     policy_name=name,
+                    rule_name=rule_name,
+                    rule_line=node_line(rule),
+                    rule_match=rule_match,
+                    rule_match_line=rule_match_line,
+                    rule_exclude_line=rule_exclude_line,
+                    rule_preconditions_line=rule_preconditions_line,
                 )
             )
     return PolicyDocument(
@@ -565,6 +678,8 @@ def extract_policy_from_document(document: Node, path: Path) -> PolicyDocument |
         kind=kind,
         path=path,
         line=node_line(document),
+        background=background,
+        autogen_controllers=autogen_controllers,
         failure_policy=failure_policy,
         match_conditions=match_conditions,
         verify_images_blocks=tuple(blocks),
@@ -690,6 +805,36 @@ def find_violations(
         if any(block.action == "Enforce" for block in policy.verify_images_blocks)
     ]
 
+    image_signature_policies = {
+        policy.name: policy
+        for policy in policies
+        if policy.name in IMAGE_SIGNATURE_POLICY_NAMES
+    }
+    for policy_name in IMAGE_SIGNATURE_POLICY_NAMES:
+        policy = image_signature_policies.get(policy_name)
+        if policy is None:
+            findings.append(f"image-signature ClusterPolicy {policy_name} not found")
+            continue
+
+        policy_ref = f"{display_path(policy.path)}:{policy.line} ({policy.name})"
+        if policy.background != "true":
+            found = policy.background if policy.background is not None else "<unset>"
+            findings.append(
+                f"image-signature ClusterPolicy must set spec.background: true: "
+                f"{policy_ref} (found {found})"
+            )
+        if policy.autogen_controllers != AUTOGEN_CONTROLLERS_VALUE:
+            found = (
+                policy.autogen_controllers
+                if policy.autogen_controllers is not None
+                else "<unset>"
+            )
+            findings.append(
+                "image-signature ClusterPolicy must set metadata.annotations["
+                f"{AUTOGEN_CONTROLLERS_ANNOTATION}]: "
+                f"{AUTOGEN_CONTROLLERS_VALUE}: {policy_ref} (found {found})"
+            )
+
     for policy in enforce_policies:
         policy_ref = f"{display_path(policy.path)}:{policy.line} ({policy.name})"
         if policy.failure_policy != "Fail":
@@ -723,13 +868,53 @@ def find_violations(
                 )
 
     for block in enforce_blocks:
+        block_ref = (
+            f"{display_path(block.path)}:{block.line} "
+            f"({block.policy_name}/{block.rule_name})"
+        )
+        if block.required != "true":
+            found = block.required if block.required is not None else "<unset>"
+            findings.append(
+                f"Enforce verifyImages block must set required: true: "
+                f"{block_ref} (found {found})"
+            )
+
+        if block.rule_exclude_line is not None:
+            findings.append(
+                "Enforce verifyImages rule must not declare rule-level exclude: "
+                f"{display_path(block.path)}:{block.rule_exclude_line} "
+                f"({block.policy_name}/{block.rule_name})"
+            )
+        if block.rule_preconditions_line is not None:
+            findings.append(
+                "Enforce verifyImages rule must not declare preconditions: "
+                f"{display_path(block.path)}:{block.rule_preconditions_line} "
+                f"({block.policy_name}/{block.rule_name})"
+            )
+        if block.rule_match != EXPECTED_ENFORCE_RULE_MATCH:
+            line = block.rule_match_line or block.rule_line
+            findings.append(
+                "Enforce verifyImages rule match must exactly equal the "
+                "unnarrowed Pod form match.any[].resources.kinds == ['Pod']: "
+                f"{display_path(block.path)}:{line} "
+                f"({block.policy_name}/{block.rule_name})"
+            )
+
         for image_reference in block.image_references:
-            if not is_first_party_image_reference(image_reference):
+            if image_reference not in FIRST_PARTY_ORG_GLOBS:
                 findings.append(
                     "Enforce verifyImages imageReferences entry is outside "
                     "FIRST_PARTY_ORG_GLOBS: "
                     f"{display_path(block.path)}:{block.line} "
                     f"({block.policy_name}: {image_reference})"
+                )
+                continue
+
+            if block.attestors != canonical_attestors_for(image_reference):
+                findings.append(
+                    "Enforce verifyImages attestors must exactly match the "
+                    "guard canonical keyless issuer/subjectRegExp/rekor.url "
+                    f"triple for {image_reference}: {block_ref}"
                 )
 
     for policy in policies:
