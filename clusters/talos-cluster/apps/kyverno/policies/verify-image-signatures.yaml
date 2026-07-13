@@ -1,30 +1,31 @@
-# ClusterPolicy: verify-image-signatures (scoped)
+# ClusterPolicy: verify-image-signatures
 #
-# Scoped cosign keyless signature verification for image families known to
-# publish sigstore signatures via GitHub Actions OIDC. nwarila, nwarila-platform,
-# and the-hero-wars-guys images are enforced; Flux, Cilium, Kyverno, and VSO
-# remain audit-only until they can be enforced without deadlocking GitOps or
-# exceeding Kyverno verifyImages support.
+# Audit-only cosign keyless signature verification for third-party image
+# families. First-party nwarila, nwarila-platform, and the-hero-wars-guys images
+# live in verify-image-signatures-enforced.yaml so their webhook can fail closed
+# without making Audit-only third-party image families part of the admission
+# availability boundary.
+#
+# webhookConfiguration.failurePolicy intentionally remains Ignore here. These
+# rules are Audit-only deferrals until TD-0001 provides mirror-and-re-sign
+# coverage. Failing closed over them would make cluster-wide pod creation depend
+# on Kyverno and third-party signature/registry reachability while buying no
+# enforcement outcome from the rules themselves.
+#
 # Cilium is matched at the image-family level so signed release digest rotation
 # does not require policy churn; known unsigned helper families are skipped
 # explicitly. See ADR-0010.
 #
-# Scope: Flux, Cilium, Kyverno, nwarila, and nwarila-platform GHCR images.
-# Longhorn, registry.k8s.io, and other image families are out of scope for this
-# policy;
-# they fall through without evaluation because their registries are not listed
-# in imageReferences. Kyverno release images are verified from GHCR because the
-# reg.kyverno.io v1.18.1 mirrors do not expose discoverable cosign signatures.
-# Kyverno component signatures live in the upstream shared signature repository,
-# not co-located with each component image. Vault Secrets Operator is also
-# matched explicitly; its HelmRelease remains digest-pinned, and this audit rule
-# can be promoted after upstream signature discovery is proven.
-#
-# Sigstore reachability was proven during the Step 47 investigation; the
-# remaining Cilium/Kyverno audit posture is a signature-format limitation, not
-# an egress issue. webhookConfiguration.failurePolicy is set to Ignore so
-# webhook/network errors remain non-blocking while signature failures from a
-# reachable webhook report or enforce according to each rule's failureAction.
+# Scope: Flux, Cilium, Kyverno, and Vault Secrets Operator image families.
+# Longhorn, registry.k8s.io, first-party GHCR images, and other image families
+# are out of scope for this policy; they fall through here because their
+# registries are not listed in imageReferences. Kyverno release images are
+# verified from GHCR because the reg.kyverno.io v1.18.1 mirrors do not expose
+# discoverable cosign signatures. Kyverno component signatures live in the
+# upstream shared signature repository, not co-located with each component
+# image. Vault Secrets Operator is matched explicitly; its HelmRelease remains
+# digest-pinned, and this audit rule can be promoted after upstream signature
+# discovery is proven.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -37,10 +38,8 @@ metadata:
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
       Keyless cosign signature verification for Flux, Cilium, Kyverno, Vault
-      Secrets Operator, nwarila, nwarila-platform, and the-hero-wars-guys images.
-      Enforces nwarila, nwarila-platform, and the-hero-wars-guys signatures while
-      auditing the other families until they can be safely enforced by Kyverno
-      admission.
+      Secrets Operator images. These third-party families remain Audit-only
+      until TD-0001 provides owned mirror-and-re-sign coverage.
 spec:
   validationFailureAction: Audit
   background: true
@@ -142,66 +141,5 @@ spec:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
                     subjectRegExp: "^https://github\\.com/hashicorp/vault-secrets-operator/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
-                    rekor:
-                      url: "https://rekor.sigstore.dev"
-    - name: verify-nwarila-platform-images
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      verifyImages:
-        - imageReferences:
-            - "ghcr.io/nwarila-platform/*"
-          failureAction: Enforce
-          mutateDigest: false
-          required: true
-          attestors:
-            - entries:
-                - keyless:
-                    issuer: "https://token.actions.githubusercontent.com"
-                    subjectRegExp: "^https://github\\.com/nwarila-platform/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
-                    rekor:
-                      url: "https://rekor.sigstore.dev"
-    - name: verify-nwarila-images
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      verifyImages:
-        - imageReferences:
-            - "ghcr.io/nwarila/*"
-          failureAction: Enforce
-          mutateDigest: false
-          required: true
-          attestors:
-            - entries:
-                - keyless:
-                    issuer: "https://token.actions.githubusercontent.com"
-                    subjectRegExp: "^https://github\\.com/[Nn][Ww]arila/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
-                    rekor:
-                      url: "https://rekor.sigstore.dev"
-    - name: verify-herowars-images
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      verifyImages:
-        - imageReferences:
-            - "ghcr.io/the-hero-wars-guys/*"
-          imageRegistryCredentials:
-            allowInsecureRegistry: false
-            secrets:
-              - ghcr-pull
-          failureAction: Enforce
-          mutateDigest: false
-          required: true
-          attestors:
-            - entries:
-                - keyless:
-                    issuer: "https://token.actions.githubusercontent.com"
-                    subjectRegExp: "^https://github\\.com/the-hero-wars-guys/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
                     rekor:
                       url: "https://rekor.sigstore.dev"

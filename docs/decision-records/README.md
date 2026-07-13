@@ -72,6 +72,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0024](repo/0024-two-layer-enforcement-of-restore-validator-boundary.md) | Use Two-Layer Enforcement for the Restore-Validator Boundary | Accepted | 2026-07-10 | Record the paired CI guard/self-test and Kyverno runtime policy that protect the ADR-0020 restore-validator boundary before owner-gated go-live. |
 | [0025](repo/0025-deliberate-transparency-public-repo.md) | Publish the Public Repository with Full Topology | Accepted | 2026-07-10 | Accept public publication of the real homelab topology as a portfolio trade, treating topology as reconnaissance rather than authority and requiring no-secret, boundary-first controls. |
 | [0026](repo/0026-in-cluster-etcd-snapshot-pipeline.md) | In-Cluster etcd Snapshot Pipeline to Stage-1 | Accepted | 2026-07-11 | Capture etcd snapshots via an in-cluster Flux CronJob (scoped os:etcd:backup role, whole-file age encryption with off-cluster key escrow) shipped to the Stage-1 Synology target; retire the never-successful ADR-0006 GitHub Actions S3 workflow. |
+| [0027](repo/0027-fail-closed-first-party-image-admission.md) | Fail Closed for First-Party Image Admission | Accepted | 2026-07-13 | Split first-party Kyverno image verification into a dedicated fail-closed, CEL-scoped policy while keeping third-party image families Audit-only. |
 
 ### Imported Vault ADRs
 
