@@ -239,6 +239,23 @@ def cases(guard: Any) -> Sequence[Case]:
         expected_claim="weekly-workflow",
     )
 
+    dow_range = Case(
+        name="dow-range-not-weekly",
+        claims=claims,
+        files=merged_files(
+            {
+                ".github/workflows/weekly-src.yaml": """
+                name: Weekly
+                on:
+                  schedule:
+                    - cron: "0 3 * * 1-5"
+                """,
+            }
+        ),
+        expected_rc=1,
+        expected_claim="weekly-workflow",
+    )
+
     exact_time = Case(
         name="exact-time-contradiction",
         claims=claims,
@@ -249,6 +266,23 @@ def cases(guard: Any) -> Sequence[Case]:
                 kind: CronJob
                 spec:
                   schedule: "0 4 * * *"
+                """,
+            }
+        ),
+        expected_rc=1,
+        expected_claim="exact-time",
+    )
+
+    minute_drift_time = Case(
+        name="minute-drift-time-mismatch",
+        claims=claims,
+        files=merged_files(
+            {
+                "manifests/time-src.yaml": """
+                apiVersion: batch/v1
+                kind: CronJob
+                spec:
+                  schedule: "1 3 * * *"
                 """,
             }
         ),
@@ -272,6 +306,23 @@ def cases(guard: Any) -> Sequence[Case]:
         ),
         expected_rc=1,
         expected_claim="retain-count",
+    )
+
+    dom_restricted = Case(
+        name="dom-restricted-not-daily",
+        claims=claims,
+        files=merged_files(
+            {
+                "manifests/freq-src.yaml": """
+                apiVersion: batch/v1
+                kind: CronJob
+                spec:
+                  schedule: "0 3 1 * *"
+                """,
+            }
+        ),
+        expected_rc=1,
+        expected_claim="daily-cronjob",
     )
 
     zero_anchor = Case(
@@ -335,8 +386,11 @@ def cases(guard: Any) -> Sequence[Case]:
         frequency,
         hourly,
         weekly,
+        dow_range,
         exact_time,
+        minute_drift_time,
         retain,
+        dom_restricted,
         zero_anchor,
         duplicate_anchor,
         workflow_no_schedule,
