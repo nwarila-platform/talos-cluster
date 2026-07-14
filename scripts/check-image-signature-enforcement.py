@@ -124,6 +124,7 @@ class MatchCondition:
 class VerifyImagesBlock:
     image_references: tuple[str, ...]
     skip_image_references: tuple[str, ...]
+    skip_image_references_line: int | None
     action: str
     required: str | None
     attestors: object | None
@@ -173,6 +174,24 @@ class GuardResult:
 
 class GuardUsageError(Exception):
     """A tooling or input error that should exit with code 2."""
+
+
+def assert_first_party_attestor_constants_consistent() -> None:
+    org_globs = set(FIRST_PARTY_ORG_GLOBS)
+    attestor_orgs = set(CANONICAL_FIRST_PARTY_ATTESTORS)
+    missing = sorted(org_globs - attestor_orgs)
+    extra = sorted(attestor_orgs - org_globs)
+    if not missing and not extra:
+        return
+
+    problems = [
+        *(f"missing canonical entry for {org_glob!r}" for org_glob in missing),
+        *(f"extra canonical entry for {org_glob!r}" for org_glob in extra),
+    ]
+    raise GuardUsageError(
+        "FIRST_PARTY_ORG_GLOBS and CANONICAL_FIRST_PARTY_ATTESTORS disagree: "
+        + "; ".join(problems)
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -649,8 +668,16 @@ def extract_policy_from_document(document: Node, path: Path) -> PolicyDocument |
             image_references = string_list(
                 block_fields.get("imageReferences", (None, 0))[0]
             )
+            skip_image_references_pair = block_fields.get("skipImageReferences")
             skip_image_references = string_list(
-                block_fields.get("skipImageReferences", (None, 0))[0]
+                skip_image_references_pair[0]
+                if skip_image_references_pair is not None
+                else None
+            )
+            skip_image_references_line = (
+                skip_image_references_pair[1]
+                if skip_image_references_pair is not None
+                else None
             )
             action = scalar_field(block_fields, "failureAction", policy_action)
             required = scalar_field(block_fields, "required")
@@ -659,6 +686,7 @@ def extract_policy_from_document(document: Node, path: Path) -> PolicyDocument |
                 VerifyImagesBlock(
                     image_references=image_references,
                     skip_image_references=skip_image_references,
+                    skip_image_references_line=skip_image_references_line,
                     action=action or "Audit",
                     required=required,
                     attestors=attestors,
@@ -872,6 +900,16 @@ def find_violations(
             f"{display_path(block.path)}:{block.line} "
             f"({block.policy_name}/{block.rule_name})"
         )
+        for skip_image_reference in block.skip_image_references:
+            line = block.skip_image_references_line or block.line
+            findings.append(
+                "Enforce verifyImages block must not declare "
+                "skipImageReferences: "
+                f"{display_path(block.path)}:{line} "
+                f"({block.policy_name}/{block.rule_name}: "
+                f"{skip_image_reference})"
+            )
+
         if block.required != "true":
             found = block.required if block.required is not None else "<unset>"
             findings.append(
@@ -1009,6 +1047,8 @@ def policy_resource_membership_findings(
 
 
 def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
+    assert_first_party_attestor_constants_consistent()
+
     paths = iter_yaml_paths(roots)
     refs: list[ImageRef] = []
     policies: list[PolicyDocument] = []

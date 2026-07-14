@@ -15,6 +15,7 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "scripts/check-image-signature-enforcement.py"
 FIRST_PARTY_IMAGE = "ghcr.io/nwarila-platform/foo"
+FUTURE_FIRST_PARTY_IMAGE = "ghcr.io/nwarila-platform/not-yet-deployed"
 
 
 def load_guard():
@@ -232,6 +233,31 @@ def audit_policy_yaml() -> str:
     """
 
 
+def audit_policy_with_cilium_skips_yaml() -> str:
+    return """
+    apiVersion: kyverno.io/v1
+    kind: ClusterPolicy
+    metadata:
+      name: verify-image-signatures
+      annotations:
+        pod-policies.kyverno.io/autogen-controllers: none
+    spec:
+      validationFailureAction: Audit
+      background: true
+      webhookConfiguration:
+        failurePolicy: Ignore
+      rules:
+        - name: verify-cilium-images
+          verifyImages:
+            - imageReferences:
+                - "quay.io/cilium/*"
+              skipImageReferences:
+                - "quay.io/cilium/startup-script"
+                - "quay.io/cilium/cilium-envoy"
+              failureAction: Audit
+    """
+
+
 def deployment_yaml(image: str = FIRST_PARTY_IMAGE, namespace: str | None = None) -> str:
     namespace_line = f"\n      namespace: {namespace}" if namespace else ""
     return f"""
@@ -337,6 +363,24 @@ def skipped_image_fixture(root: Path) -> None:
             skips={"ghcr.io/nwarila-platform/*": (FIRST_PARTY_IMAGE,)},
         ),
     )
+
+
+def enforce_skip_not_yet_deployed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            skips={"ghcr.io/nwarila-platform/*": (FUTURE_FIRST_PARTY_IMAGE,)},
+        ),
+    )
+
+
+def audit_skip_image_references_fixture(root: Path) -> None:
+    write_yaml(
+        root / "policies/verify-image-signatures.yaml",
+        audit_policy_with_cilium_skips_yaml(),
+    )
+    write_policy_kustomization(root)
+    write_base_fixture(root, policy_yaml())
 
 
 def inheritance_enforce_fixture(root: Path) -> None:
@@ -667,7 +711,7 @@ def run_case(
     findings_text = "\n".join(run.findings)
     fragments_present = all(fragment in findings_text for fragment in expected_fragments)
     empty_matches_rc = (not run.findings and run.rc == 0) or (
-        bool(run.findings) and run.rc == 1
+        bool(run.findings) and run.rc in (1, 2)
     )
     passed = (
         run.rc == expected_rc
@@ -695,7 +739,7 @@ def run_repository_case(
     findings_text = "\n".join(run.findings)
     fragments_present = all(fragment in findings_text for fragment in expected_fragments)
     empty_matches_rc = (not run.findings and run.rc == 0) or (
-        bool(run.findings) and run.rc == 1
+        bool(run.findings) and run.rc in (1, 2)
     )
     passed = (
         run.rc == expected_rc
@@ -713,10 +757,40 @@ def run_repository_case(
     )
 
 
+def missing_canonical_attestor_case() -> CaseResult:
+    missing_org = "ghcr.io/example-missing/*"
+    original_org_globs = guard.FIRST_PARTY_ORG_GLOBS
+    original_prefixes = guard.FIRST_PARTY_IMAGE_PREFIXES
+    try:
+        guard.FIRST_PARTY_ORG_GLOBS = original_org_globs + (missing_org,)
+        guard.FIRST_PARTY_IMAGE_PREFIXES = tuple(
+            org_glob[:-1] for org_glob in guard.FIRST_PARTY_ORG_GLOBS
+        )
+        return run_case(
+            "constants-missing-canonical-attestor",
+            2,
+            "startup consistency assert exits 2",
+            good_fixture,
+            (
+                "FIRST_PARTY_ORG_GLOBS and CANONICAL_FIRST_PARTY_ATTESTORS "
+                "disagree",
+                f"missing canonical entry for {missing_org!r}",
+            ),
+        )
+    finally:
+        guard.FIRST_PARTY_ORG_GLOBS = original_org_globs
+        guard.FIRST_PARTY_IMAGE_PREFIXES = original_prefixes
+
+
 def exit_code_invariant_case(results: list[CaseResult]) -> CaseResult:
     invariant_holds = all(
         (result.finding_count == 0 and result.actual_rc == 0)
         or (result.finding_count > 0 and result.actual_rc == 1)
+        or (
+            result.finding_count > 0
+            and result.actual_rc == 2
+            and any(finding.startswith("usage error:") for finding in result.findings)
+        )
         for result in results
     )
     return CaseResult(
@@ -724,7 +798,7 @@ def exit_code_invariant_case(results: list[CaseResult]) -> CaseResult:
         expected_rc=0,
         actual_rc=0 if invariant_holds else 1,
         finding_count=0,
-        evidence="empty findings -> 0; non-empty findings -> 1",
+        evidence="empty findings -> 0; policy findings -> 1; usage errors -> 2",
         passed=invariant_holds,
         findings=[],
     )
@@ -766,6 +840,13 @@ def main() -> int:
             "actual clusters/addons tree passes",
         ),
         run_case("real-two-policy-shape", 0, "clean split policy shape", good_fixture),
+        run_case(
+            "audit-cilium-skipimage-references",
+            0,
+            "Audit cilium skipImageReferences allowed",
+            audit_skip_image_references_fixture,
+        ),
+        missing_canonical_attestor_case(),
         run_case(
             "attestor-subject-wildcard",
             1,
@@ -852,6 +933,17 @@ def main() -> int:
             "coverage skip bites",
             skipped_image_fixture,
             ("first-party image not signature-Enforced:",),
+        ),
+        run_case(
+            "enforce-skip-not-yet-deployed-image",
+            1,
+            "I10 Enforce skipImageReferences bites",
+            enforce_skip_not_yet_deployed_fixture,
+            (
+                "Enforce verifyImages block must not declare "
+                "skipImageReferences",
+                FUTURE_FIRST_PARTY_IMAGE,
+            ),
         ),
         run_case(
             "inheritance-enforce",
