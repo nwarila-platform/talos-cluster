@@ -326,6 +326,8 @@
 !/scripts/check-no-placeholder-leak.sh
 !/scripts/check-vault-fold-invariants.sh
 !/scripts/check-live-vault-config-invariants.sh
+!/scripts/check-vault-policy-no-escalation.py
+!/scripts/check-vault-policy-no-escalation.selftest.py
 !/scripts/check-vault-restore-validator-boundaries.sh
 !/scripts/check-vault-restore-validator-boundaries.selftest.py
 !/scripts/check-workflow-health.py
