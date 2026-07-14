@@ -49,6 +49,14 @@
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrepository-repo-sync.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/helmrelease-repo-sync.yaml
 !/clusters/talos-cluster/apps/actions-runner-controller/scale-set/kustomization.yaml
+!/clusters/talos-cluster/apps/cert-manager/
+!/clusters/talos-cluster/apps/cert-manager/ciliumnetworkpolicy-egress.yaml
+!/clusters/talos-cluster/apps/cert-manager/ciliumnetworkpolicy-webhook-ingress.yaml
+!/clusters/talos-cluster/apps/cert-manager/helmrelease.yaml
+!/clusters/talos-cluster/apps/cert-manager/helmrepository.yaml
+!/clusters/talos-cluster/apps/cert-manager/kustomization.yaml
+!/clusters/talos-cluster/apps/cert-manager/namespace.yaml
+!/clusters/talos-cluster/apps/cert-manager/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/apps/cilium/
 !/clusters/talos-cluster/apps/cilium/kustomization.yaml
 !/clusters/talos-cluster/apps/cilium/kustomization-flux.yaml
