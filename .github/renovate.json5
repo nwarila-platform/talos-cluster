@@ -44,6 +44,13 @@
     },
     {
       customType: "regex",
+      managerFilePatterns: ["/^clusters/talos-cluster/apps/vault-config-operator/release/helmrelease\\.ya?ml$/"],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+tag:\\s*\"?(?<currentValue>[^\"\\s@]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?\"?",
+      ],
+    },
+    {
+      customType: "regex",
       managerFilePatterns: ["/^\\.github/workflows/.+\\.ya?ml$/"],
       matchStrings: [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+source-ref:\\s*(?<currentDigest>[0-9a-f]{40})",

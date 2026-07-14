@@ -1,0 +1,24 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-vault-config-operator-webhook-ingress
+  namespace: vault-config-operator
+spec:
+  # The operator manager serves its validating+mutating admission webhooks on
+  # port 9443 (Service vault-config-operator-webhook-service maps 443->9443).
+  endpointSelector:
+    matchLabels:
+      control-plane: vault-config-operator
+  ingress:
+    # Apiserver->webhook traffic routed cross-node via a node Cilium interface
+    # arrives with pure remote-node identity (proven live on the cert-manager
+    # install: identity remote-node->... :<port> SYN Policy denied), so
+    # kube-apiserver alone does not match; this stays nodes/apiserver only, not
+    # open ingress. See the cilium_cidr_no_match_node_identity lesson.
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP

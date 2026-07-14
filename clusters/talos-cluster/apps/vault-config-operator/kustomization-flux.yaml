@@ -1,0 +1,31 @@
+# Child Flux Kustomization for namespace-scoped vault-config-operator resources.
+#
+# The parent cluster Kustomization creates the vault-config-operator Namespace
+# first. This child then applies the HelmRepository, HelmRelease, and network
+# policies into that Namespace, avoiding first-reconcile dry-run failures for
+# namespace-scoped resources.
+#
+# dependsOn cert-manager: the operator self-provisions its webhook serving cert
+# via cert-manager (enableCertManager: true renders a namespaced selfSigned
+# Issuer + Certificate + inject-ca-from), so cert-manager must be Ready first.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vault-config-operator
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/vault-config-operator/release
+  prune: true
+  wait: true
+  timeout: 10m
+  dependsOn:
+    - name: cert-manager
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  healthChecks:
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: vault-config-operator
+      namespace: vault-config-operator
