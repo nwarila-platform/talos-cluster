@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject privilege-escalation grants in managed Vault policy HCL.
+"""Deny unallowlisted grants in managed Vault policy HCL.
 
 This guard scans the Vault policy HCL that can be applied through GitOps:
 
@@ -15,7 +15,7 @@ multi-line capability lists. It does not try to evaluate general HCL.
 from __future__ import annotations
 
 import argparse
-import fnmatch
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,39 +33,7 @@ DEFAULT_POLICY_DIR = Path(
 )
 DEFAULT_POLICY_CR_ROOT = Path("clusters/talos-cluster")
 YAML_SUFFIXES = {".yaml", ".yml"}
-WRITE_CAPABILITIES = {"create", "update", "patch", "delete", "write"}
-GLOBAL_WILDCARD_PATHS = {"*"}
-BROAD_SYS_WRITE_PATHS = {"sys", "sys/*"}
-SELF_TOKEN_OP_GLOBS = (
-    "auth/token/renew-self",
-    "auth/token/lookup-self",
-    "auth/token/*-self",
-)
-E3_SURFACE_GLOBS = (
-    "sys/policies/*",
-    "sys/policy/*",
-    "sys/raw/*",
-    "sys/audit/*",
-    "sys/plugins/catalog/*",
-    "auth/*/role/*",
-    "auth/*/roles/*",
-    "auth/*/users/*",
-    "auth/*/user/*",
-    "auth/*/groups/*",
-    "auth/*/group/*",
-    "auth/*/map/*",
-    "auth/*/certs/*",
-    "auth/*/cert/*",
-    "auth/token/create/*",
-    "auth/token/create-orphan",
-    "auth/*/config*",
-    "sys/auth/*",
-    "sys/mounts/*",
-    "identity/entity*",
-    "identity/group*",
-    "identity/*/aliases*",
-    "identity/*",
-)
+DENY_CAPABILITY = "deny"
 
 
 class GuardUsageError(Exception):
@@ -94,17 +62,55 @@ class PolicyStanza:
 
 
 @dataclass(frozen=True)
+class ManagedPolicyAllowlistEntry:
+    path_pattern: str
+    capabilities: frozenset[str]
+
+
+@dataclass(frozen=True)
 class GuardResult:
     sources: list[PolicySource]
     stanzas: list[PolicyStanza]
     findings: list[str]
 
 
+# Deny-by-default. A managed policy may grant ONLY these path patterns +
+# capabilities. Extending this list is a deliberate, reviewed act - never widen
+# it to the management plane (`sys/policies`, `sys/auth`, `sys/mounts`,
+# `sys/raw`, `sys/audit`, `sys/plugins`,
+# `auth/*/role|roles|users|groups|map|certs`, `auth/token/create*`,
+# `identity/*`); those belong to the reconciler's out-of-band bootstrap, not a
+# managed policy.
+MANAGED_POLICY_ALLOWLIST: tuple[ManagedPolicyAllowlistEntry, ...] = (
+    ManagedPolicyAllowlistEntry(
+        "secret/data/+/provisioned/*", frozenset({"read"})
+    ),
+    ManagedPolicyAllowlistEntry(
+        "secret/metadata/+/provisioned/source-auth", frozenset({"read"})
+    ),
+    ManagedPolicyAllowlistEntry(
+        "secret/data/+/provisioned/source-auth", frozenset({"create", "update"})
+    ),
+    ManagedPolicyAllowlistEntry(
+        "secret/data/+/state/*", frozenset({"create", "patch", "read", "update"})
+    ),
+    ManagedPolicyAllowlistEntry(
+        "secret/data/platform/org-pull/+/*", frozenset({"read"})
+    ),
+    ManagedPolicyAllowlistEntry(
+        "secret/metadata/platform/org-pull/+/*", frozenset({"read"})
+    ),
+    ManagedPolicyAllowlistEntry("sys/storage/raft/snapshot", frozenset({"read"})),
+    ManagedPolicyAllowlistEntry("auth/token/renew-self", frozenset({"update"})),
+    ManagedPolicyAllowlistEntry("auth/token/lookup-self", frozenset({"read"})),
+)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Reject sudo, global wildcard, and control-plane write grants in "
-            "managed Vault policy HCL."
+            "Reject any managed Vault policy HCL grant that is not covered by "
+            "the managed-policy allowlist."
         )
     )
     parser.add_argument(
@@ -552,56 +558,218 @@ def parse_hcl_source(source: PolicySource) -> list[PolicyStanza]:
     return HclPolicyParser(source).parse()
 
 
-def is_self_token_operation(path: str) -> bool:
-    normalized = path.strip().lstrip("/")
-    return any(fnmatch.fnmatchcase(normalized, glob) for glob in SELF_TOKEN_OP_GLOBS)
+def normalize_vault_path(path: str) -> str:
+    return path.strip().lstrip("/")
 
 
-def first_matching_e3_surface(path: str) -> str | None:
-    normalized = path.strip().lstrip("/")
-    if is_self_token_operation(normalized):
+def _vault_pattern_regex(pattern: str) -> re.Pattern[str]:
+    normalized = normalize_vault_path(pattern)
+    prefix_match = normalized.endswith("*")
+    body = normalized[:-1] if prefix_match else normalized
+    regex_parts: list[str] = []
+
+    if body:
+        for index, segment in enumerate(body.split("/")):
+            if index:
+                regex_parts.append("/")
+            if segment == "+":
+                regex_parts.append("[^/]+")
+            else:
+                regex_parts.append(re.escape(segment))
+
+    suffix = ".*" if prefix_match else ""
+    end = "$"
+    return re.compile("^" + "".join(regex_parts) + suffix + end)
+
+
+def vault_glob_matches(pattern: str, concrete_path: str) -> bool:
+    """Return whether a Vault ACL path pattern matches a concrete path.
+
+    Vault ACL paths support exact matching, a final ``*`` as a prefix match
+    across slashes, and ``+`` as exactly one non-empty path segment.
+    """
+
+    return bool(
+        _vault_pattern_regex(pattern).match(normalize_vault_path(concrete_path))
+    )
+
+
+def _has_trailing_star(pattern: str) -> bool:
+    return normalize_vault_path(pattern).endswith("*")
+
+
+def _body_without_trailing_star(pattern: str) -> str:
+    normalized = normalize_vault_path(pattern)
+    return normalized[:-1] if normalized.endswith("*") else normalized
+
+
+def _has_internal_star(pattern: str) -> bool:
+    return "*" in _body_without_trailing_star(pattern)
+
+
+def _has_plus_segment(pattern: str) -> bool:
+    return any(segment == "+" for segment in _body_without_trailing_star(pattern).split("/"))
+
+
+def _split_nonempty_segments(body: str) -> tuple[str, ...]:
+    if not body:
+        return ()
+    return tuple(body.split("/"))
+
+
+def _complete_prefix_segments(star_body: str) -> tuple[str, ...] | None:
+    if not star_body:
+        return ()
+    if not star_body.endswith("/"):
         return None
-    for glob in E3_SURFACE_GLOBS:
-        if fnmatch.fnmatchcase(normalized, glob):
-            return glob
-    return None
+    return _split_nonempty_segments(star_body[:-1])
+
+
+def _segment_covers(allow_segment: str, policy_segment: str) -> bool:
+    if allow_segment == "+":
+        return bool(policy_segment) and "*" not in policy_segment
+    return allow_segment == policy_segment
+
+
+def _segments_cover(
+    allow_segments: tuple[str, ...],
+    policy_segments: tuple[str, ...],
+) -> bool:
+    if len(allow_segments) != len(policy_segments):
+        return False
+    return all(
+        _segment_covers(allow_segment, policy_segment)
+        for allow_segment, policy_segment in zip(allow_segments, policy_segments)
+    )
+
+
+def _segments_cover_prefix(
+    allow_segments: tuple[str, ...],
+    policy_segments: tuple[str, ...],
+) -> bool:
+    if len(allow_segments) > len(policy_segments):
+        return False
+    return all(
+        _segment_covers(allow_segment, policy_segment)
+        for allow_segment, policy_segment in zip(allow_segments, policy_segments)
+    )
+
+
+def _raw_prefix_covers(allow_body: str, policy_body: str) -> bool:
+    if allow_body == "":
+        return True
+    if not policy_body.startswith(allow_body):
+        return False
+    if allow_body == policy_body:
+        return True
+    return allow_body.endswith("/") or policy_body[len(allow_body)] == "/"
+
+
+def _star_covers_star(allow_pattern: str, policy_pattern: str) -> bool:
+    allow_body = _body_without_trailing_star(allow_pattern)
+    policy_body = _body_without_trailing_star(policy_pattern)
+
+    if not _has_plus_segment(allow_pattern) and not _has_plus_segment(policy_pattern):
+        return _raw_prefix_covers(allow_body, policy_body)
+
+    allow_segments = _complete_prefix_segments(allow_body)
+    policy_segments = _complete_prefix_segments(policy_body)
+    if allow_segments is None or policy_segments is None:
+        return False
+    return _segments_cover_prefix(allow_segments, policy_segments)
+
+
+def _star_covers_nonstar(allow_pattern: str, policy_pattern: str) -> bool:
+    allow_body = _body_without_trailing_star(allow_pattern)
+    policy_segments = _split_nonempty_segments(normalize_vault_path(policy_pattern))
+
+    allow_segments = _complete_prefix_segments(allow_body)
+    if allow_segments is not None:
+        return (
+            len(policy_segments) > len(allow_segments)
+            and _segments_cover_prefix(allow_segments, policy_segments)
+        )
+
+    if _has_plus_segment(allow_pattern) or _has_plus_segment(policy_pattern):
+        return False
+    return vault_glob_matches(allow_pattern, normalize_vault_path(policy_pattern))
+
+
+def _nonstar_covers_nonstar(allow_pattern: str, policy_pattern: str) -> bool:
+    allow_segments = _split_nonempty_segments(normalize_vault_path(allow_pattern))
+    policy_segments = _split_nonempty_segments(normalize_vault_path(policy_pattern))
+    return _segments_cover(allow_segments, policy_segments)
+
+
+def covers(allow_pattern: str, policy_pattern: str) -> bool:
+    """Return whether allow_pattern covers every concrete path policy_pattern grants.
+
+    This is intentionally conservative. Unsupported or ambiguous authored
+    wildcard shapes return False so managed policies fail closed.
+    """
+
+    if _has_internal_star(allow_pattern) or _has_internal_star(policy_pattern):
+        return False
+
+    policy_has_star = _has_trailing_star(policy_pattern)
+    policy_has_plus = _has_plus_segment(policy_pattern)
+
+    if not policy_has_star and not policy_has_plus:
+        return vault_glob_matches(allow_pattern, normalize_vault_path(policy_pattern))
+
+    allow_has_star = _has_trailing_star(allow_pattern)
+    if policy_has_star:
+        return allow_has_star and _star_covers_star(allow_pattern, policy_pattern)
+    if allow_has_star:
+        return _star_covers_nonstar(allow_pattern, policy_pattern)
+    return _nonstar_covers_nonstar(allow_pattern, policy_pattern)
 
 
 def format_caps(capabilities: Iterable[str]) -> str:
     return ", ".join(sorted(set(capabilities)))
 
 
+def grant_capabilities(capabilities: Iterable[str]) -> frozenset[str]:
+    return frozenset(
+        capability.lower()
+        for capability in capabilities
+        if capability.lower() != DENY_CAPABILITY
+    )
+
+
+def format_allowlist_entries(entries: Iterable[ManagedPolicyAllowlistEntry]) -> str:
+    return "; ".join(
+        f"{entry.path_pattern!r} allows [{format_caps(entry.capabilities)}]"
+        for entry in entries
+    )
+
+
 def check_stanza(stanza: PolicyStanza) -> list[str]:
     findings: list[str] = []
-    path = stanza.path.strip()
-    normalized_path = path.lstrip("/")
-    lower_caps = tuple(capability.lower() for capability in stanza.capabilities)
-    write_caps = sorted(set(lower_caps).intersection(WRITE_CAPABILITIES))
+    granted_caps = grant_capabilities(stanza.capabilities)
     location = f"{stanza.source.label}:{stanza.line}"
 
-    if "sudo" in lower_caps:
-        findings.append(
-            f"{location}: E1 sudo capability: path {stanza.path!r} grants sudo"
-        )
+    if not granted_caps:
+        return findings
 
-    if normalized_path in GLOBAL_WILDCARD_PATHS:
+    path_matches = [
+        entry
+        for entry in MANAGED_POLICY_ALLOWLIST
+        if covers(entry.path_pattern, stanza.path)
+    ]
+    if not path_matches:
         findings.append(
-            f"{location}: E2 global wildcard path: path {stanza.path!r} is "
-            "root-equivalent in managed Vault policy HCL"
+            f"{location}: path-not-allowlisted: path {stanza.path!r} is not "
+            "covered by MANAGED_POLICY_ALLOWLIST"
         )
+        return findings
 
-    e3_surface = first_matching_e3_surface(path)
-    if e3_surface is not None and write_caps:
+    if not any(granted_caps <= entry.capabilities for entry in path_matches):
         findings.append(
-            f"{location}: E3 self-escalation surface: path {stanza.path!r} "
-            f"matches {e3_surface!r} with write capability/capabilities "
-            f"{format_caps(write_caps)}"
-        )
-
-    if normalized_path in BROAD_SYS_WRITE_PATHS and write_caps:
-        findings.append(
-            f"{location}: E4 broad sys write: path {stanza.path!r} grants "
-            f"write capability/capabilities {format_caps(write_caps)}"
+            f"{location}: capability-exceeds-allowlist: path {stanza.path!r} "
+            f"grants [{format_caps(granted_caps)}], but "
+            f"MANAGED_POLICY_ALLOWLIST covers it only as "
+            f"{format_allowlist_entries(path_matches)}"
         )
 
     return findings
@@ -634,9 +802,9 @@ def print_findings(findings: list[str]) -> None:
 
 def print_pass(result: GuardResult) -> None:
     print(
-        "PASS: managed Vault policy no-escalation guard scanned "
+        "PASS: managed Vault policy allowlist guard scanned "
         f"{len(result.sources)} policy source(s), {len(result.stanzas)} path "
-        "stanza(s); no escalation findings."
+        "stanza(s); all grants are allowlist-covered."
     )
     print("Scanned managed Vault policy HCL:")
     for source in result.sources:
