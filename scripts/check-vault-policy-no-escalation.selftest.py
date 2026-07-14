@@ -126,6 +126,40 @@ def e3_auth_role_write_fixture(
     return (root / "policies",), ()
 
 
+def policy_path_fixture(
+    filename: str,
+    vault_path: str,
+    capabilities: tuple[str, ...] = ("update",),
+) -> Callable[[Path], tuple[tuple[Path, ...], tuple[Path, ...]]]:
+    def fixture(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+        capability_list = ", ".join(f'"{capability}"' for capability in capabilities)
+        write_text(
+            root / f"policies/{filename}",
+            f"""
+            path "{vault_path}" {{
+              capabilities = [{capability_list}]
+            }}
+            """,
+        )
+        return (root / "policies",), ()
+
+    return fixture
+
+
+def e2_normalized_global_wildcard_fixture(
+    root: Path,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    write_text(
+        root / "policies/e2-normalized-wildcard.hcl",
+        """
+        path "//*" {
+          capabilities = ["read"]
+        }
+        """,
+    )
+    return (root / "policies",), ()
+
+
 def e3_self_ops_fixture(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     write_text(
         root / "policies/e3-self-ops.hcl",
@@ -135,7 +169,7 @@ def e3_self_ops_fixture(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]
         }
 
         path "auth/token/lookup-self" {
-          capabilities = ["read"]
+          capabilities = ["update"]
         }
         """,
     )
@@ -170,6 +204,26 @@ def policy_cr_sudo_fixture(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ..
         """,
     )
     return (), (root / "vault",)
+
+
+def policy_cr_outside_vault_fixture(
+    root: Path,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    write_text(
+        root / "clusters/talos-cluster/apps/outside-vault/policy-cr.yaml",
+        """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: Policy
+        metadata:
+          name: outside-vault-escalation
+        spec:
+          policy: |
+            path "auth/token/roles/escalate" {
+              capabilities = ["update"]
+            }
+        """,
+    )
+    return (), (root / "clusters/talos-cluster",)
 
 
 def malformed_hcl_fixture(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
@@ -282,6 +336,20 @@ def main() -> int:
                 ("E2 global wildcard path", "e2-wildcard.hcl", "path '*'"),
             ),
             run_case(
+                "e2-normalized-wildcard",
+                1,
+                "E2 path '//*' in e2-normalized-wildcard.hcl bites",
+                e2_normalized_global_wildcard_fixture,
+                ("E2 global wildcard path", "e2-normalized-wildcard.hcl", "//*"),
+            ),
+            run_case(
+                "e2-plus-wildcard",
+                0,
+                "single-segment '+' wildcard is not root-equivalent",
+                policy_path_fixture("e2-plus-wildcard.hcl", "+", ("read",)),
+                ("PASS:", "e2-plus-wildcard.hcl"),
+            ),
+            run_case(
                 "e3-policy-write",
                 1,
                 "E3 sys/policies/acl/evil write bites",
@@ -294,6 +362,167 @@ def main() -> int:
                 "E3 auth/kubernetes/role/evil write bites",
                 e3_auth_role_write_fixture,
                 ("E3 self-escalation surface", "auth/kubernetes/role/evil"),
+            ),
+            run_case(
+                "e3-token-roles-write",
+                1,
+                "E3 auth/token/roles/escalate write bites",
+                policy_path_fixture(
+                    "e3-token-roles-write.hcl",
+                    "auth/token/roles/escalate",
+                    ("create", "update"),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/token/roles/escalate",
+                    "auth/*/roles/*",
+                ),
+            ),
+            run_case(
+                "e3-token-create-role",
+                1,
+                "E3 auth/token/create/escalate write bites",
+                policy_path_fixture(
+                    "e3-token-create-role.hcl",
+                    "auth/token/create/escalate",
+                    ("create", "update"),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/token/create/escalate",
+                    "auth/token/create/*",
+                ),
+            ),
+            run_case(
+                "e3-token-create-orphan",
+                1,
+                "E3 auth/token/create-orphan write bites",
+                policy_path_fixture(
+                    "e3-token-create-orphan.hcl",
+                    "auth/token/create-orphan",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/token/create-orphan",
+                    "auth/token/create-orphan",
+                ),
+            ),
+            run_case(
+                "e3-token-create-bare",
+                0,
+                "bare auth/token/create false-positive guard passes",
+                policy_path_fixture(
+                    "e3-token-create-bare.hcl",
+                    "auth/token/create",
+                    ("update",),
+                ),
+                ("PASS:", "e3-token-create-bare.hcl"),
+            ),
+            run_case(
+                "e3-auth-users-write",
+                1,
+                "E3 auth/userpass/users/admin write bites",
+                policy_path_fixture(
+                    "e3-auth-users-write.hcl",
+                    "auth/userpass/users/admin",
+                    ("create", "update"),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/userpass/users/admin",
+                    "auth/*/users/*",
+                ),
+            ),
+            run_case(
+                "e3-auth-user-write",
+                1,
+                "E3 auth/userpass/user/admin write bites",
+                policy_path_fixture(
+                    "e3-auth-user-write.hcl",
+                    "auth/userpass/user/admin",
+                    ("write",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/userpass/user/admin",
+                    "auth/*/user/*",
+                ),
+            ),
+            run_case(
+                "e3-auth-groups-write",
+                1,
+                "E3 auth/ldap/groups/admins write bites",
+                policy_path_fixture(
+                    "e3-auth-groups-write.hcl",
+                    "auth/ldap/groups/admins",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/ldap/groups/admins",
+                    "auth/*/groups/*",
+                ),
+            ),
+            run_case(
+                "e3-auth-group-write",
+                1,
+                "E3 auth/ldap/group/admins write bites",
+                policy_path_fixture(
+                    "e3-auth-group-write.hcl",
+                    "auth/ldap/group/admins",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/ldap/group/admins",
+                    "auth/*/group/*",
+                ),
+            ),
+            run_case(
+                "e3-auth-map-write",
+                1,
+                "E3 auth/github/map/teams/admins write bites",
+                policy_path_fixture(
+                    "e3-auth-map-write.hcl",
+                    "auth/github/map/teams/admins",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/github/map/teams/admins",
+                    "auth/*/map/*",
+                ),
+            ),
+            run_case(
+                "e3-auth-certs-write",
+                1,
+                "E3 auth/cert/certs/admin write bites",
+                policy_path_fixture(
+                    "e3-auth-certs-write.hcl",
+                    "auth/cert/certs/admin",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/cert/certs/admin",
+                    "auth/*/certs/*",
+                ),
+            ),
+            run_case(
+                "e3-auth-cert-write",
+                1,
+                "E3 auth/cert/cert/admin write bites",
+                policy_path_fixture(
+                    "e3-auth-cert-write.hcl",
+                    "auth/cert/cert/admin",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "auth/cert/cert/admin",
+                    "auth/*/cert/*",
+                ),
             ),
             run_case(
                 "e3-self-ops",
@@ -310,11 +539,74 @@ def main() -> int:
                 ("E4 broad sys write", "e4-sys-write.hcl", "sys/*"),
             ),
             run_case(
+                "e4-sys-raw-write",
+                1,
+                "E4 sys/raw/logical/secret/foo write bites",
+                policy_path_fixture(
+                    "e4-sys-raw-write.hcl",
+                    "sys/raw/logical/secret/foo",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "sys/raw/logical/secret/foo",
+                    "sys/raw/*",
+                ),
+            ),
+            run_case(
+                "e4-sys-audit-write",
+                1,
+                "E4 sys/audit/file write bites",
+                policy_path_fixture(
+                    "e4-sys-audit-write.hcl",
+                    "sys/audit/file",
+                    ("update",),
+                ),
+                ("E3 self-escalation surface", "sys/audit/file", "sys/audit/*"),
+            ),
+            run_case(
+                "e4-sys-plugins-catalog-write",
+                1,
+                "E4 sys/plugins/catalog/database/foo write bites",
+                policy_path_fixture(
+                    "e4-sys-plugins-catalog-write.hcl",
+                    "sys/plugins/catalog/database/foo",
+                    ("update",),
+                ),
+                (
+                    "E3 self-escalation surface",
+                    "sys/plugins/catalog/database/foo",
+                    "sys/plugins/catalog/*",
+                ),
+            ),
+            run_case(
+                "e4-sys-snapshot-read",
+                0,
+                "sys/storage/raft/snapshot read is not write-class",
+                policy_path_fixture(
+                    "e4-sys-snapshot-read.hcl",
+                    "sys/storage/raft/snapshot",
+                    ("read",),
+                ),
+                ("PASS:", "e4-sys-snapshot-read.hcl"),
+            ),
+            run_case(
                 "policy-cr-sudo",
                 1,
                 "Policy CR evil-policy spec.policy sudo bites",
                 policy_cr_sudo_fixture,
                 ("Policy CR evil-policy", "E1 sudo capability"),
+            ),
+            run_case(
+                "policy-cr-outside-vault",
+                1,
+                "Policy CR outside apps/vault spec.policy escalation bites",
+                policy_cr_outside_vault_fixture,
+                (
+                    "Policy CR outside-vault-escalation",
+                    "auth/token/roles/escalate",
+                    "auth/*/roles/*",
+                ),
             ),
             run_case(
                 "malformed-hcl",

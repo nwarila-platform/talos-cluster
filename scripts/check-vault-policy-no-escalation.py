@@ -5,7 +5,7 @@ This guard scans the Vault policy HCL that can be applied through GitOps:
 
 - ``*.hcl`` files under ``clusters/talos-cluster/apps/vault/vault-config/policies``
 - raw ``spec.policy`` HCL in redhatcop.redhat.io/v1alpha1 Policy CRs under
-  ``clusters/talos-cluster/apps/vault``
+  ``clusters/talos-cluster``
 
 The parser is intentionally small and fail-closed. It understands Vault ACL
 ``path "..." { capabilities = [...] }`` stanzas, comments, quoted strings, and
@@ -31,10 +31,10 @@ except ImportError as exc:  # pragma: no cover - exercised by missing CI depende
 DEFAULT_POLICY_DIR = Path(
     "clusters/talos-cluster/apps/vault/vault-config/policies"
 )
-DEFAULT_POLICY_CR_ROOT = Path("clusters/talos-cluster/apps/vault")
+DEFAULT_POLICY_CR_ROOT = Path("clusters/talos-cluster")
 YAML_SUFFIXES = {".yaml", ".yml"}
-WRITE_CAPABILITIES = {"create", "update", "patch", "delete", "sudo"}
-GLOBAL_WILDCARD_PATHS = {"*", "/*"}
+WRITE_CAPABILITIES = {"create", "update", "patch", "delete", "write"}
+GLOBAL_WILDCARD_PATHS = {"*"}
 BROAD_SYS_WRITE_PATHS = {"sys", "sys/*"}
 SELF_TOKEN_OP_GLOBS = (
     "auth/token/renew-self",
@@ -44,13 +44,27 @@ SELF_TOKEN_OP_GLOBS = (
 E3_SURFACE_GLOBS = (
     "sys/policies/*",
     "sys/policy/*",
+    "sys/raw/*",
+    "sys/audit/*",
+    "sys/plugins/catalog/*",
     "auth/*/role/*",
+    "auth/*/roles/*",
+    "auth/*/users/*",
+    "auth/*/user/*",
+    "auth/*/groups/*",
+    "auth/*/group/*",
+    "auth/*/map/*",
+    "auth/*/certs/*",
+    "auth/*/cert/*",
+    "auth/token/create/*",
+    "auth/token/create-orphan",
     "auth/*/config*",
     "sys/auth/*",
     "sys/mounts/*",
     "identity/entity*",
     "identity/group*",
     "identity/*/aliases*",
+    "identity/*",
 )
 
 
@@ -570,7 +584,7 @@ def check_stanza(stanza: PolicyStanza) -> list[str]:
             f"{location}: E1 sudo capability: path {stanza.path!r} grants sudo"
         )
 
-    if path in GLOBAL_WILDCARD_PATHS:
+    if normalized_path in GLOBAL_WILDCARD_PATHS:
         findings.append(
             f"{location}: E2 global wildcard path: path {stanza.path!r} is "
             "root-equivalent in managed Vault policy HCL"
