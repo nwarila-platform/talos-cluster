@@ -1,0 +1,70 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: vault-config-operator
+  namespace: vault-config-operator
+spec:
+  interval: 10m
+  releaseName: vault-config-operator
+  chart:
+    spec:
+      chart: vault-config-operator
+      # Chart tarball digest (index.yaml, verified by Flux against the repo):
+      # sha256:0e9f50c7af1c17255a617288b5af3ebb8511b38d365675c6cd930f4a7b71196a
+      version: v0.8.49
+      sourceRef:
+        kind: HelmRepository
+        name: vault-config-operator
+      interval: 1h
+  install:
+    # The chart ships its 47 CRDs in the Helm crds/ dir (not templated). Flux
+    # installs them on first apply.
+    crds: Create
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      remediateLastFailure: false
+    cleanupOnFail: true
+  values:
+    # The operator self-provisions its webhook serving cert from cert-manager
+    # (namespaced selfSigned Issuer + Certificate + inject-ca-from). Requires
+    # cert-manager Ready (enforced by the Flux Kustomization dependsOn).
+    enableCertManager: true
+    # No Prometheus Operator in-cluster: the ServiceMonitor CRD is absent, so a
+    # rendered ServiceMonitor would fail to apply. Disabling monitoring also
+    # drops the kube-rbac-proxy metrics sidecar (one fewer image to carry).
+    enableMonitoring: false
+    image:
+      # UNSIGNED upstream (cosign tree empty for v0.8.49) -> integrity is the
+      # digest pin below; tracked as an explicit exception for the
+      # immediate-post-talos-cluster fold-in (see SUPPLY-CHAIN-INTEGRITY-PLAN).
+      # No Kyverno attestor is added (a rule for an unsigned image would be
+      # fictional). redhat-cop is not first-party, so the fail-closed enforced
+      # policy (ghcr.io/nwarila*) does not match it.
+      repository: quay.io/redhat-cop/vault-config-operator
+      # renovate: datasource=docker depName=quay.io/redhat-cop/vault-config-operator
+      tag: "v0.8.49@sha256:fec66812457e839d3ab4347679fa07d1bbe2459d63b9396b27aafa5a3379a295"
+    # The chart sets runAsNonRoot / allowPrivilegeEscalation:false / drop ALL,
+    # but omits seccompProfile, which restricted PSA requires. Add it via the
+    # exposed override keys. readOnlyRootFilesystem is left unset (the operator
+    # is not proven to run with a read-only root; not a restricted-PSA
+    # requirement).
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: 25m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi

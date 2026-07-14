@@ -20,6 +20,7 @@ resources:
   - talos-drift
   - vault-auth
   - vault-aws-access
+  - vault-config-operator
   - vault-kustomization.yaml
   - vault-restore-validator
   - vault-secrets-operator

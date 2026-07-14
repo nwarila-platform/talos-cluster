@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: vault-config-operator
+  namespace: vault-config-operator
+spec:
+  interval: 1h
+  # redhat-cop publishes a classic (HTTP) gh-pages Helm repo, not an OCI
+  # registry. The chart tarball digest is pinned in the HelmRelease.
+  url: https://redhat-cop.github.io/vault-config-operator

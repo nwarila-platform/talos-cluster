@@ -85,6 +85,17 @@
 !/clusters/talos-cluster/apps/dr-etcd-backup/talosconfig.sops.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/configmap-encrypt-script.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/cronjob.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/
+!/clusters/talos-cluster/apps/vault-config-operator/kustomization.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/kustomization-flux.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/namespace.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/release/
+!/clusters/talos-cluster/apps/vault-config-operator/release/kustomization.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/release/helmrepository.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/release/helmrelease.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/release/networkpolicy-default-deny.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/release/ciliumnetworkpolicy-egress.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/release/ciliumnetworkpolicy-webhook-ingress.yaml
 !/clusters/talos-cluster/apps/vault-restore-validator/
 !/clusters/talos-cluster/apps/vault-restore-validator/README.md
 !/clusters/talos-cluster/apps/vault-restore-validator/kustomization.yaml
