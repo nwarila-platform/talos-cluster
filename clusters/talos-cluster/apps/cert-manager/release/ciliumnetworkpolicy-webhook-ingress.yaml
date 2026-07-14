@@ -10,8 +10,13 @@ spec:
       app.kubernetes.io/instance: cert-manager
       app.kubernetes.io/component: webhook
   ingress:
+    # Apiserver->webhook traffic routed cross-node via a node Cilium interface
+    # arrives with pure remote-node identity (proven via cilium monitor drop:
+    # identity remote-node->... :10250 SYN Policy denied), so kube-apiserver
+    # alone does not match; this remains nodes/apiserver only, not open ingress.
     - fromEntities:
         - kube-apiserver
+        - remote-node
       toPorts:
         - ports:
             - port: "10250"
