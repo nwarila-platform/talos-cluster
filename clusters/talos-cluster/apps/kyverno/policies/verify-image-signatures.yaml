@@ -1,10 +1,13 @@
 # ClusterPolicy: verify-image-signatures
 #
-# Audit-only cosign keyless signature verification for third-party image
-# families. First-party nwarila, nwarila-platform, and the-hero-wars-guys images
-# live in verify-image-signatures-enforced.yaml so their webhook can fail closed
-# without making Audit-only third-party image families part of the admission
-# availability boundary.
+# Audit-only cosign signature verification for third-party image families. Flux,
+# Cilium, Kyverno, and Vault Secrets Operator use keyless rules; cert-manager
+# uses a distinct static-key rule because it signs with a static KMS key, SHA-512
+# signatures, and no Rekor transparency-log entry. First-party nwarila,
+# nwarila-platform, and the-hero-wars-guys images live in
+# verify-image-signatures-enforced.yaml so their webhook can fail closed without
+# making Audit-only third-party image families part of the admission availability
+# boundary.
 #
 # webhookConfiguration.failurePolicy intentionally remains Ignore here. These
 # rules are Audit-only deferrals until TD-0001 provides mirror-and-re-sign
@@ -16,7 +19,8 @@
 # does not require policy churn; known unsigned helper families are skipped
 # explicitly. See ADR-0010.
 #
-# Scope: Flux, Cilium, Kyverno, and Vault Secrets Operator image families.
+# Scope: Flux, Cilium, Kyverno, Vault Secrets Operator, and cert-manager image
+# families.
 # Longhorn, registry.k8s.io, first-party GHCR images, and other image families
 # are out of scope for this policy; they fall through here because their
 # registries are not listed in imageReferences. Kyverno release images are
@@ -37,9 +41,11 @@ metadata:
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Keyless cosign signature verification for Flux, Cilium, Kyverno, Vault
-      Secrets Operator images. These third-party families remain Audit-only
-      until TD-0001 provides owned mirror-and-re-sign coverage.
+      Cosign signature verification for Flux, Cilium, Kyverno, Vault Secrets
+      Operator, and cert-manager images. Flux, Cilium, Kyverno, and Vault
+      Secrets Operator use keyless attestors; cert-manager uses a static-key
+      attestor. These third-party families remain Audit-only until TD-0001
+      provides owned mirror-and-re-sign coverage.
 spec:
   validationFailureAction: Audit
   background: true
@@ -143,3 +149,39 @@ spec:
                     subjectRegExp: "^https://github\\.com/hashicorp/vault-secrets-operator/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
                     rekor:
                       url: "https://rekor.sigstore.dev"
+    - name: verify-cert-manager-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            # Scope to cert-manager component images without over-matching Jetstack.
+            - "quay.io/jetstack/cert-manager-*"
+          # Audit-only and required: unsigned images become findings, not webhook blocks.
+          failureAction: Audit
+          mutateDigest: false
+          required: true
+          attestors:
+            - entries:
+                # Static KMS key, SHA-512 signatures, and no Rekor tlog.
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAsZZKaaIRjOpzbiWYIDKO
+                      yry9XGBqAfve1iOGmt5VO1jpjNoEseT6zewozHfWTM7osxayy2WjN8G+QV39MlT3
+                      Vxo91/31g+Zcq8KcvxG+iB8GRaD9pNgLmghorv+eYDiPYMO/+fhsLImyG5WEoPct
+                      MeCBD7umZ/A2t96U9DQxVDqQbTHlsNludno1p1wsgRnfUM3QHexNljDvJg5FcDMo
+                      dCpVLpRNvbw0lbJVfybJ4siJ5o/MmXzy0QCJpw+yMIqvqMc8qgKJ1yooJtuTVF4t
+                      4/luP+EG/oVIiSWCFeRMqYdbJ3R+CJi+4LN7vFNYQM1Q/NwOB52RteaR7wnqmcBz
+                      qSYK32MM8xdPCQ5tioWwnPTRbPZuzsZsRmJsKBO9JUrBYdDntZX1xY5g4QNSufxi
+                      QgJgJSU7E4VGMvagEzB1JzvOr6A/qNFCO1Z6JsA3jw3cJLV1rSHfxqfSXBACTLDf
+                      6bOPWRILRKydTJA6uLKNKmo1/nFm3jvd5tHKOjy4VAQLJ/Vx9wBsAAiLa+06veun
+                      Oz3AJ9sNh3wLp21RL11u9TuOKRBipE/TYsBYp8jpIyWPXDSV+JcD/TZqoT8y0Z6S
+                      0damfUmspuK9DTQFL2crpeaqJSG9RA+OuPZLxGD1IMURTsPJB7kXhPtmceeirBnw
+                      sVcRHHDitVt8oO/x4Wus1c0CAwEAAQ==
+                      -----END PUBLIC KEY-----
+                    rekor:
+                      ignoreTlog: true
+                  signatureAlgorithm: sha512
