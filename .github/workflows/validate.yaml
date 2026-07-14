@@ -174,6 +174,12 @@ jobs:
       - name: "Guard self-test: image digest guard bites"
         run: python3 scripts/check-image-digest-sync.selftest.py
 
+      - name: "Guard: Flux CRD served/storage versions match expected map"
+        run: python3 scripts/check-flux-crd-served-versions.py
+
+      - name: "Guard self-test: Flux CRD served-version guard bites"
+        run: python3 scripts/check-flux-crd-served-versions.selftest.py
+
       - name: "Guard: first-party images are signature-Enforce-covered"
         run: python3 scripts/check-image-signature-enforcement.py
 
