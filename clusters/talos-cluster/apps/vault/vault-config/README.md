@@ -30,7 +30,12 @@ CEL health checks on `ReconcileSuccessful`.
 - `scripts/check-vault-policy-no-escalation.py` — deny-by-default allowlist on
   every managed policy grant, scanning **`Policy` CR `spec.policy` HCL** (and
   any legacy `policies/*.hcl`, none remain). The load-bearing OSS control: a
-  git commit cannot introduce escalation HCL.
+  git commit cannot introduce escalation HCL **through any manifest under
+  `clusters/talos-cluster/`** (the guard's scan root). Known residual: a CR
+  placed outside that root and pulled in via a cross-root kustomize
+  `resources:` reference would evade the scan (Flux builds with
+  LoadRestrictionsNone) — widening the scan to the whole repo is a booked
+  hardening (S4a audit finding R1; pre-existing scope, not introduced here).
 - `scripts/check-vault-config-operator-bootstrap-invariants.py` — the
   bootstrap-paradox invariants: the operator identity is never managed, the
   bootstrap grants enumerate exactly the managed set (CR-derived + captured),

@@ -112,18 +112,37 @@ def check_policy(name: str, spec: dict) -> list[str]:
     live = vault_get(f"sys/policies/acl/{name}")
     if live is None:
         return [f"policy {name!r}: MISSING live (sys/policies/acl/{name} = 404)"]
-    if live.get("policy") == spec["policy"]:
+    live_policy = live.get("policy") or ""
+    git_policy = spec["policy"]
+    if live_policy == git_policy:
         return []
     diff = "\n".join(
         difflib.unified_diff(
-            (live.get("policy") or "").splitlines(),
-            spec["policy"].splitlines(),
+            live_policy.splitlines(),
+            git_policy.splitlines(),
             fromfile=f"live/{name}",
             tofile=f"git/{name}",
             lineterm="",
         )
     )
+    # A byte-only difference (CRLF, trailing newlines) renders as an EMPTY
+    # line diff — exactly the class this tool exists to surface, so show the
+    # bytes explicitly instead of a blank hunk.
+    if not diff:
+        diff = (
+            "whitespace-only byte difference: "
+            f"live={len(live_policy)}B tail={live_policy[-8:]!r} vs "
+            f"git={len(git_policy)}B tail={git_policy[-8:]!r}"
+        )
     return [f"policy {name!r}: CONTENT MISMATCH\n{diff}"]
+
+
+# Live role keys that may exist outside the operator's write projection
+# without signalling drift, but ONLY while they hold these benign/empty
+# values. Anything else live-set outside the projection would be silently
+# WIPED by the operator's full-document role write and must be flagged.
+BENIGN_EXTRA_ROLE_VALUES = (None, "", [], {}, 0, False)
+KNOWN_EXTRA_ROLE_KEYS = {"alias_metadata", "bound_service_account_namespace_selector"}
 
 
 def check_role(name: str, spec: dict) -> list[str]:
@@ -131,11 +150,30 @@ def check_role(name: str, spec: dict) -> list[str]:
     if live is None:
         return [f"role {name!r}: MISSING live (auth/kubernetes/role/{name} = 404)"]
     findings = []
-    for key, want in role_projection(spec).items():
+    projection = role_projection(spec)
+    for key, want in projection.items():
         got = live.get(key)
         if got != want:
             findings.append(
                 f"role {name!r}: field {key!r} live={got!r} git={want!r}"
+            )
+    # Reverse direction: a live-set field the projection does not carry would
+    # be RESET by the operator's full-document upsert — that is a semantic
+    # rewrite the adoption must not perform silently (audit finding R3).
+    for key, got in sorted(live.items()):
+        if key in projection:
+            continue
+        if got in BENIGN_EXTRA_ROLE_VALUES:
+            continue
+        if key in KNOWN_EXTRA_ROLE_KEYS:
+            findings.append(
+                f"role {name!r}: live field {key!r}={got!r} is set but the CR "
+                "cannot express it — adoption would rewrite it (S4b class)"
+            )
+        else:
+            findings.append(
+                f"role {name!r}: live-only field {key!r}={got!r} is outside "
+                "the operator write projection and would be RESET on reconcile"
             )
     return findings
 
@@ -163,4 +201,23 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # rc 1 is reserved for a real parity mismatch; every tooling failure —
+    # unreachable/TLS-broken Vault, non-404 HTTP errors, malformed YAML,
+    # missing CR keys — must exit 2 so callers can't mistake a broken check
+    # for a clean-or-dirty verdict.
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        OSError,
+        ssl.SSLError,
+        yaml.YAMLError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: tooling failure: {exc!r}", file=sys.stderr)
+        sys.exit(2)
