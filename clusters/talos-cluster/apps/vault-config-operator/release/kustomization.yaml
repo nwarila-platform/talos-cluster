@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - helmrepository.yaml
   - helmrelease.yaml
+  - serviceaccount-vault.yaml
   - networkpolicy-default-deny.yaml
   - ciliumnetworkpolicy-egress.yaml
   - ciliumnetworkpolicy-webhook-ingress.yaml

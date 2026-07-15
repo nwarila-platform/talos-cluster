@@ -4,6 +4,12 @@ This directory records manually applied Vault configuration that is live in the
 cluster as source-controlled recovery material. It is intentionally not a
 reconciled workload path yet.
 
+> **CP-4 in progress:** these policies/roles become reconciled by the
+> vault-config-operator (redhat-cop). The operator's OWN scoped identity — the
+> one credential it must never manage (the bootstrap paradox) — lives in
+> [`bootstrap/`](bootstrap/README.md) and is seeded owner-watched, out-of-band,
+> via `scripts/vault-config/seed-operator-bootstrap.sh` (CP-4 S2b, ADR-0028).
+
 ## Org-pull foundation (VSO)
 
 These files capture the live Step 121/123 org-pull policies and roles: the
