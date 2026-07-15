@@ -3,24 +3,39 @@ kind: CiliumNetworkPolicy
 metadata:
   name: allow-vault-config-operator-egress
   namespace: vault-config-operator
-spec:
-  # Namespace-scoped: the manager needs DNS + apiserver for CRD watches and
-  # leader election. Vault egress (:8200) is intentionally NOT granted here --
-  # the operator is inert until it has a bootstrap Vault role (S2b) and its
-  # first CR (S3); Vault egress is added in the slice that gives it live work,
-  # keeping the blast radius minimal until then.
-  endpointSelector: {}
-  egress:
-    - toEndpoints:
-        - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": kube-system
-            "k8s:k8s-app": kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: ANY
-          rules:
-            dns:
-              - matchPattern: "*"
-    - toEntities:
-        - kube-apiserver
+specs:
+  # Namespace-scoped: the manager (and any chart hook Jobs) need DNS + apiserver
+  # for CRD watches and leader election.
+  - endpointSelector: {}
+    egress:
+      - toEndpoints:
+          - matchLabels:
+              "k8s:io.kubernetes.pod.namespace": kube-system
+              "k8s:k8s-app": kube-dns
+        toPorts:
+          - ports:
+              - port: "53"
+                protocol: ANY
+            rules:
+              dns:
+                - matchPattern: "*"
+      - toEntities:
+          - kube-apiserver
+  # Only the MANAGER reaches Vault (:8200) to reconcile config — added in CP-4 S3
+  # when the operator gained live work (its bootstrap Vault role was seeded in
+  # S2b). Scoped to the manager pod label, NOT namespace-wide, so any chart hook
+  # Jobs get no Vault egress (the VSO precedent). Mirrors the canonical
+  # component=server/name=vault selector the other Vault consumers use.
+  - endpointSelector:
+      matchLabels:
+        control-plane: vault-config-operator
+    egress:
+      - toEndpoints:
+          - matchLabels:
+              "k8s:io.kubernetes.pod.namespace": deploy-vault
+              "k8s:app.kubernetes.io/component": server
+              "k8s:app.kubernetes.io/name": vault
+        toPorts:
+          - ports:
+              - port: "8200"
+                protocol: TCP
