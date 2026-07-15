@@ -58,6 +58,34 @@ spec:
         - port: 8200
           protocol: TCP
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vault-config-operator-vault-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    # CP-4: the vault-config-operator manager reconciles Vault config over the
+    # API. Default-deny ingress requires this explicit allow — the "future Vault
+    # client" the allow-vso-controller policy above anticipated.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault-config-operator
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: vault-config-operator
+              app.kubernetes.io/name: vault-config-operator
+              control-plane: vault-config-operator
+      ports:
+        - port: 8200
+          protocol: TCP
+---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
