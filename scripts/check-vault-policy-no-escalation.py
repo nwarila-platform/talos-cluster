@@ -829,9 +829,18 @@ def run(policy_roots: Iterable[Path], cr_roots: Iterable[Path]) -> int:
 
 def main() -> int:
     args = parse_args()
-    policy_roots = (
-        tuple(args.policy_roots) if args.policy_roots else (DEFAULT_POLICY_DIR,)
-    )
+    if args.policy_roots:
+        policy_roots = tuple(args.policy_roots)
+    else:
+        # The legacy managed .hcl directory is OPTIONAL as a DEFAULT: after
+        # CP-4 S4a the managed policy content lives in redhatcop Policy CRs
+        # (scanned via cr_roots), and deleting the last tracked .hcl removes
+        # the directory itself. The "no managed Vault policy HCL sources"
+        # error below still fails the run if NOTHING is found anywhere; an
+        # explicitly passed --policy-root stays strict (missing = exit 2).
+        policy_roots = tuple(
+            root for root in (DEFAULT_POLICY_DIR,) if root.exists()
+        )
     cr_roots = (
         tuple(args.cr_roots) if args.cr_roots else (DEFAULT_POLICY_CR_ROOT,)
     )

@@ -1,68 +1,88 @@
-# Vault config source of truth
+# Vault config — Flux-reconciled (CP-4)
 
-This directory records manually applied Vault configuration that is live in the
-cluster as source-controlled recovery material. It is intentionally not a
-reconciled workload path yet.
+This directory is the source of truth for Vault configuration. As of CP-4 S4a
+the managed set is **reconciled by the redhat-cop vault-config-operator**: git
+policy/role CRs under [`managed/`](managed/) converge live Vault — no human
+runs `vault write` for a managed object (zero-manual / everything-in-band).
 
-> **CP-4 in progress:** these policies/roles become reconciled by the
-> vault-config-operator (redhat-cop). The operator's OWN scoped identity — the
-> one credential it must never manage (the bootstrap paradox) — lives in
-> [`bootstrap/`](bootstrap/README.md) and is seeded owner-watched, out-of-band,
-> via `scripts/vault-config/seed-operator-bootstrap.sh` (CP-4 S2b, ADR-0028).
+> The operator's OWN scoped identity — the one credential it must never manage
+> (the bootstrap paradox) — lives in [`bootstrap/`](bootstrap/README.md) and is
+> seeded owner-watched, out-of-band, via
+> `scripts/vault-config/seed-operator-bootstrap.sh` (CP-4 S2b, ADR-0028).
 
-## Org-pull foundation (VSO)
+## Layout
 
-These files capture the live Step 121/123 org-pull policies and roles: the
-cross-org secret-delivery foundation used by Vault Secrets Operator. They use
-the `secret` kv-v2 mount and do not need the Kubernetes auth accessor
-placeholder used by tenant read/write policies.
+| Path | State | Purpose |
+|---|---|---|
+| `managed/policy-*.yaml` | **reconciled** | redhatcop `Policy` CRs (type `acl`); `spec.policy` is the exact HCL the operator converges `sys/policies/acl/<name>` to |
+| `managed/role-*.yaml` | **reconciled** | redhatcop `KubernetesAuthEngineRole` CRs converging `auth/kubernetes/role/<name>` |
+| `auth/kubernetes/roles/*.json` | capture-only (S4b pending) | the 3 namespace-**selector** roles the operator CRD cannot express (below) |
+| `bootstrap/` | out-of-band exception | the operator's own policy+role (ADR-0028); NEVER GitOps-applied |
 
-Apply the org-pull foundation:
+Reconciliation wiring: the `vault-config-managed` Flux Kustomization
+(`apps/kustomization-vault-config-managed.yaml`) applies `managed/` with
+`prune: false` (adopt-before-prune; prune arms in S7 after the S6b
+reference-safety guard), `dependsOn` vault + vault-config-operator, and
+CEL health checks on `ReconcileSuccessful`.
 
-```sh
-vault policy write vso-org-pull-read-hwg clusters/talos-cluster/apps/vault/vault-config/policies/vso-org-pull-read-hwg.hcl
-vault policy write vso-org-pull-read-nwp clusters/talos-cluster/apps/vault/vault-config/policies/vso-org-pull-read-nwp.hcl
-vault write auth/kubernetes/role/vso-org-pull-hwg @clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/vso-org-pull-hwg.json
-vault write auth/kubernetes/role/vso-org-pull-nwp @clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/vso-org-pull-nwp.json
-```
+## Guards (CI, fail-closed)
 
-The tenant role/policies are already applied live and captured here only for
-disaster recovery.
+- `scripts/check-vault-policy-no-escalation.py` — deny-by-default allowlist on
+  every managed policy grant, scanning **`Policy` CR `spec.policy` HCL** (and
+  any legacy `policies/*.hcl`, none remain). The load-bearing OSS control: a
+  git commit cannot introduce escalation HCL **through any manifest under
+  `clusters/talos-cluster/`** (the guard's scan root). Known residual: a CR
+  placed outside that root and pulled in via a cross-root kustomize
+  `resources:` reference would evade the scan (Flux builds with
+  LoadRestrictionsNone) — widening the scan to the whole repo is a booked
+  hardening (S4a audit finding R1; pre-existing scope, not introduced here).
+- `scripts/check-vault-config-operator-bootstrap-invariants.py` — the
+  bootstrap-paradox invariants: the operator identity is never managed, the
+  bootstrap grants enumerate exactly the managed set (CR-derived + captured),
+  no delete on non-smoke paths, bootstrap never Flux-applied.
 
-Apply the new B-apex source-minter foundation after merge:
+## S4b — the 3 selector roles (pending owner decision)
 
-```sh
-vault policy write source-minter-hwg clusters/talos-cluster/apps/vault/vault-config/policies/source-minter-hwg.hcl
-vault write auth/kubernetes/role/source-minter-hwg @clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/source-minter-hwg.json
-```
+`tenant`, `vso-org-pull-hwg`, `vso-org-pull-nwp` bind tenant namespaces via
+Vault's `bound_service_account_namespace_selector` (login-time, Vault-side
+label match). `KubernetesAuthEngineRole` v0.8.49 cannot express that field —
+its `targetNamespaceSelector` resolves the selector in Kubernetes at
+*reconcile time* and writes a static `bound_service_account_namespaces` list
+(the operator watches Namespaces, so the list converges on tenant
+onboarding/offboarding, but login for a brand-new tenant namespace depends on
+the operator being alive, and de-label revocation lags if it is down).
+Adopting them as-is would silently REWRITE the live selector binding into a
+static list. They stay capture-only until the owner picks: accept the
+selector→list semantics / patch the operator upstream / keep them in the
+out-of-band set. Their captures are applied live already; treat the JSON files
+as DR material.
 
-## DR snapshot backup foundation
+## Adoption verification
 
-The `vault-snapshot-backup` role is intentionally not a Vault admin role. It is
-bound only to service account `dr-backup` in namespace `dr-backup`, grants only
-Raft snapshot read plus token lookup/renew-self, and is applied live by:
+`scripts/vault-config/verify-adoption-parity.py` compares live Vault against
+the managed CRs (policies byte-exact; roles field-by-field on the operator's
+write projection). Run it before arming anything destructive and after the
+first reconcile of any adoption change. Note: role reconciles are idempotent
+RE-WRITES (the operator's equivalence check never matches for roles — typed
+Go values vs JSON-decoded reads), so "adopted cleanly" is proven by read-back
+parity, not by an absent write.
 
-```sh
-scripts/dr/apply-vault-snapshot-backup-live.sh
-```
+## DR / rebuild
 
-Run the live apply with a short-TTL minted admin token, preferably supplied in
-`VAULT_TOKEN`, not a standing root token. Revoke that operator token after the
-apply/proof with `vault token revoke`, or set `REVOKE_TOKEN_AFTER=true` to have
-the script run `vault token revoke -self` after a successful proof.
+On a cluster rebuild the managed set self-restores: seed the bootstrap
+identity (`bootstrap/README.md`), let Flux install the operator, and the CRs
+re-create every managed policy/role. The `{{identity.entity.aliases.…}}`
+templates in tenant policies embed the **live k8s-auth mount accessor**
+(`auth_kubernetes_fc0d86cb`) — on a rebuilt Vault the accessor differs and the
+CR content must be re-pointed (booked follow-up: the operator's
+`${auth/kubernetes/@accessor}` placeholder would make this portable, but it
+needs a `sys/auth` read grant in the bootstrap policy and a guarded rollout —
+do NOT flip it casually; an unresolved placeholder writes literally).
 
-## Files
+## The DR snapshot-backup leg
 
-| Path | Purpose |
-|---|---|
-| `policies/vso-org-pull-read-hwg.hcl` | Read-only hwg org-pull credentials policy for VSO |
-| `policies/vso-org-pull-read-nwp.hcl` | Read-only nwp org-pull credentials policy for VSO |
-| `policies/tenant-read.hcl` | Already-applied / DR capture: tenant read access to its own `provisioned/` bucket plus token renew/lookup-self grants |
-| `policies/tenant-write.hcl` | Already-applied / DR capture: tenant write access to its own `state/` bucket |
-| `policies/source-minter-hwg.hcl` | NEW: apply via `vault policy write source-minter-hwg ...` |
-| `policies/vault-snapshot-backup.hcl` | DR backup policy: Raft snapshot read only plus token lookup/renew-self |
-| `auth/kubernetes/roles/vso-org-pull-hwg.json` | Kubernetes auth role for the hwg org-pull VSO service account |
-| `auth/kubernetes/roles/vso-org-pull-nwp.json` | Kubernetes auth role for the nwp org-pull VSO service account |
-| `auth/kubernetes/roles/tenant.json` | Already-applied / DR capture: Kubernetes auth role for tenant `vault-client` service accounts |
-| `auth/kubernetes/roles/source-minter-hwg.json` | NEW: apply via `vault write auth/kubernetes/role/source-minter-hwg ...` |
-| `auth/kubernetes/roles/vault-snapshot-backup.json` | Kubernetes auth role for the `dr-backup` service account |
+The `vault-snapshot-backup` policy/role pair is managed (adopted S4a). The
+break-glass direct apply (`scripts/dr/apply-vault-snapshot-backup-live.sh`)
+reads the SAME source of truth (`managed/policy-vault-snapshot-backup.yaml`)
+so DR without a running operator stays possible without a second copy of the
+policy content.

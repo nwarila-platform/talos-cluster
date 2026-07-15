@@ -9,8 +9,12 @@ set +x
 export MSYS_NO_PATHCONV=1
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-POLICY_FILE="${REPO_ROOT}/clusters/talos-cluster/apps/vault/vault-config/policies/vault-snapshot-backup.hcl"
-ROLE_FILE="${REPO_ROOT}/clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/vault-snapshot-backup.json"
+# CP-4 S4a: the vault-snapshot-backup policy/role are operator-MANAGED; the
+# single source of truth is the redhatcop CR pair under vault-config/managed/.
+# This break-glass DR path (Vault rebuilt before the operator is running)
+# extracts the same content from those CRs — no second copy of the policy.
+POLICY_CR="${REPO_ROOT}/clusters/talos-cluster/apps/vault/vault-config/managed/policy-vault-snapshot-backup.yaml"
+ROLE_CR="${REPO_ROOT}/clusters/talos-cluster/apps/vault/vault-config/managed/role-vault-snapshot-backup.yaml"
 DR_APP_DIR="${REPO_ROOT}/clusters/talos-cluster/apps/dr-backup"
 VAULT_CA_CONFIGMAP="${DR_APP_DIR}/vault-ca-configmap.yaml"
 TOKEN_FILE_DEFAULT="${REPO_ROOT}/../admin-token.json"
@@ -22,6 +26,75 @@ fi
 TMPDIR="$(mktemp -d)"
 PF_PID=""
 VAULT_CA_FILE="${TMPDIR}/vault-ca.crt"
+POLICY_FILE="${TMPDIR}/vault-snapshot-backup.hcl"
+ROLE_FILE="${TMPDIR}/vault-snapshot-backup.role.json"
+
+# Extract the policy HCL + the Vault role payload from the managed CRs. The
+# role projection mirrors the operator's VRole.toMap() write payload so the
+# break-glass apply and the operator converge to the SAME live object.
+extract_from_managed_crs() {
+  python3 - "${POLICY_CR}" "${ROLE_CR}" "${POLICY_FILE}" "${ROLE_FILE}" <<'PY'
+import json
+import pathlib
+import sys
+
+import yaml
+
+policy_cr, role_cr, policy_out, role_out = sys.argv[1:5]
+
+EXPECTED_NAME = "vault-snapshot-backup"
+
+
+def effective_name(doc):
+    # Mirrors the operator's GetPath(): spec.name overrides metadata.name.
+    return (doc.get("spec") or {}).get("name") or doc["metadata"]["name"]
+
+
+policy = yaml.safe_load(pathlib.Path(policy_cr).read_text(encoding="utf-8"))
+assert policy["kind"] == "Policy", policy_cr
+if effective_name(policy) != EXPECTED_NAME:
+    raise SystemExit(
+        f"{policy_cr}: effective Vault name {effective_name(policy)!r} != "
+        f"{EXPECTED_NAME!r} — this script writes the hard-coded path "
+        f"sys/policies/acl/{EXPECTED_NAME} and must not diverge from the CR"
+    )
+pathlib.Path(policy_out).write_text(policy["spec"]["policy"], encoding="utf-8")
+
+role = yaml.safe_load(pathlib.Path(role_cr).read_text(encoding="utf-8"))
+assert role["kind"] == "KubernetesAuthEngineRole", role_cr
+if effective_name(role) != EXPECTED_NAME:
+    raise SystemExit(
+        f"{role_cr}: effective Vault name {effective_name(role)!r} != "
+        f"{EXPECTED_NAME!r} — this script writes the hard-coded path "
+        f"auth/kubernetes/role/{EXPECTED_NAME} and must not diverge from the CR"
+    )
+spec = role["spec"]
+target_ns = (spec.get("targetNamespaces") or {}).get("targetNamespaces")
+if not target_ns:
+    raise SystemExit(
+        f"{role_cr}: expected a static targetNamespaces list (selector roles "
+        "are not managed by this script)"
+    )
+payload = {
+    "bound_service_account_names": spec["targetServiceAccounts"],
+    "bound_service_account_namespaces": target_ns,
+    "alias_name_source": spec.get("aliasNameSource", "serviceaccount_uid"),
+    "token_ttl": spec.get("tokenTTL", 0),
+    "token_max_ttl": spec.get("tokenMaxTTL", 0),
+    "token_policies": spec["policies"],
+    "token_bound_cidrs": spec.get("tokenBoundCIDRs") or [],
+    "token_explicit_max_ttl": spec.get("tokenExplicitMaxTTL", 0),
+    "token_no_default_policy": spec.get("tokenNoDefaultPolicy", False),
+    "token_num_uses": spec.get("tokenNumUses", 0),
+    "token_period": spec.get("tokenPeriod", 0),
+    "token_type": spec.get("tokenType", "default"),
+}
+if spec.get("audience"):
+    payload["audience"] = spec["audience"]
+pathlib.Path(role_out).write_text(json.dumps(payload), encoding="utf-8")
+PY
+}
+extract_from_managed_crs
 
 to_native_path() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi

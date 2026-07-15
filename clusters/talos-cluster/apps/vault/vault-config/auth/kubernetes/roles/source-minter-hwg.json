@@ -1,7 +1,0 @@
-{
-  "bound_service_account_names": ["source-rotator-hwg"],
-  "bound_service_account_namespaces": ["source-rotator"],
-  "token_policies": ["source-minter-hwg"],
-  "token_no_default_policy": true,
-  "token_ttl": 900
-}
