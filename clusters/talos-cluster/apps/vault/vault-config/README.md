@@ -52,10 +52,11 @@ its `targetNamespaceSelector` resolves the selector in Kubernetes at
 onboarding/offboarding, but login for a brand-new tenant namespace depends on
 the operator being alive, and de-label revocation lags if it is down).
 Adopting them as-is would silently REWRITE the live selector binding into a
-static list. They stay capture-only until the owner picks: accept the
-selector→list semantics / patch the operator upstream / keep them in the
-out-of-band set. Their captures are applied live already; treat the JSON files
-as DR material.
+static list. **Owner decision 2026-07-15: DEFER, booked as [TD-0008](../../../../../docs/tech-debt.md)** —
+the fix to explore is an upstream `vault-config-operator` selector-passthrough
+patch (no self-signed fork image); the selector→static-list rewrite is
+rejected. They stay capture-only meanwhile; their captures are applied live
+already, so treat the JSON files as DR material.
 
 ## Adoption verification
 
