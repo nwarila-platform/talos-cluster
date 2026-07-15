@@ -96,6 +96,7 @@
 !/clusters/talos-cluster/apps/vault-config-operator/release/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/apps/vault-config-operator/release/ciliumnetworkpolicy-egress.yaml
 !/clusters/talos-cluster/apps/vault-config-operator/release/ciliumnetworkpolicy-webhook-ingress.yaml
+!/clusters/talos-cluster/apps/vault-config-operator/release/serviceaccount-vault.yaml
 !/clusters/talos-cluster/apps/vault-restore-validator/
 !/clusters/talos-cluster/apps/vault-restore-validator/README.md
 !/clusters/talos-cluster/apps/vault-restore-validator/kustomization.yaml
@@ -350,6 +351,8 @@
 !/scripts/check-live-vault-config-invariants.sh
 !/scripts/check-vault-policy-no-escalation.py
 !/scripts/check-vault-policy-no-escalation.selftest.py
+!/scripts/check-vault-config-operator-bootstrap-invariants.py
+!/scripts/check-vault-config-operator-bootstrap-invariants.selftest.py
 !/scripts/check-vault-restore-validator-boundaries.sh
 !/scripts/check-vault-restore-validator-boundaries.selftest.py
 !/scripts/check-workflow-health.py
@@ -359,6 +362,8 @@
 !/scripts/dr/
 !/scripts/dr/apply-vault-snapshot-backup-live.sh
 !/scripts/dr/nfs-interim-setup.sh
+!/scripts/vault-config/
+!/scripts/vault-config/seed-operator-bootstrap.sh
 !/scripts/sync-deploy-repos.sh
 !/scripts/backup-handoff-ledger.sh
 !/scripts/s3-sync.sh
@@ -420,6 +425,7 @@
 !/docs/decision-records/repo/0025-deliberate-transparency-public-repo.md
 !/docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md
 !/docs/decision-records/repo/0027-fail-closed-first-party-image-admission.md
+!/docs/decision-records/repo/0028-vault-config-operator-bootstrap-identity.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/

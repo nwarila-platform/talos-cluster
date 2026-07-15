@@ -234,6 +234,12 @@ jobs:
       - name: "Guard self-test: Vault policy escalation guard bites"
         run: python3 scripts/check-vault-policy-no-escalation.selftest.py
 
+      - name: "Guard: vault-config-operator bootstrap identity invariants"
+        run: python3 scripts/check-vault-config-operator-bootstrap-invariants.py
+
+      - name: "Guard self-test: bootstrap-invariant guard bites"
+        run: python3 scripts/check-vault-config-operator-bootstrap-invariants.selftest.py
+
       - name: "Guard: Vault restore-validator boundary"
         run: bash scripts/check-vault-restore-validator-boundaries.sh
 
