@@ -760,6 +760,9 @@ The cluster has multiple layers of security:
 | **Renovate** | Automatically proposes dependency updates under the repository Renovate policy. |
 | **S3 + KMS encryption** | All secrets are encrypted at rest using AWS KMS when stored in S3. |
 | **Kubelet cert auto-approval** | Only kubelet serving certificates are auto-approved — not arbitrary certificate requests. |
+| **SOPS + age** | Kubernetes Secret payload fields are encrypted in Git with SOPS and age; only the in-cluster age key (and its S3-escrowed copy) can decrypt them, which is why this repository can safely be public. |
+| **Vault** | Central secret management with AWS-KMS auto-unseal and an internal PKI; workloads receive credentials at runtime through the Vault Secrets Operator instead of embedding them. |
+| **Image-signature admission** | Kyverno verifies container image signatures at admission; first-party images are cosign-signed and admission-verified (fail-closed enforcement is currently in interim audit mode pending a Kyverno upgrade), while upstream families are audited. |
 
 ---
 
