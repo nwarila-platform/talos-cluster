@@ -13,6 +13,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0005 | Stage-1 offsite/offline copy remains future work | Open | Medium |
 | TD-0006 | Backup-target transport and share-at-rest crypto remain accepted residuals | Open | Low |
 | TD-0007 | NAS administrative and appliance isolation trust boundary accepted residuals | Open | Low |
+| TD-0008 | Selector-bound Vault auth roles cannot be operator-reconciled (vault-config-operator CRD gap) | Open | Medium |
 
 ---
 
@@ -333,6 +334,78 @@ share, a 100 GB quota, and per-host NFS export scoping for the Talos nodes.
 
 ### References
 [ADR-0021]; [DR Stage 1 limitations].
+
+---
+
+## TD-0008 — Selector-bound Vault auth roles cannot be operator-reconciled
+
+**Opened:** 2026-07-15 · **Status:** Open · **Priority:** Medium ·
+**See:** CP-4 design §S4b (`_handoff/CP4-VAULT-CONFIG-RECONCILER-DESIGN.md`); PR #311 (S4a).
+
+### Gap
+CP-4 S4a made the managed Vault config Flux-reconciled via the redhat-cop
+vault-config-operator, but adopted only the **6 policies + 2 static-namespace
+roles**. The other **3 k8s-auth roles** — `tenant`, `vso-org-pull-hwg`,
+`vso-org-pull-nwp` — bind tenant namespaces through Vault's
+`bound_service_account_namespace_selector` (a **login-time**, Vault-side label
+match). They remain **capture-only** (`apps/vault/vault-config/auth/kubernetes/roles/*.json`),
+re-applied by a hand-typed `vault write` on rebuild — a residual zero-manual
+([[zero_manual_north_star]]) violation scoped to exactly these 3 objects.
+
+### Root cause (precise)
+`redhat-cop/vault-config-operator` `KubernetesAuthEngineRole` **v0.8.49 cannot
+express** `bound_service_account_namespace_selector`. Its nearest field,
+`spec.targetNamespaces.targetNamespaceSelector`, resolves the selector **in
+Kubernetes at reconcile time** (the controller watches Namespaces) and writes a
+**static** `bound_service_account_namespaces` list. Because a Vault role write is
+a full-document upsert, adopting these roles as-is would **silently replace the
+live login-time selector binding with a reconcile-time static list** — a
+different semantics, not an adoption.
+
+### Why deferred (owner decision 2026-07-15)
+- Accepting the selector→static-list rewrite (below, option 2) trades a
+  Vault-native login-time binding for one that depends on **operator liveness**
+  (a brand-new tenant namespace can't log in until the operator reconciles the
+  list) and **lags de-label revocation** if the operator is down — a reliability
+  regression the owner declined ([[feedback_reliability_zero_compromises]]).
+- The clean fix is an **upstream patch** to the operator, but the owner will not
+  self-sign a forked operator image (*"we are NOT going to re-sign someone
+  else's items"*), and an upstream contribution has an indefinite merge timeline.
+- So: **book the gap as real debt now; explore the upstream fix later.**
+
+### Current state + impact (why Medium, not High)
+**No functional impact today** — the 3 roles are applied and working live; VSO
+tenant secret delivery is healthy. The debt is that these 3 objects are (a) not
+rebuild-reproducible without a manual `vault write`, and (b) drift to them is
+invisible (nothing reconciles them). Bounded: they are tenant/org-pull **auth
+bindings**, not policy **content** (a compromised git commit cannot escalate
+through them), and the manual rebuild step is documented DR material. Not Low
+because it is a live, ongoing zero-manual violation on the tenant auth path.
+
+### Options to close
+1. **(Explore — owner-preferred direction) Upstream passthrough patch.** Add
+   `bound_service_account_namespace_selector` passthrough to the operator's
+   `VRole` / `toMap()` / CRD schema (+ validation + tests) in
+   `redhat-cop/vault-config-operator`; once it ships in an official release,
+   adopt the 3 roles byte-identically (verify with
+   `scripts/vault-config/verify-adoption-parity.py`). **No self-signed fork
+   image** — consume an upstream release only.
+2. Accept the selector→static-list semantics with a documented reliability
+   residual (operator-liveness-dependent new-tenant login). **Rejected**
+   2026-07-15.
+3. Keep the 3 roles out-of-band as a permanent owned exception (bootstrap-class
+   capture, like the `vault-admin` break-glass policy) rather than debt —
+   fallback if the upstream path never moves.
+
+### Closure criteria
+- The 3 selector roles are Flux-reconciled with their live
+  `bound_service_account_namespace_selector` binding preserved **byte-identically**
+  (parity-verified), with **no** manual `vault write` on rebuild and **no** new
+  operator-liveness dependency introduced for tenant login.
+
+### References
+CP-4 design §S4b; [[vault_config_reconciler_oss_root_equiv]]; PR #311;
+`clusters/talos-cluster/apps/vault/vault-config/README.md` (S4b section).
 
 ---
 
