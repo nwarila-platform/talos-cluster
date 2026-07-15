@@ -1,5 +1,18 @@
 # ClusterPolicy: verify-image-signatures-enforced
 #
+# ⚠️ INTERIM AUDIT (owner decision 2026-07-15) — TEMPORARILY NON-BLOCKING.
+# Kyverno v1.18's keyless verification depends on an ONLINE Rekor query on the
+# admission hot path, which is episodically flaky and DID brick first-party pod
+# creation (Vault + the hwg tenant) on 2026-07-14 during a Rekor failure window.
+# v1.18 has no offline-bundle-verification path. So this policy is temporarily
+# Audit (failureAction) + Ignore (failurePolicy) — it still VERIFIES and reports
+# via PolicyReports, but never blocks. Integrity is meanwhile carried by
+# digest-pinning (immutable image bytes) + the planned CI verify-at-ingest.
+# RESTORE fail-closed (failureAction: Enforce, failurePolicy: Fail, and flip the
+# guard's FIRST_PARTY_ENFORCEMENT_MODE back) AFTER the Kyverno v1.18→v1.19+
+# upgrade lands offline bundle verification. Tracked in vault_live_admin_lockout.
+#
+# Original CP-1 fail-closed rationale (restore target):
 # Fail-closed cosign keyless signature verification for first-party images.
 # Owner decision 2026-07-13: fail closed for first-party images everywhere the
 # Kyverno admission webhook applies, including deploy-vault. The accepted
@@ -33,10 +46,10 @@ metadata:
       API-server matchConditions so unrelated pods do not enter this
       availability boundary.
 spec:
-  validationFailureAction: Enforce
+  validationFailureAction: Audit # INTERIM (restore: Enforce) — see header
   background: true
   webhookConfiguration:
-    failurePolicy: Fail
+    failurePolicy: Ignore # INTERIM (restore: Fail) — see header
     timeoutSeconds: 30
     matchConditions:
       - name: first-party-image-present
@@ -65,7 +78,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nwarila-platform/*"
-          failureAction: Enforce
+          failureAction: Audit # INTERIM (restore: Enforce) — see header
           mutateDigest: false
           required: true
           attestors:
@@ -84,7 +97,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nwarila/*"
-          failureAction: Enforce
+          failureAction: Audit # INTERIM (restore: Enforce) — see header
           mutateDigest: false
           required: true
           attestors:
@@ -107,7 +120,7 @@ spec:
             allowInsecureRegistry: false
             secrets:
               - ghcr-pull
-          failureAction: Enforce
+          failureAction: Audit # INTERIM (restore: Enforce) — see header
           mutateDigest: false
           required: true
           attestors:

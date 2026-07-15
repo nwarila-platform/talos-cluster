@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Fail if first-party GHCR images are not signature-Enforced by Kyverno.
+"""Fail if first-party GHCR images are not signature-verified by Kyverno.
 
 This guard scans raw YAML files under the configured roots, including standalone
 trees such as apps/vault/restore-drill/ that are intentionally not rendered by
 Flux validation.
+
+The required verifyImages action is parameterized by FIRST_PARTY_ENFORCEMENT_MODE
+(currently the interim ``Audit`` — see that constant). Restore it to ``Enforce``
+after the Kyverno upgrade lands offline bundle verification; every "Enforce" in
+the prose/messages below tracks that constant.
 
 Deliberate scope:
 - Extract inline ``image:`` string scalars.
@@ -15,8 +20,8 @@ Deliberate scope:
   not concrete deployed images.
 - Discover Kyverno Policy/ClusterPolicy ``verifyImages`` blocks and require
   first-party GHCR orgs plus deployed first-party image refs to be covered by
-  effective ``failureAction: Enforce``.
-- Require every Enforce ``verifyImages`` policy to fail closed with the exact
+  the effective FIRST_PARTY_ENFORCEMENT_MODE action.
+- Require the first-party ``verifyImages`` policy to carry the exact
   guard-generated first-party Pod matchConditions expression.
 - Reject fail-closed mutate/verifyImages policies with empty matchConditions
   because Kyverno places them in the shared cluster-wide fail webhook.
@@ -84,6 +89,22 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
         "rekor.url": "https://rekor.sigstore.dev",
     },
 }
+# INTERIM AUDIT (2026-07-15). Kyverno v1.18's keyless verification has no offline
+# bundle path and its online-Rekor dependency episodically BRICKED first-party pod
+# creation (Vault + the hwg tenant) on 2026-07-14. So first-party image-signature
+# rules are TEMPORARILY non-blocking: failureAction Audit + failurePolicy Ignore.
+# This guard still fully verifies the rule SHAPE (canonical attestors,
+# matchConditions, first-party scoping, background, exempt-ns, required, no
+# skip/exclude/preconditions) — it only relaxes the action + failurePolicy it
+# expects. RESTORE both constants below (Enforce / Fail) after the Kyverno
+# v1.18->v1.19+ upgrade lands offline verification. See vault_live_admin_lockout.
+FIRST_PARTY_ENFORCEMENT_MODE = "Audit"  # restore-target: "Enforce"
+FIRST_PARTY_REQUIRED_FAILURE_POLICY = "Ignore"  # restore-target: "Fail"
+# The dedicated first-party signature policy. Scoping the first-party checks by
+# this name (not just the action) keeps the third-party Audit policy
+# (verify-image-signatures) out of the first-party enforcement checks now that
+# first-party is also Audit during the interim.
+FIRST_PARTY_ENFORCED_POLICY_NAME = "verify-image-signatures-enforced"
 EXPECTED_ENFORCE_RULE_MATCH = {"any": [{"resources": {"kinds": ["Pod"]}}]}
 IMAGE_SIGNATURE_POLICY_NAMES = (
     "verify-image-signatures",
@@ -198,7 +219,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Scan raw YAML for first-party GHCR image refs that are not covered "
-            "by Kyverno verifyImages rules with effective failureAction: Enforce."
+            "by Kyverno verifyImages rules with the effective "
+            "FIRST_PARTY_ENFORCEMENT_MODE action (interim: Audit)."
         )
     )
     parser.add_argument(
@@ -824,13 +846,20 @@ def find_violations(
 ) -> list[str]:
     findings: list[str] = []
     if not enforce_blocks:
-        findings.append("no Enforce image-signature policy found")
+        findings.append(
+            "no first-party image-signature policy with failureAction: "
+            f"{FIRST_PARTY_ENFORCEMENT_MODE} found"
+        )
 
     canonical_expression = canonical_first_party_match_expression_normalized()
     enforce_policies = [
         policy
         for policy in policies
-        if any(block.action == "Enforce" for block in policy.verify_images_blocks)
+        if policy.name == FIRST_PARTY_ENFORCED_POLICY_NAME
+        and any(
+            block.action == FIRST_PARTY_ENFORCEMENT_MODE
+            for block in policy.verify_images_blocks
+        )
     ]
 
     image_signature_policies = {
@@ -865,11 +894,12 @@ def find_violations(
 
     for policy in enforce_policies:
         policy_ref = f"{display_path(policy.path)}:{policy.line} ({policy.name})"
-        if policy.failure_policy != "Fail":
+        if policy.failure_policy != FIRST_PARTY_REQUIRED_FAILURE_POLICY:
             found = policy.failure_policy if policy.failure_policy is not None else "<unset>"
             findings.append(
-                "Enforce verifyImages policy must set "
-                f"webhookConfiguration.failurePolicy: Fail: {policy_ref} "
+                "first-party verifyImages policy must set "
+                "webhookConfiguration.failurePolicy: "
+                f"{FIRST_PARTY_REQUIRED_FAILURE_POLICY}: {policy_ref} "
                 f"(found {found})"
             )
 
@@ -973,13 +1003,15 @@ def find_violations(
         probe = org_probe(org_glob)
         if not any(block_covers(block, probe) for block in enforce_blocks):
             findings.append(
-                f"first-party org {org_glob} has no Enforce signature rule"
+                f"first-party org {org_glob} has no "
+                f"{FIRST_PARTY_ENFORCEMENT_MODE} signature rule"
             )
 
     for ref in sorted(first_party_refs, key=lambda item: (display_path(item.path), item.line)):
         if not any(block_covers(block, ref.name) for block in enforce_blocks):
             findings.append(
-                "first-party image not signature-Enforced: "
+                "first-party image not signature-covered "
+                f"({FIRST_PARTY_ENFORCEMENT_MODE}): "
                 f"{display_path(ref.path)}:{ref.line} ({ref.name})"
             )
 
@@ -1064,7 +1096,10 @@ def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
         block for policy in policies for block in policy.verify_images_blocks
     ]
     enforce_blocks = [
-        block for block in verify_images_blocks if block.action == "Enforce"
+        block
+        for block in verify_images_blocks
+        if block.action == FIRST_PARTY_ENFORCEMENT_MODE
+        and block.policy_name == FIRST_PARTY_ENFORCED_POLICY_NAME
     ]
     findings = find_violations(
         first_party_refs,
@@ -1097,8 +1132,9 @@ def print_findings(findings: list[str]) -> None:
 def print_pass(result: GuardResult) -> None:
     print(
         f"PASS: {len(result.first_party_refs)} first-party image refs covered "
-        "by Enforce signature rules; "
-        f"{len(FIRST_PARTY_ORG_GLOBS)} first-party orgs Enforce-locked across "
+        f"by {FIRST_PARTY_ENFORCEMENT_MODE} signature rules; "
+        f"{len(FIRST_PARTY_ORG_GLOBS)} first-party orgs "
+        f"{FIRST_PARTY_ENFORCEMENT_MODE}-locked across "
         f"{len(result.paths)} YAML files."
     )
     print("Covered first-party image refs:")
@@ -1109,7 +1145,7 @@ def print_pass(result: GuardResult) -> None:
             f"  - {display_path(ref.path)}:{ref.line} "
             f"({ref.source}: {ref.name})"
         )
-    print("Enforce-locked first-party org globs:")
+    print(f"{FIRST_PARTY_ENFORCEMENT_MODE}-locked first-party org globs:")
     for org_glob in FIRST_PARTY_ORG_GLOBS:
         print(f"  - {org_glob}")
 
