@@ -112,8 +112,8 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 | **Vault** | 2.0.1 | HashiCorp Vault (UBI9 first-party build) providing central secret storage, an internal PKI, and AWS-KMS auto-unseal. | Backs tenant secret delivery, internal certificates, and platform credentials. |
 | **cert-manager** | v1.21.0 | Issues and renews Kubernetes TLS certificates through cert-manager Issuers/ClusterIssuers. | Automates certificate lifecycle instead of managing certificates by hand. |
 | **vault-config-operator** | v0.8.49 | Reconciles Vault ACL policies and Kubernetes-auth roles from Git (the redhat-cop operator). | Makes the managed Vault configuration a Flux-reconciled path instead of manual `vault write`. |
-
-_(Vault Secrets Operator and the Actions Runner Controller are also installed; their rows are a separate follow-up pending a live version check.)_
+| **Vault Secrets Operator (VSO)** | 1.4.0 | Syncs Vault secrets into native Kubernetes Secrets for tenant and platform consumers. | Delivers Vault-managed credentials to workloads without embedding static secrets. |
+| **Actions Runner Controller (ARC)** | 0.14.2 | Runs self-hosted GitHub Actions runners as ephemeral in-cluster pods (runner scale sets). | Executes CI/CD jobs that need private-cluster access without a persistent runner. |
 
 ## Repository Layout
 
