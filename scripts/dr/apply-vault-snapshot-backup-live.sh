@@ -42,12 +42,32 @@ import yaml
 
 policy_cr, role_cr, policy_out, role_out = sys.argv[1:5]
 
+EXPECTED_NAME = "vault-snapshot-backup"
+
+
+def effective_name(doc):
+    # Mirrors the operator's GetPath(): spec.name overrides metadata.name.
+    return (doc.get("spec") or {}).get("name") or doc["metadata"]["name"]
+
+
 policy = yaml.safe_load(pathlib.Path(policy_cr).read_text(encoding="utf-8"))
 assert policy["kind"] == "Policy", policy_cr
+if effective_name(policy) != EXPECTED_NAME:
+    raise SystemExit(
+        f"{policy_cr}: effective Vault name {effective_name(policy)!r} != "
+        f"{EXPECTED_NAME!r} — this script writes the hard-coded path "
+        f"sys/policies/acl/{EXPECTED_NAME} and must not diverge from the CR"
+    )
 pathlib.Path(policy_out).write_text(policy["spec"]["policy"], encoding="utf-8")
 
 role = yaml.safe_load(pathlib.Path(role_cr).read_text(encoding="utf-8"))
 assert role["kind"] == "KubernetesAuthEngineRole", role_cr
+if effective_name(role) != EXPECTED_NAME:
+    raise SystemExit(
+        f"{role_cr}: effective Vault name {effective_name(role)!r} != "
+        f"{EXPECTED_NAME!r} — this script writes the hard-coded path "
+        f"auth/kubernetes/role/{EXPECTED_NAME} and must not diverge from the CR"
+    )
 spec = role["spec"]
 target_ns = (spec.get("targetNamespaces") or {}).get("targetNamespaces")
 if not target_ns:
