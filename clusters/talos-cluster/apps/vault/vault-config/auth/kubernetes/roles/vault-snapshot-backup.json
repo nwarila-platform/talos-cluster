@@ -1,8 +1,0 @@
-{
-  "bound_service_account_names": ["dr-backup"],
-  "bound_service_account_namespaces": ["dr-backup"],
-  "token_policies": ["vault-snapshot-backup"],
-  "token_no_default_policy": true,
-  "token_ttl": "15m",
-  "token_max_ttl": "30m"
-}

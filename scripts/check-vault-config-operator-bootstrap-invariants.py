@@ -114,9 +114,39 @@ def check_bootstrap_present_and_out_of_scope(
 
 
 def _managed_names(paths: BootstrapPaths) -> tuple[set[str], set[str]]:
-    policy_names = {p.stem for p in paths.managed_policy_dir.glob("*.hcl")}
+    policy_names = (
+        {p.stem for p in paths.managed_policy_dir.glob("*.hcl")}
+        if paths.managed_policy_dir.is_dir()
+        else set()
+    )
     roles_dir = paths.cluster_root / "apps/vault/vault-config/auth/kubernetes/roles"
     role_names = {p.stem for p in roles_dir.glob("*.json")} if roles_dir.is_dir() else set()
+    # CP-4 S4a: managed objects live as redhatcop CRs (GitOps-reconciled). The
+    # effective Vault object name is spec.name when set, else metadata.name
+    # (mirrors the operator's GetPath()). The operator's own identity is
+    # excluded here — check_identity_never_managed flags it as its own finding
+    # rather than letting it satisfy the bootstrap enumeration.
+    if paths.cluster_root.is_dir():
+        for path in sorted(paths.cluster_root.rglob("*")):
+            if not path.is_file() or path.suffix not in YAML_SUFFIXES:
+                continue
+            for doc in _iter_yaml_docs(path):
+                if doc.get("apiVersion") != "redhatcop.redhat.io/v1alpha1":
+                    continue
+                kind = doc.get("kind")
+                if kind not in {"Policy", "KubernetesAuthEngineRole"}:
+                    continue
+                spec = doc.get("spec") or {}
+                metadata = doc.get("metadata") or {}
+                name = spec.get("name") or metadata.get("name")
+                if not isinstance(name, str) or not name:
+                    continue
+                if name == OPERATOR_IDENTITY_NAME:
+                    continue
+                if kind == "Policy":
+                    policy_names.add(name)
+                else:
+                    role_names.add(name)
     return policy_names, role_names
 
 

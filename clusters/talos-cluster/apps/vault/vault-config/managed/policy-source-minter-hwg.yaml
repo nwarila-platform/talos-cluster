@@ -1,0 +1,30 @@
+# CP-4 S4a — ADOPTED managed Vault ACL policy (redhat-cop vault-config-operator).
+# spec.policy is the BYTE-EXACT live content captured at adoption (2026-07-15),
+# so the operator's first reconcile is a no-op adopt, never a semantic rewrite.
+# Comment/wording improvements to the HCL are deliberate follow-up WRITES, made
+# here (git is the source of truth now — the operator converges live to this).
+# Connection: none (global VAULT_ADDR/VAULT_CACERT on the manager, PR #309).
+# Content policing: scripts/check-vault-policy-no-escalation.py scans this CR's
+# spec.policy (deny-by-default allowlist) — the S0 escalation guard.
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: Policy
+metadata:
+  name: source-minter-hwg
+  namespace: vault-config-operator
+spec:
+  type: acl
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  policy: |
+    # B-apex source-minter (hwg). Reads ONLY the hwg org App key, mints per-repo
+    # contents:read tokens, and writes them to the per-tenant source-auth leaf.
+    # metadata read is required for the kv-v2 cas (check-and-set) version lookup;
+    # it exposes version info only, never the token value, and not other provisioned secrets.
+    path "secret/data/platform/org-pull/hwg/gitops-source-auth" { capabilities = ["read"] }
+    path "secret/metadata/+/provisioned/source-auth"            { capabilities = ["read"] }
+    path "secret/data/+/provisioned/source-auth"                { capabilities = ["create", "update"] }
+    path "auth/token/renew-self"  { capabilities = ["update"] }
+    path "auth/token/lookup-self" { capabilities = ["read"] }

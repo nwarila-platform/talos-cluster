@@ -1,0 +1,35 @@
+# CP-4 S4a — ADOPTED managed Kubernetes-auth role (redhat-cop
+# vault-config-operator). Field-for-field translation of the live
+# auth/kubernetes/role/source-minter-hwg captured 2026-07-15: every value the
+# operator writes (VRole.toMap: bound SA names/namespaces, alias_name_source,
+# token_ttl/max_ttl, token_policies, token_no_default_policy, plus the
+# CRD-defaulted zeros for bound_cidrs/explicit_max_ttl/num_uses/period and
+# token_type "default") equals the live value, so the reconcile write is
+# value-identical. NOTE (declared): role reconciles are idempotent RE-WRITES,
+# not read-no-ops — the operator's equivalence compare (reflect.DeepEqual of
+# Go-typed desired vs JSON-decoded live) never matches for roles, so it
+# rewrites the same payload each reconcile. Verified harmless: post-write live
+# read equals pre-adoption live read (scripts/vault-config/verify-adoption-parity.py).
+# Connection: none (global VAULT_ADDR/VAULT_CACERT on the manager, PR #309).
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: KubernetesAuthEngineRole
+metadata:
+  name: source-minter-hwg
+  namespace: vault-config-operator
+spec:
+  path: kubernetes
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  targetServiceAccounts:
+    - source-rotator-hwg
+  targetNamespaces:
+    targetNamespaces:
+      - source-rotator
+  policies:
+    - source-minter-hwg
+  aliasNameSource: serviceaccount_uid
+  tokenTTL: 900
+  tokenNoDefaultPolicy: true
