@@ -49,6 +49,9 @@ Runbooks are composite operational how-to documents under ADR-0002.
   fixture behavior.
 - [Technical Debt Register](tech-debt.md) - tracks deliberately deferred gaps,
   including the strict Diataxis quadrant-directory layout deferral in TD-0003.
+- [First-party container inventory](container-inventory.md) - the canonical list
+  of home-built/first-party images (built, planned fold-ins, and wanted
+  not-yet-created repos) with per-image sign-status and supply-chain tier.
 
 ## Architecture Decision Records
 

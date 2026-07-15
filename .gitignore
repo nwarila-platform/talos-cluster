@@ -377,6 +377,7 @@
 !/docs/
 !/docs/README.md
 !/docs/tech-debt.md
+!/docs/container-inventory.md
 !/docs/dr-escrow/
 !/docs/dr-escrow/etcd-snapshot-age-key.sops.yaml
 !/docs/compliance/
