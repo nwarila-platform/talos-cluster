@@ -57,8 +57,16 @@ path "auth/kubernetes/role/vault-server"          { capabilities = ["create", "r
 # (unlike sys/auth, which requires sudo). Scoped to the single mount path.
 path "sys/mounts/pki-int-tcn"      { capabilities = ["create", "read", "update"] }
 path "sys/mounts/pki-int-tcn/tune" { capabilities = ["create", "read", "update"] }
-# Mount-scoped glob: intermediate generate/set-signed, config/urls, issuers, roles.
-path "pki-int-tcn/*"               { capabilities = ["create", "read", "update"] }
+# CONFIGURE-only sub-paths (NOT the whole mount): the operator authors the
+# intermediate CSR/set-signed, the config (urls/crl), issuers, and PKI roles.
+# It is deliberately NOT granted the data/lifecycle plane — no pki-int-tcn/root/*
+# (self-signed root gen; the root is the offline air-gapped CA per ADR cert
+# architecture), no issue/sign/revoke/tidy (issuance is vault-server's job).
+path "pki-int-tcn/intermediate/*" { capabilities = ["create", "read", "update"] }
+path "pki-int-tcn/config/*"       { capabilities = ["create", "read", "update"] }
+path "pki-int-tcn/issuers/*"      { capabilities = ["create", "read", "update"] }
+path "pki-int-tcn/issuer/*"       { capabilities = ["create", "read", "update"] }
+path "pki-int-tcn/roles/*"        { capabilities = ["create", "read", "update"] }
 
 # --- S3 smoke-test throwaway objects (delete-capable to prove the full
 #     create/adopt/delete lifecycle; removable after the S3 GO sign-off) ---

@@ -38,7 +38,17 @@ except ImportError as exc:  # pragma: no cover - CI dependency
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATOR_IDENTITY_NAME = "vault-config-operator"
-ROOT_PATHS = {"*", "/", "/*", "sys/*", "auth/*"}
+# Compared against S0-normalized paths (leading slash stripped), so `path "/"`
+# and `path ""` both normalize to "" and `path "/*"` to "*".
+ROOT_PATHS = {"", "*", "sys/*", "auth/*", "identity/*"}
+MANAGED_POLICY_PREFIX = "sys/policies/acl/"
+MANAGED_ROLE_PREFIX = "auth/kubernetes/role/"
+# Forward-looking managed objects that the operator will create later (S5) — not
+# yet a file in the managed tree, but allowed in the bootstrap enumeration.
+FORWARD_LOOKING_NAMES = {"vault-server"}
+# Throwaway S3 smoke objects: the only names allowed to carry `delete` before
+# prune is armed (S7). Any managed-plane path containing this marker is smoke.
+SMOKE_MARKER = "smoke"
 YAML_SUFFIXES = {".yaml", ".yml"}
 KUSTOMIZATION_NAMES = {"kustomization.yaml", "kustomization.yml"}
 REFERENCE_KEYS = ("resources", "components", "bases")
@@ -103,7 +113,30 @@ def check_bootstrap_present_and_out_of_scope(
         )
 
 
-def check_bootstrap_no_sudo(paths: BootstrapPaths, findings: list[str], s0) -> None:
+def _managed_names(paths: BootstrapPaths) -> tuple[set[str], set[str]]:
+    policy_names = {p.stem for p in paths.managed_policy_dir.glob("*.hcl")}
+    roles_dir = paths.cluster_root / "apps/vault/vault-config/auth/kubernetes/roles"
+    role_names = {p.stem for p in roles_dir.glob("*.json")} if roles_dir.is_dir() else set()
+    return policy_names, role_names
+
+
+def check_bootstrap_policy_content(
+    paths: BootstrapPaths, findings: list[str], s0
+) -> None:
+    """Content-level checks on the bootstrap policy (design §7 + the paradox).
+
+    The bootstrap policy is deliberately outside the S0 managed-policy content
+    guard, so THIS is the only guard on what it grants. It must:
+      - be sudo-free and never grant a root/wildcard path (incl. `path "/"`);
+      - never grant a path that COVERS its own identity (self-escalation);
+      - on the management plane (sys/policies/acl, auth/kubernetes/role) use
+        EXACT names only (no wildcard) and only names that are managed-in-git,
+        forward-looking (vault-server), or throwaway *-smoke;
+      - enumerate EVERY managed policy/role name (else the operator cannot adopt
+        it — a runtime break);
+      - grant `delete` ONLY on throwaway *-smoke paths (no live-object delete
+        until prune is armed in S7).
+    """
     if not paths.bootstrap_policy.is_file():
         return
     source = s0.PolicySource(
@@ -115,17 +148,80 @@ def check_bootstrap_no_sudo(paths: BootstrapPaths, findings: list[str], s0) -> N
     except s0.GuardUsageError as exc:
         findings.append(f"bootstrap policy does not parse as Vault HCL: {exc}")
         return
+
+    policy_names, role_names = _managed_names(paths)
+    self_policy = f"{MANAGED_POLICY_PREFIX}{OPERATOR_IDENTITY_NAME}"
+    self_role = f"{MANAGED_ROLE_PREFIX}{OPERATOR_IDENTITY_NAME}"
+    seen_policy: set[str] = set()
+    seen_role: set[str] = set()
+
     for stanza in stanzas:
+        norm = s0.normalize_vault_path(stanza.path)
         caps = {c.lower() for c in stanza.capabilities}
+        where = f"path {stanza.path!r} line {stanza.line}"
+
         if "sudo" in caps:
             findings.append(
-                f"bootstrap policy grants sudo (path {stanza.path!r} line "
-                f"{stanza.line}); the bootstrap identity must be sudo-free"
+                f"bootstrap policy grants sudo ({where}); it must be sudo-free"
             )
-        if s0.normalize_vault_path(stanza.path) in ROOT_PATHS:
+        if norm in ROOT_PATHS:
             findings.append(
-                f"bootstrap policy grants a root/wildcard path {stanza.path!r} "
-                f"(line {stanza.line}); it must be path-scoped"
+                f"bootstrap policy grants a root/wildcard path ({where}); it "
+                "must be path-scoped"
+            )
+        # Self-escalation: any path that COVERS the operator's own identity.
+        if s0.covers(stanza.path, self_policy) or s0.covers(stanza.path, self_role):
+            findings.append(
+                f"bootstrap policy grants a path that COVERS its own identity "
+                f"({OPERATOR_IDENTITY_NAME}) — the operator could rewrite its own "
+                f"policy/role and self-escalate ({where})"
+            )
+        # delete only on throwaway smoke objects.
+        if "delete" in caps and SMOKE_MARKER not in norm:
+            findings.append(
+                f"bootstrap policy grants delete on a non-smoke path ({where}); "
+                "delete on a live object is prohibited until prune is armed (S7)"
+            )
+        # Management-plane exactness + known-name.
+        for prefix, allowed, seen in (
+            (MANAGED_POLICY_PREFIX, policy_names, seen_policy),
+            (MANAGED_ROLE_PREFIX, role_names, seen_role),
+        ):
+            if not norm.startswith(prefix):
+                continue
+            name = norm[len(prefix):]
+            if not name or "*" in name or "+" in name:
+                findings.append(
+                    f"bootstrap policy uses a non-exact/wildcard management-plane "
+                    f"path ({where}); exact enumeration is required so the grant "
+                    "cannot silently cover an unmanaged object"
+                )
+                continue
+            if name == OPERATOR_IDENTITY_NAME:
+                continue  # already flagged by the self-reference check
+            if SMOKE_MARKER in name:
+                continue  # throwaway; permitted
+            if name not in allowed and name not in FORWARD_LOOKING_NAMES:
+                findings.append(
+                    f"bootstrap policy grants {prefix}{name} which is not a "
+                    f"managed object in git ({where}) — drift/over-grant"
+                )
+            seen.add(name)
+
+    # Enumeration completeness: every managed name must be granted.
+    for name in sorted(policy_names):
+        if name not in seen_policy:
+            findings.append(
+                f"managed policy {name!r} has no bootstrap "
+                f"{MANAGED_POLICY_PREFIX}{name} grant — the operator could not "
+                "adopt it (S4 runtime break)"
+            )
+    for name in sorted(role_names):
+        if name not in seen_role:
+            findings.append(
+                f"managed role {name!r} has no bootstrap "
+                f"{MANAGED_ROLE_PREFIX}{name} grant — the operator could not "
+                "adopt it (S4 runtime break)"
             )
 
 
@@ -149,6 +245,10 @@ def check_identity_never_managed(paths: BootstrapPaths, findings: list[str]) -> 
         )
     if not paths.cluster_root.is_dir():
         return
+    # Assumption: the operator's CRDs are redhatcop.redhat.io/v1alpha1 and the
+    # only kinds that write sys/policies/acl/* or auth/<mount>/role/* are Policy
+    # and KubernetesAuthEngineRole. Revisit if the operator bumps its API version
+    # or adds a new config-writing kind.
     for path in sorted(paths.cluster_root.rglob("*")):
         if not path.is_file() or path.suffix not in YAML_SUFFIXES:
             continue
@@ -205,7 +305,7 @@ def evaluate(root: Path, s0) -> list[str]:
     paths = paths_for_root(root)
     findings: list[str] = []
     check_bootstrap_present_and_out_of_scope(paths, findings)
-    check_bootstrap_no_sudo(paths, findings, s0)
+    check_bootstrap_policy_content(paths, findings, s0)
     check_identity_never_managed(paths, findings)
     check_bootstrap_never_flux_applied(paths, findings)
     return findings

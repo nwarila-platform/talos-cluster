@@ -61,7 +61,7 @@ read_admin_token() {
     echo "ERROR: set VAULT_TOKEN or VAULT_TOKEN_FILE; default token file not found" >&2
     exit 1
   fi
-  python - "${token_file}" <<'PY'
+  python3 - "${token_file}" <<'PY'
 import json, pathlib, sys
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip()
 try:
@@ -85,7 +85,7 @@ PY
 }
 
 write_vault_ca_file() {
-  python - "$(to_native_path "${VAULT_CA_CONFIGMAP}")" "$(to_native_path "${VAULT_CA_FILE}")" <<'PY'
+  python3 - "$(to_native_path "${VAULT_CA_CONFIGMAP}")" "$(to_native_path "${VAULT_CA_FILE}")" <<'PY'
 import pathlib, sys
 source = pathlib.Path(sys.argv[1]); target = pathlib.Path(sys.argv[2])
 lines = source.read_text(encoding="utf-8").splitlines()
@@ -107,7 +107,7 @@ PY
 }
 
 pick_port() {
-  python - <<'PY'
+  python3 - <<'PY'
 import socket
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])
@@ -120,7 +120,7 @@ vault_api() {
   VAULT_TOKEN="${ADMIN_TOKEN}" \
   VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY}" \
   VAULT_CACERT="$(to_native_path "${VAULT_CA_FILE}")" \
-  python - "${method}" "${path}" "${payload_file}" <<'PY'
+  python3 - "${method}" "${path}" "${payload_file}" <<'PY'
 import json, os, pathlib, ssl, sys, urllib.request
 method, path, payload_file = sys.argv[1], sys.argv[2], sys.argv[3]
 addr = os.environ["VAULT_ADDR"].rstrip("/")
@@ -180,7 +180,7 @@ echo "BOOTSTRAP_POLICY_ROLE_APPLIED_OK"
 # Read back + assert the live policy body equals the authored HCL byte-for-byte.
 vault_api GET "sys/policies/acl/${POLICY_NAME}" >"${TMPDIR}/policy-read.json"
 vault_api GET "auth/kubernetes/role/${ROLE_NAME}" >"${TMPDIR}/role-read.json"
-python - "${POLICY_FILE}" "${TMPDIR}/policy-read.json" <<'PY'
+python3 - "${POLICY_FILE}" "${TMPDIR}/policy-read.json" <<'PY'
 import json, pathlib, sys
 authored = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 live = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -192,7 +192,7 @@ else:
 PY
 
 # Non-secret proof: the live role binds exactly the dedicated SA + namespace.
-python - "${ROLE_FILE}" "${TMPDIR}/role-read.json" <<'PY'
+python3 - "${ROLE_FILE}" "${TMPDIR}/role-read.json" <<'PY'
 import json, pathlib, sys
 authored = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 live = (json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")).get("data") or {})

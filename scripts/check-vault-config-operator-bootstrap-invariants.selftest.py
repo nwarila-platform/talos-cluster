@@ -25,13 +25,15 @@ def load_guard():
 guard = load_guard()
 s0 = guard._load_s0_guard()
 
+# The managed set the fixtures declare: policy "tenant-read" + role "tenant".
 VALID_POLICY = """\
 path "auth/token/renew-self"  { capabilities = ["update"] }
 path "auth/token/lookup-self" { capabilities = ["read"] }
 path "sys/policies/acl/tenant-read" { capabilities = ["create", "read", "update"] }
 path "auth/kubernetes/role/tenant" { capabilities = ["create", "read", "update"] }
 path "sys/mounts/pki-int-tcn" { capabilities = ["create", "read", "update"] }
-path "pki-int-tcn/*" { capabilities = ["create", "read", "update"] }
+path "pki-int-tcn/config/*" { capabilities = ["create", "read", "update"] }
+path "sys/policies/acl/vault-config-operator-smoke" { capabilities = ["create", "read", "update", "delete"] }
 """
 
 VALID_ROLE = """\
@@ -51,13 +53,14 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def build_valid_tree(root: Path) -> None:
+def build_valid_tree(root: Path, policy: str = VALID_POLICY) -> None:
     paths = guard.paths_for_root(root)
-    write(paths.bootstrap_policy, VALID_POLICY)
+    write(paths.bootstrap_policy, policy)
     write(paths.bootstrap_role, VALID_ROLE)
-    # a benign managed policy so the managed dir exists and is scanned clean
     write(paths.managed_policy_dir / "tenant-read.hcl",
           'path "secret/data/x" { capabilities = ["read"] }\n')
+    write(paths.cluster_root / "apps/vault/vault-config/auth/kubernetes/roles/tenant.json",
+          '{"bound_service_account_names": ["vault-client"]}\n')
 
 
 def case_clean(root: Path) -> None:
@@ -70,15 +73,67 @@ def case_missing_policy(root: Path) -> None:
 
 
 def case_grants_sudo(root: Path) -> None:
-    build_valid_tree(root)
-    p = guard.paths_for_root(root).bootstrap_policy
-    write(p, VALID_POLICY + 'path "sys/mounts/pki-int-tcn/tune" { capabilities = ["read", "sudo"] }\n')
+    build_valid_tree(
+        root, VALID_POLICY + 'path "sys/mounts/pki-int-tcn/tune" { capabilities = ["read", "sudo"] }\n'
+    )
 
 
-def case_wildcard_path(root: Path) -> None:
+def case_wildcard_root_path(root: Path) -> None:
+    build_valid_tree(root, VALID_POLICY + 'path "*" { capabilities = ["read"] }\n')
+
+
+def case_root_slash(root: Path) -> None:
+    # BLOCKING regression (auditor B #2): `path "/"` normalizes to "" and must
+    # still be caught as a root grant.
+    build_valid_tree(root, VALID_POLICY + 'path "/" { capabilities = ["read"] }\n')
+
+
+def case_self_grant_policy(root: Path) -> None:
+    # BLOCKING (auditor B #1): exact self-policy write → self-escalation.
+    build_valid_tree(
+        root, VALID_POLICY + 'path "sys/policies/acl/vault-config-operator" { capabilities = ["create", "update"] }\n'
+    )
+
+
+def case_self_grant_role(root: Path) -> None:
+    build_valid_tree(
+        root, VALID_POLICY + 'path "auth/kubernetes/role/vault-config-operator" { capabilities = ["create", "update"] }\n'
+    )
+
+
+def case_self_grant_policy_wildcard(root: Path) -> None:
+    # `sys/policies/acl/*` covers its own policy — the wildcard self-escalation.
+    build_valid_tree(
+        root, VALID_POLICY + 'path "sys/policies/acl/*" { capabilities = ["create", "update"] }\n'
+    )
+
+
+def case_mgmt_plane_wildcard_role(root: Path) -> None:
+    build_valid_tree(
+        root, VALID_POLICY + 'path "auth/kubernetes/role/*" { capabilities = ["create", "update"] }\n'
+    )
+
+
+def case_over_grant_unmanaged(root: Path) -> None:
+    build_valid_tree(
+        root, VALID_POLICY + 'path "sys/policies/acl/not-a-real-policy" { capabilities = ["create", "read", "update"] }\n'
+    )
+
+
+def case_missing_enumeration(root: Path) -> None:
+    # A managed policy file exists that the bootstrap does NOT enumerate.
     build_valid_tree(root)
-    p = guard.paths_for_root(root).bootstrap_policy
-    write(p, VALID_POLICY + 'path "*" { capabilities = ["create", "read", "update"] }\n')
+    mgd = guard.paths_for_root(root).managed_policy_dir
+    write(mgd / "extra-managed.hcl", 'path "secret/data/y" { capabilities = ["read"] }\n')
+
+
+def case_delete_on_real_path(root: Path) -> None:
+    # `delete` on a real (non-smoke) managed path — premature prune-arming.
+    policy = VALID_POLICY.replace(
+        'path "sys/policies/acl/tenant-read" { capabilities = ["create", "read", "update"] }',
+        'path "sys/policies/acl/tenant-read" { capabilities = ["create", "read", "update", "delete"] }',
+    )
+    build_valid_tree(root, policy)
 
 
 def case_identity_managed_hcl(root: Path) -> None:
@@ -115,6 +170,23 @@ def case_identity_kaer_cr(root: Path) -> None:
     ))
 
 
+def case_identity_cr_specname_bypass(root: Path) -> None:
+    # Regression lock (auditor B #3): innocuous metadata.name but spec.name is
+    # the operator identity — must still be caught.
+    build_valid_tree(root)
+    cr = guard.paths_for_root(root).cluster_root / "apps/foo/sneaky.yaml"
+    write(cr, (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: Policy\n"
+        "metadata:\n"
+        "  name: totally-innocuous\n"
+        "spec:\n"
+        "  name: vault-config-operator\n"
+        "  policy: |\n"
+        '    path "sys/policies/acl/x" { capabilities = ["create"] }\n'
+    ))
+
+
 def case_bootstrap_in_kustomization(root: Path) -> None:
     build_valid_tree(root)
     bdir = guard.paths_for_root(root).bootstrap_dir
@@ -130,10 +202,19 @@ CASES = [
     ("clean", case_clean, True),
     ("missing-bootstrap-policy", case_missing_policy, False),
     ("bootstrap-grants-sudo", case_grants_sudo, False),
-    ("bootstrap-wildcard-path", case_wildcard_path, False),
+    ("bootstrap-wildcard-root-path", case_wildcard_root_path, False),
+    ("bootstrap-root-slash", case_root_slash, False),
+    ("self-grant-own-policy", case_self_grant_policy, False),
+    ("self-grant-own-role", case_self_grant_role, False),
+    ("self-grant-policy-wildcard", case_self_grant_policy_wildcard, False),
+    ("mgmt-plane-wildcard-role", case_mgmt_plane_wildcard_role, False),
+    ("over-grant-unmanaged", case_over_grant_unmanaged, False),
+    ("missing-enumeration", case_missing_enumeration, False),
+    ("delete-on-real-path", case_delete_on_real_path, False),
     ("identity-as-managed-hcl", case_identity_managed_hcl, False),
     ("identity-as-policy-cr", case_identity_policy_cr, False),
     ("identity-as-kaer-cr", case_identity_kaer_cr, False),
+    ("identity-cr-specname-bypass", case_identity_cr_specname_bypass, False),
     ("bootstrap-referenced-by-kustomization", case_bootstrap_in_kustomization, False),
 ]
 
