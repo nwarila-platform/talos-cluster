@@ -68,12 +68,16 @@ def run_guard(policy_roots: tuple[Path, ...], cr_roots: tuple[Path, ...]) -> Gua
     return GuardRun(rc=rc, stdout=stdout.getvalue(), stderr=stderr.getvalue())
 
 
-def real_policy_fixture(_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
-    return (ROOT / guard.DEFAULT_POLICY_DIR,), ()
+def _default_policy_roots() -> tuple[Path, ...]:
+    # Mirror main(): the DEFAULT .hcl dir is optional — after CP-4 S4a the
+    # managed policies live in redhatcop Policy CRs and the last tracked .hcl
+    # removal deleted the directory. Explicit --policy-root stays strict.
+    root = ROOT / guard.DEFAULT_POLICY_DIR
+    return (root,) if root.exists() else ()
 
 
 def real_tree_fixture(_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
-    return (ROOT / guard.DEFAULT_POLICY_DIR,), (ROOT / guard.DEFAULT_POLICY_CR_ROOT,)
+    return _default_policy_roots(), (ROOT / guard.DEFAULT_POLICY_CR_ROOT,)
 
 
 def policy_path_fixture(
@@ -363,26 +367,52 @@ def main() -> int:
                 False,
             ),
             run_case(
-                "real-current-policies",
+                "real-tree-cr-scan",
                 0,
-                "six managed .hcl files pass with allowlist coverage",
-                real_policy_fixture,
+                "default scan finds the six managed Policy CRs and is clean",
+                real_tree_fixture,
                 (
                     "allowlist-covered",
-                    "source-minter-hwg.hcl",
-                    "tenant-read.hcl",
-                    "tenant-write.hcl",
-                    "vault-snapshot-backup.hcl",
-                    "vso-org-pull-read-hwg.hcl",
-                    "vso-org-pull-read-nwp.hcl",
+                    "Scanned managed Vault policy HCL",
+                    "Policy CR source-minter-hwg",
+                    "Policy CR tenant-read",
+                    "Policy CR tenant-write",
+                    "Policy CR vault-snapshot-backup",
+                    "Policy CR vso-org-pull-read-hwg",
+                    "Policy CR vso-org-pull-read-nwp",
                 ),
             ),
             run_case(
-                "real-tree-cr-scan",
+                "explicit-missing-policy-root-strict",
+                2,
+                "an explicitly passed missing --policy-root stays a tooling error",
+                lambda root: ((root / "does-not-exist",), ()),
+                ("does not exist",),
+            ),
+            run_case(
+                "default-policy-dir-optional",
                 0,
-                "default scan, including Policy CR search, is clean",
-                real_tree_fixture,
-                ("allowlist-covered", "Scanned managed Vault policy HCL"),
+                "empty default policy roots + CR sources scan clean (CP-4 S4a shape)",
+                lambda root: (
+                    (),
+                    (
+                        write_text(
+                            root / "vault/policy-cr.yaml",
+                            """
+                            apiVersion: redhatcop.redhat.io/v1alpha1
+                            kind: Policy
+                            metadata:
+                              name: cr-only
+                            spec:
+                              policy: |
+                                path "auth/token/lookup-self" {
+                                  capabilities = ["read"]
+                                }
+                            """,
+                        ).parent,
+                    ),
+                ),
+                ("allowlist-covered", "Policy CR cr-only"),
             ),
             run_case(
                 "allowlisted-secret-read",

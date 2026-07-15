@@ -1,0 +1,27 @@
+# CP-4 S4a — ADOPTED managed Vault ACL policy (redhat-cop vault-config-operator).
+# spec.policy is the BYTE-EXACT live content captured at adoption (2026-07-15),
+# so the operator's first reconcile is a no-op adopt, never a semantic rewrite.
+# Comment/wording improvements to the HCL are deliberate follow-up WRITES, made
+# here (git is the source of truth now — the operator converges live to this).
+# Connection: none (global VAULT_ADDR/VAULT_CACERT on the manager, PR #309).
+# Content policing: scripts/check-vault-policy-no-escalation.py scans this CR's
+# spec.policy (deny-by-default allowlist) — the S0 escalation guard.
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: Policy
+metadata:
+  name: vault-snapshot-backup
+  namespace: vault-config-operator
+spec:
+  type: acl
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  policy: |
+    # Least-privilege DR snapshot identity - Raft snapshot READ only. NEVER vault-admin.
+    path "sys/storage/raft/snapshot" { capabilities = ["read"] }
+
+    # token_no_default_policy roles need these or VSO/token renewal 403s.
+    path "auth/token/renew-self"  { capabilities = ["update"] }
+    path "auth/token/lookup-self" { capabilities = ["read"] }

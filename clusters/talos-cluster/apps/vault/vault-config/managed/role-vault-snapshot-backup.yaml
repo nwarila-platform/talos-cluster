@@ -1,0 +1,31 @@
+# CP-4 S4a — ADOPTED managed Kubernetes-auth role (redhat-cop
+# vault-config-operator). Field-for-field translation of the live
+# auth/kubernetes/role/vault-snapshot-backup captured 2026-07-15 (see
+# role-source-minter-hwg.yaml for the toMap projection + the declared
+# idempotent-rewrite behavior of role reconciles). Least-privilege DR snapshot
+# identity: Raft snapshot READ only via the vault-snapshot-backup policy,
+# bound to the unforgeable dr-backup SA in dr-backup. NEVER vault-admin.
+# Connection: none (global VAULT_ADDR/VAULT_CACERT on the manager, PR #309).
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: KubernetesAuthEngineRole
+metadata:
+  name: vault-snapshot-backup
+  namespace: vault-config-operator
+spec:
+  path: kubernetes
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  targetServiceAccounts:
+    - dr-backup
+  targetNamespaces:
+    targetNamespaces:
+      - dr-backup
+  policies:
+    - vault-snapshot-backup
+  aliasNameSource: serviceaccount_uid
+  tokenTTL: 900
+  tokenMaxTTL: 1800
+  tokenNoDefaultPolicy: true

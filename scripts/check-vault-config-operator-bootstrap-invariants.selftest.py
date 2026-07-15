@@ -187,6 +187,72 @@ def case_identity_cr_specname_bypass(root: Path) -> None:
     ))
 
 
+def case_clean_cr_only(root: Path) -> None:
+    # CP-4 S4a shape: the managed set expressed ONLY as redhatcop CRs — no
+    # legacy .hcl / .json capture files at all (the .hcl dir does not exist).
+    paths = guard.paths_for_root(root)
+    write(paths.bootstrap_policy, VALID_POLICY)
+    write(paths.bootstrap_role, VALID_ROLE)
+    mgd = paths.cluster_root / "apps/vault/vault-config/managed"
+    write(mgd / "policy-tenant-read.yaml", (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: Policy\n"
+        "metadata:\n"
+        "  name: tenant-read\n"
+        "spec:\n"
+        "  type: acl\n"
+        "  policy: |\n"
+        '    path "secret/data/x" { capabilities = ["read"] }\n'
+    ))
+    write(mgd / "role-tenant.yaml", (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: KubernetesAuthEngineRole\n"
+        "metadata:\n"
+        "  name: tenant\n"
+        "spec:\n"
+        "  path: kubernetes\n"
+        "  policies:\n"
+        "    - tenant-read\n"
+    ))
+
+
+def case_cr_missing_enumeration(root: Path) -> None:
+    # A managed Policy CR exists that the bootstrap does NOT enumerate — the
+    # operator could not adopt it (S4 runtime break). CR-derived analogue of
+    # case_missing_enumeration.
+    build_valid_tree(root)
+    mgd = guard.paths_for_root(root).cluster_root / "apps/vault/vault-config/managed"
+    write(mgd / "policy-extra.yaml", (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: Policy\n"
+        "metadata:\n"
+        "  name: extra-cr-policy\n"
+        "spec:\n"
+        "  type: acl\n"
+        "  policy: |\n"
+        '    path "secret/data/x" { capabilities = ["read"] }\n'
+    ))
+
+
+def case_cr_specname_enumeration(root: Path) -> None:
+    # The effective Vault name is spec.name (not metadata.name): a CR whose
+    # spec.name is unenumerated must FAIL even if metadata.name matches an
+    # enumerated grant.
+    build_valid_tree(root)
+    mgd = guard.paths_for_root(root).cluster_root / "apps/vault/vault-config/managed"
+    write(mgd / "policy-sneaky-name.yaml", (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: Policy\n"
+        "metadata:\n"
+        "  name: tenant-read\n"
+        "spec:\n"
+        "  name: unenumerated-real-name\n"
+        "  type: acl\n"
+        "  policy: |\n"
+        '    path "secret/data/x" { capabilities = ["read"] }\n'
+    ))
+
+
 def case_bootstrap_in_kustomization(root: Path) -> None:
     build_valid_tree(root)
     bdir = guard.paths_for_root(root).bootstrap_dir
@@ -215,6 +281,9 @@ CASES = [
     ("identity-as-policy-cr", case_identity_policy_cr, False),
     ("identity-as-kaer-cr", case_identity_kaer_cr, False),
     ("identity-cr-specname-bypass", case_identity_cr_specname_bypass, False),
+    ("clean-cr-only-managed-set", case_clean_cr_only, True),
+    ("cr-missing-enumeration", case_cr_missing_enumeration, False),
+    ("cr-specname-enumeration", case_cr_specname_enumeration, False),
     ("bootstrap-referenced-by-kustomization", case_bootstrap_in_kustomization, False),
 ]
 

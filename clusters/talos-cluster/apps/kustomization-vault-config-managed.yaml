@@ -1,0 +1,59 @@
+# Child Flux Kustomization for the CP-4 S4a managed Vault-config CRs.
+#
+# prune: false — ADOPT-BEFORE-PRUNE (CP-4 design decision #6 / #3). Deleting a
+# managed CR triggers the operator finalizer, which DELETES the live Vault
+# object; prune stays off until S6b (reference-safety guard) + S7 (the #133
+# finalizer active-mitigation) deliberately arm it. Until then a git removal
+# leaves the live object AND the live CR in place (drift is visible, never
+# destructive).
+#
+# ROLLBACK (if this slice must be reverted): revert the PR, then for each
+# leftover live CR remove the operator finalizer FIRST and only then delete
+# the CR — deleting with the finalizer present deletes the LIVE VAULT OBJECT:
+#   kubectl -n vault-config-operator patch policies.redhatcop.redhat.io <name> \
+#     --type=merge -p '{"metadata":{"finalizers":null}}'
+#   kubectl -n vault-config-operator delete policies.redhatcop.redhat.io <name>
+# (same for kubernetesauthengineroles.redhatcop.redhat.io; after a revert the
+# CRs are no longer Flux-managed, so the SSA-hijack rule does not apply).
+# Always name the full resource — `kubectl get policy` is AMBIGUOUS (kyverno
+# also defines `policies`).
+#
+# dependsOn: the operator must be Ready (webhook + controller) and Vault must
+# be reconciled before adoption CRs apply. healthCheckExprs turn a failed
+# adoption (ReconcileSuccessful=False, e.g. Vault unreachable or the bootstrap
+# role rejects the login) into a NotReady Kustomization — fail-closed and
+# visible in flux get kustomizations, no silent half-adopt.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vault-config-managed
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/vault/vault-config/managed
+  prune: false
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: vault-config-operator
+    - name: vault
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  healthCheckExprs:
+    # Semantics chosen against the operator's ACTUAL condition behavior
+    # (source-verified, vaultresourcecontroller/utils.go ManageOutcome):
+    # success sets ReconcileSuccessful=True; failure sets a DIFFERENT type
+    # (ReconcileFailed) that LINGERS after a later success (same-type-replace
+    # only). So: no `failed` expression (a lingering ReconcileFailed would
+    # permanently fail a now-healthy CR) — an unhealthy CR simply never turns
+    # `current` and the Kustomization goes NotReady at timeout (fail-closed).
+    # exists() not filter().all() (all() over an empty list is vacuously true),
+    # and observedGeneration == metadata.generation so a STALE success from a
+    # previous spec generation cannot report a failing edit as healthy.
+    - apiVersion: redhatcop.redhat.io/v1alpha1
+      kind: Policy
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    - apiVersion: redhatcop.redhat.io/v1alpha1
+      kind: KubernetesAuthEngineRole
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)

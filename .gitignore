@@ -144,6 +144,7 @@
 !/clusters/talos-cluster/apps/talos-drift/rbac.yaml
 !/clusters/talos-cluster/apps/talos-drift/talos-reader-talosconfig.sops.yaml
 !/clusters/talos-cluster/apps/kustomization-source-rotator.yaml
+!/clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml
 !/clusters/talos-cluster/apps/source-rotator/
 !/clusters/talos-cluster/apps/source-rotator/ciliumnetworkpolicy.yaml
 !/clusters/talos-cluster/apps/source-rotator/clusterrole.yaml
@@ -365,6 +366,7 @@
 !/scripts/dr/nfs-interim-setup.sh
 !/scripts/vault-config/
 !/scripts/vault-config/seed-operator-bootstrap.sh
+!/scripts/vault-config/verify-adoption-parity.py
 !/scripts/sync-deploy-repos.sh
 !/scripts/backup-handoff-ledger.sh
 !/scripts/s3-sync.sh

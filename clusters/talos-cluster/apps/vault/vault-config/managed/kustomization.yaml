@@ -1,0 +1,26 @@
+# CP-4 S4a — the MANAGED Vault-config set, reconciled by Flux through the
+# vault-config-managed Flux Kustomization (prune: false until S7 — see
+# apps/kustomization-vault-config-managed.yaml). Every CR here is an ADOPTION
+# of a pre-existing live object (adopt-before-prune, the crown-jewel care).
+#
+# NOT here (deliberately):
+# - bootstrap/ — the operator's OWN identity; never GitOps-applied (ADR-0028,
+#   guarded by scripts/check-vault-config-operator-bootstrap-invariants.py).
+# - the 3 namespace-selector roles (tenant, vso-org-pull-hwg, vso-org-pull-nwp)
+#   — KubernetesAuthEngineRole v0.8.49 cannot express Vault's
+#   bound_service_account_namespace_selector (it writes a reconcile-time static
+#   namespace list instead); adopting them would silently rewrite the live
+#   selector binding. They stay captured in ../auth/kubernetes/roles/ pending
+#   the S4b owner decision.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: vault-config-operator
+resources:
+  - policy-source-minter-hwg.yaml
+  - policy-tenant-read.yaml
+  - policy-tenant-write.yaml
+  - policy-vault-snapshot-backup.yaml
+  - policy-vso-org-pull-read-hwg.yaml
+  - policy-vso-org-pull-read-nwp.yaml
+  - role-source-minter-hwg.yaml
+  - role-vault-snapshot-backup.yaml
