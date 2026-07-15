@@ -68,3 +68,24 @@ spec:
       limits:
         cpu: 250m
         memory: 256Mi
+    # GLOBAL Vault connection (CP-4 S4 decision: global, not per-CR). CRs that
+    # omit spec.connection fall back to the manager environment: the operator
+    # calls vault/api DefaultConfig(), which reads VAULT_ADDR + VAULT_CACERT
+    # (source-verified: api/v1alpha1/utils/commons.go createVaultClient falls
+    # back to vault.DefaultConfig() when the CR carries no connection block).
+    # The address is the canonical in-cluster service FQDN (a SAN on the
+    # serving cert); the CA file comes from the vault-ca-secret.yaml mount.
+    env:
+      - name: VAULT_ADDR
+        value: https://vault.deploy-vault.svc.cluster.local:8200
+      - name: VAULT_CACERT
+        value: /etc/vault-ca/ca.crt
+    volumes:
+      - name: vault-ca
+        secret:
+          secretName: vault-config-operator-vault-ca
+          defaultMode: 292
+    volumeMounts:
+      - name: vault-ca
+        mountPath: /etc/vault-ca
+        readOnly: true

@@ -4,6 +4,7 @@ resources:
   - helmrepository.yaml
   - helmrelease.yaml
   - serviceaccount-vault.yaml
+  - vault-ca-secret.yaml
   - networkpolicy-default-deny.yaml
   - ciliumnetworkpolicy-egress.yaml
   - ciliumnetworkpolicy-webhook-ingress.yaml
