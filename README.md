@@ -109,6 +109,11 @@ The cluster runs several layers of software. Here's each one, what it does, and 
 | **metrics-server** | 3.13.0 | Collects CPU and memory usage from every node and pod. | Enables `kubectl top` and autoscaling signals. |
 | **Longhorn** | 1.12.0 | Provides replicated block storage and the default `StorageClass`. | Applications that need persistent volumes get storage backed by the Talos `longhorn` user volume. |
 | **postfinance/kubelet-csr-approver** | 1.2.14 | Automatically approves kubelet serving certificate requests that match this cluster's node identity rules. | Allows metrics-server to validate kubelet TLS against the cluster CA without manual certificate approval loops. |
+| **Vault** | 2.0.1 | HashiCorp Vault (UBI9 first-party build) providing central secret storage, an internal PKI, and AWS-KMS auto-unseal. | Backs tenant secret delivery, internal certificates, and platform credentials. |
+| **cert-manager** | v1.21.0 | Issues and renews Kubernetes TLS certificates through cert-manager Issuers/ClusterIssuers. | Automates certificate lifecycle instead of managing certificates by hand. |
+| **vault-config-operator** | v0.8.49 | Reconciles Vault ACL policies and Kubernetes-auth roles from Git (the redhat-cop operator). | Makes the managed Vault configuration a Flux-reconciled path instead of manual `vault write`. |
+
+_(Vault Secrets Operator and the Actions Runner Controller are also installed; their rows are a separate follow-up pending a live version check.)_
 
 ## Repository Layout
 
