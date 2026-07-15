@@ -689,6 +689,29 @@ owner-gated etcd and Vault Raft restore procedures and pass criteria.
 
 Tenant scaffolding lives under `clusters/talos-cluster/tenants/`; deploy-repository references live under `clusters/talos-cluster/apps/deploy-*`.
 
+#### Building on this platform (the stability contract)
+
+The platform is converging to a **locked consumer contract** — see
+[ADR-0029](docs/decision-records/repo/0029-mvp-stability-contract-and-security-floor.md).
+Build to the strict posture from day one so your workload is forward-compatible
+when the security floor lands (it is in-scope for MVP, not yet enforced
+cluster-wide):
+
+- **Restricted-PodSecurity-compliant pods** — run non-root, drop `ALL`
+  capabilities, set `seccompProfile: RuntimeDefault`, disallow privilege
+  escalation. The MVP enforces `restricted` cluster-wide; only genuinely
+  privileged platform components (e.g. Longhorn) get justified per-namespace
+  exemptions.
+- **Explicit NetworkPolicies** — the MVP adds a cluster-wide default-deny floor,
+  so a namespace with no policy gets no ingress/egress. Declare exactly what your
+  workload needs (DNS, the services it calls).
+- **Vault secrets via the tenant model** — consume through the Vault Secrets
+  Operator against your tenant's `secret/data/<ns>/{provisioned,state}/*` paths
+  (service-account-name-bound auth); do not embed static secrets.
+
+The full frozen surface downstream repositories may depend on is enumerated in
+ADR-0029.
+
 ---
 
 ## CI/CD (Automated Pipelines)
