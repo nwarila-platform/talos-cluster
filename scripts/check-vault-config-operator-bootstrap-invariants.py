@@ -38,6 +38,13 @@ except ImportError as exc:  # pragma: no cover - CI dependency
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATOR_IDENTITY_NAME = "vault-config-operator"
+# Identities that must NEVER be operator-managed (no redhatcop Policy /
+# KubernetesAuthEngineRole CR may carry these names) and that the bootstrap
+# policy must never cover: the operator's own identity (self-escalation /
+# self-lockout, ADR-0028) and the break-glass admin policy (a git compromise
+# must not be able to rewrite the recovery identity; owner decision
+# 2026-07-15, captured out-of-band in bootstrap/vault-admin.policy.hcl).
+PROTECTED_IDENTITY_NAMES = (OPERATOR_IDENTITY_NAME, "vault-admin")
 # Compared against S0-normalized paths (leading slash stripped), so `path "/"`
 # and `path ""` both normalize to "" and `path "/*"` to "*".
 ROOT_PATHS = {"", "*", "sys/*", "auth/*", "identity/*"}
@@ -141,7 +148,7 @@ def _managed_names(paths: BootstrapPaths) -> tuple[set[str], set[str]]:
                 name = spec.get("name") or metadata.get("name")
                 if not isinstance(name, str) or not name:
                     continue
-                if name == OPERATOR_IDENTITY_NAME:
+                if name in PROTECTED_IDENTITY_NAMES:
                     continue
                 if kind == "Policy":
                     policy_names.add(name)
@@ -206,6 +213,16 @@ def check_bootstrap_policy_content(
                 f"({OPERATOR_IDENTITY_NAME}) — the operator could rewrite its own "
                 f"policy/role and self-escalate ({where})"
             )
+        # Break-glass protection: the operator must never be able to touch
+        # the vault-admin recovery policy (or a role of that name).
+        if s0.covers(stanza.path, f"{MANAGED_POLICY_PREFIX}vault-admin") or s0.covers(
+            stanza.path, f"{MANAGED_ROLE_PREFIX}vault-admin"
+        ):
+            findings.append(
+                f"bootstrap policy grants a path that COVERS the break-glass "
+                f"vault-admin identity — a compromised operator could rewrite "
+                f"the recovery policy ({where})"
+            )
         # delete only on throwaway smoke objects.
         if "delete" in caps and SMOKE_MARKER not in norm:
             findings.append(
@@ -227,8 +244,8 @@ def check_bootstrap_policy_content(
                     "cannot silently cover an unmanaged object"
                 )
                 continue
-            if name == OPERATOR_IDENTITY_NAME:
-                continue  # already flagged by the self-reference check
+            if name in PROTECTED_IDENTITY_NAMES:
+                continue  # already flagged by the covering-path checks
             if SMOKE_MARKER in name:
                 continue  # throwaway; permitted
             if name not in allowed and name not in FORWARD_LOOKING_NAMES:
@@ -266,13 +283,14 @@ def _iter_yaml_docs(path: Path):
 
 
 def check_identity_never_managed(paths: BootstrapPaths, findings: list[str]) -> None:
-    managed_self = paths.managed_policy_dir / f"{OPERATOR_IDENTITY_NAME}.hcl"
-    if managed_self.exists():
-        findings.append(
-            f"operator identity is a MANAGED policy: "
-            f"{_display(managed_self, paths.root)} (must live only in the "
-            "out-of-band bootstrap dir)"
-        )
+    for protected in PROTECTED_IDENTITY_NAMES:
+        managed_self = paths.managed_policy_dir / f"{protected}.hcl"
+        if managed_self.exists():
+            findings.append(
+                f"protected identity {protected!r} is a MANAGED policy: "
+                f"{_display(managed_self, paths.root)} (must live only in the "
+                "out-of-band bootstrap dir)"
+            )
     if not paths.cluster_root.is_dir():
         return
     # Assumption: the operator's CRDs are redhatcop.redhat.io/v1alpha1 and the
@@ -291,13 +309,14 @@ def check_identity_never_managed(paths: BootstrapPaths, findings: list[str]) -> 
             name = (doc.get("metadata") or {}).get("name")
             spec = doc.get("spec") or {}
             candidates = {name, spec.get("name")}
-            if OPERATOR_IDENTITY_NAME in candidates:
-                findings.append(
-                    f"operator identity is a MANAGED {kind} CR: "
-                    f"{_display(path, paths.root)} (name "
-                    f"{OPERATOR_IDENTITY_NAME!r}) — the operator must never "
-                    "manage its own identity"
-                )
+            for protected in PROTECTED_IDENTITY_NAMES:
+                if protected in candidates:
+                    findings.append(
+                        f"protected identity {protected!r} is a MANAGED {kind} "
+                        f"CR: {_display(path, paths.root)} — the operator must "
+                        "never manage its own identity or the break-glass "
+                        "vault-admin policy"
+                    )
 
 
 def _reference_targets_bootstrap(
