@@ -430,6 +430,7 @@
 !/docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md
 !/docs/decision-records/repo/0027-fail-closed-first-party-image-admission.md
 !/docs/decision-records/repo/0028-vault-config-operator-bootstrap-identity.md
+!/docs/decision-records/repo/0029-mvp-stability-contract-and-security-floor.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
