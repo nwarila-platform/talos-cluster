@@ -111,7 +111,8 @@ def pki_live() -> dict:
         "province": [],
         "street_address": [],
         "postal_code": [],
-        "serial_number": "",
+        # serial_number deliberately ABSENT: Vault 2.0 accepts the deprecated
+        # write param but does not store/return it (live-verified).
         "generate_lease": False,
         "no_store": False,
         "require_cn": True,
@@ -229,6 +230,18 @@ def main() -> int:
     expect(
         "pki-role-missing-live",
         len(findings) == 1 and "MISSING live" in findings[0],
+        repr(findings),
+    )
+
+    # serial_number is write-only in Vault 2.0: "" in git + absent live = parity;
+    # any other git value is unverifiable and must be flagged.
+    with_vault({"pki-int-tcn/roles/vault-server": pki_live()})
+    noisy = pki_spec()
+    noisy["serialNumber"] = "sneaky-value"
+    findings = parity.check_pki_role("vault-server", noisy)
+    expect(
+        "pki-role-write-only-nondefault",
+        len(findings) == 1 and "write-only" in findings[0],
         repr(findings),
     )
 

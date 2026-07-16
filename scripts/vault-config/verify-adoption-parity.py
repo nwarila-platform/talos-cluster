@@ -319,6 +319,13 @@ def pki_role_projection(name: str, spec: dict) -> dict:
     return projection
 
 
+# Fields the operator payload writes but Vault 2.0 does not STORE/return on a
+# role read (live-verified: all 3 pki-int-tcn roles omit serial_number). Absent
+# live + the empty default in git is parity; any OTHER git value would be
+# silently dropped by Vault and must be flagged as unverifiable.
+WRITE_ONLY_PKI_FIELDS = {"serial_number": ""}
+
+
 def check_pki_role(name: str, spec: dict) -> list[str]:
     engine_path = spec.get("path")
     if not isinstance(engine_path, str) or not engine_path:
@@ -329,6 +336,14 @@ def check_pki_role(name: str, spec: dict) -> list[str]:
     findings = []
     projection = pki_role_projection(name, spec)
     for key, want in projection.items():
+        if key in WRITE_ONLY_PKI_FIELDS and key not in live:
+            if want != WRITE_ONLY_PKI_FIELDS[key]:
+                findings.append(
+                    f"pki role {name!r}: field {key!r}={want!r} is write-only "
+                    "in Vault 2.0 (accepted but not stored) — a non-default "
+                    "git value cannot be verified and would be silently dropped"
+                )
+            continue
         got = live.get(key)
         if got != want:
             findings.append(
