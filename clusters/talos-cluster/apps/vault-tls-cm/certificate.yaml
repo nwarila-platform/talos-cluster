@@ -1,0 +1,39 @@
+# CP-5c — the auto-renewing serving certificate (ADDITIVE: issues into a
+# NEW Secret vault-serving-cert-cm; the SOPS-delivered vault-serving-cert stays
+# untouched as the live consumer + instant rollback until the CP-5d cutover).
+#
+# Mirrors the live serving cert exactly: same CN, same 6 SANs, ECDSA P-256
+# (rotationPolicy Always mints a fresh key per renewal — the key never leaves
+# the cluster; cert-manager sends only the CSR to pki-int-tcn/sign/vault-server
+# and the role constrains everything server-side: serverFlag-only EKU,
+# enforceHostnames, allowedDomains, ttl<=2160h).
+#
+# duration 2160h = the role's ttl/maxTTL (Vault would clamp anything longer);
+# renewBefore 720h => renewal at ~60d of the 90d lifetime, 30d of margin —
+# the first issuance happens immediately on apply, so the Aug-11 clock is
+# satisfied the moment CP-5d points the StatefulSet here.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vault-serving-cert-cm
+  namespace: deploy-vault
+spec:
+  secretName: vault-serving-cert-cm
+  commonName: vault.tcn.trinitytechnicalservices.com
+  dnsNames:
+    - vault-0.vault-internal.deploy-vault.svc.cluster.local
+    - vault-1.vault-internal.deploy-vault.svc.cluster.local
+    - vault-2.vault-internal.deploy-vault.svc.cluster.local
+    - vault-internal.deploy-vault.svc.cluster.local
+    - vault.deploy-vault.svc.cluster.local
+    - vault.tcn.trinitytechnicalservices.com
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: vault-server
+    kind: ClusterIssuer
+    group: cert-manager.io
