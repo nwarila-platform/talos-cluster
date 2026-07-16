@@ -49,7 +49,9 @@ def pki_spec() -> dict:
         "enforceHostnames": True,
         "allowIPSans": True,
         "allowedURISans": [],
-        "allowedOtherSans": [],
+        # comma-separated STRING fields in the operator Go type / CRD
+        # (dry-run-verified: the webhook rejects lists) — Vault stores lists.
+        "allowedOtherSans": "",
         "serverFlag": True,
         "clientFlag": False,
         "codeSigningFlag": False,
@@ -61,13 +63,13 @@ def pki_spec() -> dict:
         "extKeyUsageOids": [],
         "useCSRCommonName": True,
         "useCSRSans": True,
-        "ou": [],
-        "organization": [],
-        "country": [],
-        "locality": [],
-        "province": [],
-        "streetAddress": [],
-        "postalCode": [],
+        "ou": "",
+        "organization": "",
+        "country": "",
+        "locality": "",
+        "province": "",
+        "streetAddress": "",
+        "postalCode": "",
         "serialNumber": "",
         "generateLease": False,
         "noStore": False,
@@ -245,6 +247,23 @@ def main() -> int:
         repr(findings),
     )
 
+    # csv fields: the CR carries a comma-separated STRING; live is a list.
+    with_vault({"pki-int-tcn/roles/vault-server": pki_live()})
+    csv_mismatch = pki_spec()
+    csv_mismatch["ou"] = "TeamX"
+    findings = parity.check_pki_role("vault-server", csv_mismatch)
+    expect(
+        "pki-role-csv-content-mismatch",
+        len(findings) == 1 and "'ou'" in findings[0],
+        repr(findings),
+    )
+    csv_typed = pki_spec()
+    csv_typed["ou"] = ["TeamX"]
+    expect_usage_error(
+        "pki-role-csv-list-rejected",
+        lambda: parity.check_pki_role("vault-server", csv_typed),
+    )
+
     # --- mount ---
     spec, mounts, tune = mount_fixtures()
     with_vault({"sys/mounts": mounts, "sys/mounts/pki-int-tcn/tune": tune})
@@ -280,6 +299,19 @@ def main() -> int:
     findings = parity.check_mount("pki-int-tcn", spec)
     expect(
         "mount-live-only-tune-field",
+        len(findings) == 1 and "audit_non_hmac_request_keys" in findings[0],
+        repr(findings),
+    )
+
+    # BOTH directions on the 4 tune list params (audit finding E-1): a CR that
+    # sets an audit-HMAC exemption live does not carry must be flagged
+    # pre-merge, and a live value the CR does not carry must be flagged too.
+    spec, mounts, tune = mount_fixtures()
+    spec["config"]["auditNonHMACRequestKeys"] = ["secret_key"]
+    with_vault({"sys/mounts": mounts, "sys/mounts/pki-int-tcn/tune": tune})
+    findings = parity.check_mount("pki-int-tcn", spec)
+    expect(
+        "mount-cr-sets-audit-keys",
         len(findings) == 1 and "audit_non_hmac_request_keys" in findings[0],
         repr(findings),
     )

@@ -217,6 +217,8 @@ def parse_go_duration(value: object, where: str) -> int:
     if isinstance(value, bool):
         raise fail_usage(f"{where}: boolean is not a duration")
     if isinstance(value, int):
+        if value < 0:
+            raise fail_usage(f"{where}: negative duration {value!r}")
         return value
     if not isinstance(value, str) or not value:
         raise fail_usage(f"{where}: expected a duration string, got {value!r}")
@@ -256,7 +258,7 @@ PKI_ROLE_FIELDS = {
     "enforce_hostnames": ("enforceHostnames", None),
     "allow_ip_sans": ("allowIPSans", None),
     "allowed_uri_sans": ("allowedURISans", None),
-    "allowed_other_sans": ("allowedOtherSans", None),
+    "allowed_other_sans": ("allowedOtherSans", "csv"),
     "server_flag": ("serverFlag", None),
     "client_flag": ("clientFlag", None),
     "code_signing_flag": ("codeSigningFlag", None),
@@ -268,13 +270,13 @@ PKI_ROLE_FIELDS = {
     "ext_key_usage_oids": ("extKeyUsageOids", None),
     "use_csr_common_name": ("useCSRCommonName", None),
     "use_csr_sans": ("useCSRSans", None),
-    "ou": ("ou", None),
-    "organization": ("organization", None),
-    "country": ("country", None),
-    "locality": ("locality", None),
-    "province": ("province", None),
-    "street_address": ("streetAddress", None),
-    "postal_code": ("postalCode", None),
+    "ou": ("ou", "csv"),
+    "organization": ("organization", "csv"),
+    "country": ("country", "csv"),
+    "locality": ("locality", "csv"),
+    "province": ("province", "csv"),
+    "street_address": ("streetAddress", "csv"),
+    "postal_code": ("postalCode", "csv"),
     "serial_number": ("serialNumber", None),
     "generate_lease": ("generateLease", None),
     "no_store": ("noStore", None),
@@ -315,6 +317,16 @@ def pki_role_projection(name: str, spec: dict) -> dict:
         value = spec[spec_key]
         if conv == "duration":
             value = parse_go_duration(value, f"pki role {name!r} spec.{spec_key}")
+        elif conv == "csv":
+            # These CR fields are comma-separated STRINGS in the operator's Go
+            # type (dry-run-verified: the webhook rejects lists); Vault parses
+            # them with TypeCommaStringSlice and stores lists.
+            if not isinstance(value, str):
+                raise fail_usage(
+                    f"pki role {name!r}: spec.{spec_key} must be a "
+                    "comma-separated STRING (operator Go type), not a list"
+                )
+            value = [item.strip() for item in value.split(",") if item.strip()]
         projection[live_key] = value
     return projection
 
@@ -429,21 +441,23 @@ def check_mount(name: str, spec: dict) -> list[str]:
         findings.append(
             f"mount {name!r}: listing_visibility live={live_lv!r} git={want_lv!r}"
         )
-    # The tune payload also always writes the three header/audit list params
-    # the CRD leaves unset (nil -> empty). A live NON-EMPTY value would be
-    # wiped by the first reconcile.
-    for live_key in (
-        "audit_non_hmac_request_keys",
-        "audit_non_hmac_response_keys",
-        "passthrough_request_headers",
-        "allowed_response_headers",
+    # The tune payload also always writes the four header/audit list params
+    # (the CRD CAN express them — auditNonHMAC*/passthrough*/allowedResponse*
+    # arrays), so parity must hold in BOTH directions: a live value the CR
+    # does not carry would be wiped, and a CR value live does not carry would
+    # be written (e.g. an audit-log HMAC exemption) on the first reconcile.
+    for spec_key, live_key in (
+        ("auditNonHMACRequestKeys", "audit_non_hmac_request_keys"),
+        ("auditNonHMACResponseKeys", "audit_non_hmac_response_keys"),
+        ("passthroughRequestHeaders", "passthrough_request_headers"),
+        ("allowedResponseHeaders", "allowed_response_headers"),
     ):
-        got = tune.get(live_key)
-        if got and got not in BENIGN_EXTRA_ROLE_VALUES:
+        want = config.get(spec_key) or []
+        got = tune.get(live_key) or []
+        if got != want:
             findings.append(
-                f"mount {name!r}: live tune field {live_key!r}={got!r} is set "
-                "but the CR cannot express it — the operator's tune write "
-                "would wipe it"
+                f"mount {name!r}: tune field {live_key!r} live={got!r} "
+                f"git={want!r}"
             )
     return findings
 
