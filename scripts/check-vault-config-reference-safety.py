@@ -20,6 +20,10 @@ Reference edges checked (consumers -> providers):
                                                                -> role names (same provider set as 3)
   5. ClusterIssuer spec.vault.path "<mount>/sign/<role>"       -> managed SecretEngineMount name
                                                                   + managed PKISecretEngineRole name
+  5b. ClusterIssuer spec.vault.auth.kubernetes.role            -> managed KubernetesAuthEngineRole
+                                                                  or capture-only role names
+      (the issuer's LOGIN identity — pruning it would 403 every issuance and
+      the renewal halts silently until the renewBefore window; audit-S find)
   6. Certificate spec.issuerRef (kind ClusterIssuer)           -> ClusterIssuer names
   7. managed PKISecretEngineRole/SecretEngineMount consistency: every PKI role's
      implicit mount (pki-int-tcn today) must exist as a managed SecretEngineMount.
@@ -74,15 +78,18 @@ PINNED_CONSUMERS: tuple[tuple[str, str, str], ...] = (
         "source-minter-hwg",
     ),
     (
+        # The ConfigMap's in-script fallback default is an INDEPENDENT
+        # reference: it would dangle even if the CronJob env were retired.
+        "clusters/talos-cluster/apps/source-rotator/configmap.yaml",
+        '"source-minter-hwg"',
+        "source-minter-hwg",
+    ),
+    (
         "clusters/talos-cluster/apps/vault/restore-drill/s0-restore-generate-root.sh",
         '"role": "vault-snapshot-backup"',
         "vault-snapshot-backup",
     ),
 )
-
-
-class GuardUsageError(RuntimeError):
-    pass
 
 
 def fail_usage(message: str) -> SystemExit:
@@ -120,8 +127,13 @@ def iter_yaml_docs(root: Path):
 
 
 def effective_name(doc: dict) -> str:
-    spec = doc.get("spec") or {}
-    name = spec.get("name") or (doc.get("metadata") or {}).get("name")
+    # spec.name overrides metadata.name ONLY for redhatcop CRs (the operator's
+    # own convention); every other kind resolves by metadata.name (a stray
+    # spec.name on e.g. a cert-manager kind must not mislead the guard).
+    name = None
+    if str(doc.get("apiVersion", "")).startswith("redhatcop.redhat.io/"):
+        name = (doc.get("spec") or {}).get("name")
+    name = name or (doc.get("metadata") or {}).get("name")
     if not isinstance(name, str) or not name:
         raise fail_usage(f"document of kind {doc.get('kind')!r} has no resolvable name")
     return name
@@ -275,6 +287,22 @@ def main() -> int:
         elif kind == "ClusterIssuer" and api.startswith("cert-manager.io/"):
             cluster_issuers.add(effective_name(doc))
             vault_spec = spec.get("vault") or {}
+            # Edge 5b: the issuer's OWN login identity (audit-S find — missing
+            # this edge let a role-CR deletion pass while cert-manager still
+            # logged in with it; renewal would halt silently for weeks).
+            auth_role = ((vault_spec.get("auth") or {}).get("kubernetes") or {}).get(
+                "role"
+            )
+            if isinstance(auth_role, str) and auth_role:
+                edges += 1
+                if auth_role not in role_providers:
+                    findings.append(
+                        f"{path.relative_to(repo)}: ClusterIssuer "
+                        f"{effective_name(doc)!r} logs in with k8s-auth role "
+                        f"{auth_role!r} which exists neither as a managed role "
+                        "CR nor as a capture-only role — every issuance/renewal "
+                        "would 403"
+                    )
             sign_path = vault_spec.get("path")
             if isinstance(sign_path, str) and sign_path:
                 edges += 1

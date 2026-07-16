@@ -24,6 +24,7 @@ GUARD = ROOT / "scripts/check-vault-config-reference-safety.py"
 MANAGED = "clusters/talos-cluster/apps/vault/vault-config/managed"
 CAPTURES = "clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles"
 PIN_CRON = "clusters/talos-cluster/apps/source-rotator/cronjob.yaml"
+PIN_CM = "clusters/talos-cluster/apps/source-rotator/configmap.yaml"
 PIN_DRILL = "clusters/talos-cluster/apps/vault/restore-drill/s0-restore-generate-root.sh"
 
 
@@ -99,12 +100,22 @@ def base_fixture(root: Path) -> None:
         spec:
           kubernetes: {role: tenant}
     """)
+    write(root, f"{MANAGED}/role-issuer-login.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: KubernetesAuthEngineRole
+        metadata: {name: issuer-login}
+        spec:
+          policies: [tenant-read]
+    """)
     write(root, "clusters/talos-cluster/apps/vault-tls-cm/clusterissuer.yaml", """
         apiVersion: cert-manager.io/v1
         kind: ClusterIssuer
         metadata: {name: vault-server}
         spec:
-          vault: {path: pki-int-tcn/sign/vault-server}
+          vault:
+            path: pki-int-tcn/sign/vault-server
+            auth:
+              kubernetes: {role: issuer-login}
     """)
     write(root, "clusters/talos-cluster/apps/vault-tls-cm/certificate.yaml", """
         apiVersion: cert-manager.io/v1
@@ -114,6 +125,7 @@ def base_fixture(root: Path) -> None:
           issuerRef: {name: vault-server, kind: ClusterIssuer}
     """)
     write(root, PIN_CRON, "env:\n  - name: VAULT_ROLE\n    value: source-minter-hwg\n")
+    write(root, PIN_CM, 'VAULT_ROLE = os.environ.get("VAULT_ROLE", "source-minter-hwg")\n')
     write(root, PIN_DRILL, 'login with {"role": "vault-snapshot-backup", "jwt": j}\n')
 
 
@@ -204,6 +216,20 @@ case(
     drop_mount,
     "signs on mount 'pki-int-tcn'",
     "strands them",
+)
+
+
+def drop_issuer_auth_role(root):
+    # The audit-S/T round-1 defect class: the issuer's LOGIN role CR removed
+    # while the ClusterIssuer still logs in with it — must FAIL on edge 5b.
+    (root / f"{MANAGED}/role-issuer-login.yaml").unlink()
+
+
+case(
+    "removing-the-issuer-auth-role-fails",
+    1,
+    drop_issuer_auth_role,
+    "logs in with k8s-auth role 'issuer-login'",
 )
 
 
