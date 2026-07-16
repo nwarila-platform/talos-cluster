@@ -18,6 +18,7 @@ runs `vault write` for a managed object (zero-manual / everything-in-band).
 | `managed/role-*.yaml` | **reconciled** | redhatcop `KubernetesAuthEngineRole` CRs converging `auth/kubernetes/role/<name>` |
 | `managed/secretenginemount-*.yaml` | **reconciled** (S5b) | redhatcop `SecretEngineMount` CR pinning the `pki-int-tcn` mount tune (existing mount → tune-only; the operator has NO delete capability on it, so it can never unmount) |
 | `managed/pkirole-*.yaml` | **reconciled** (S5b) | redhatcop `PKISecretEngineRole` CRs converging `pki-int-tcn/roles/<name>` (`vault-server`, `tcn-server`, `tcn-client`) |
+| `managed/policy-vault-server.yaml` + `managed/role-vault-server.yaml` | **reconciled** (CP-5, CREATE-class) | the cert-manager ClusterIssuer identity: sign-only policy (`pki-int-tcn/sign/vault-server`) + k8s-auth role bound to the dedicated `cert-manager-vault-issuer` SA with `audience: vault://vault-server`. NOT an adoption — the operator's first reconcile CREATES the live objects (forward-declared in the bootstrap policy since S2b), so pre-merge parity 404s on them by design and the post-reconcile parity run is their proof |
 | `auth/kubernetes/roles/*.json` | capture-only (S4b pending) | the 3 namespace-**selector** roles the operator CRD cannot express (below) |
 | `bootstrap/` | out-of-band exception | the operator's own policy+role (ADR-0028); NEVER GitOps-applied |
 

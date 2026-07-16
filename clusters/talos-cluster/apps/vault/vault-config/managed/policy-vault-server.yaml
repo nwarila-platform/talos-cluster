@@ -1,0 +1,37 @@
+# CP-5 — managed ACL policy for the cert-manager Vault ClusterIssuer (the
+# `vault-server` identity, forward-declared in the bootstrap policy since S2b).
+# CREATE-class (not adoption): no live policy exists until the operator's
+# first reconcile writes it — pre-merge parity 404s on it by design; the
+# proof is the POST-reconcile parity run.
+#
+# EXACTLY ONE GRANT, derived from the cert-manager v1.21.0 source trace: an
+# issuance is 2 Vault calls — unauthenticated POST auth/kubernetes/login, then
+# one POST to this sign endpoint with the login token (path_issue_sign.go
+# registers sign/<role> as logical.UpdateOperation; create+update is the
+# conventional pair). cert-manager never calls auth/token/lookup-self or
+# renew-self (no lifetime watcher; repo-wide grep at v1.21.0 = zero matches),
+# so no token-lifecycle grants are needed despite token_no_default_policy —
+# the VSO renew-self lesson does NOT transfer here. The periodic readiness
+# probe (GET sys/health) is unauthenticated and needs no grant.
+#
+# Sign is the least-privilege issuance capability: the CSR's private key never
+# leaves the cluster, the endpoint returns only certificate material, and the
+# vault-server PKI role (managed CR, #323) constrains every parameter
+# server-side (allowedDomains, enforceHostnames, no wildcards/subdomains/
+# glob/any-name, keyType ec/256, TTL<=2160h).
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: Policy
+metadata:
+  name: vault-server
+  namespace: vault-config-operator
+spec:
+  type: acl
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  policy: |
+    path "pki-int-tcn/sign/vault-server" {
+      capabilities = ["create", "update"]
+    }

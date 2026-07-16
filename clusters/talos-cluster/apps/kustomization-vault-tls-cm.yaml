@@ -1,0 +1,42 @@
+# Child Flux Kustomization for the CP-5 cert-manager Vault issuer stack.
+#
+# dependsOn: cert-manager (the ClusterIssuer CRD + the controller that
+# resolves serviceAccountRef) and vault-config-managed (the operator must have
+# written the vault-server policy + k8s-auth role before the issuer can log
+# in) — on a DR rebuild this applies cleanly in order instead of flapping
+# through CRD-missing/auth-failure retries.
+#
+# prune: true (unlike vault-config-managed's adopt-before-prune false): none
+# of these objects carries a destructive finalizer — deleting a ClusterIssuer
+# never deletes issued certificates or Secrets, and the SA/Role/RoleBinding
+# are plain RBAC. Standard Flux hygiene applies.
+#
+# healthCheckExprs: cert-manager sets Ready with observedGeneration on the
+# ClusterIssuer once the Vault backend is reachable, the SA token mints, the
+# login succeeds, and sys/health reports initialized+unsealed — so Ready here
+# is a LIVE end-to-end proof of the whole auth chain (network path, RBAC,
+# k8s-auth role, policy). Same generation-guarded exists() shape as the
+# vault-config-managed expressions; no `failed` expr — an unhealthy issuer
+# simply never turns current and the Kustomization goes NotReady at timeout
+# (fail-closed).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vault-tls-cm
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./clusters/talos-cluster/apps/vault-tls-cm
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: cert-manager
+    - name: vault-config-managed
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  healthCheckExprs:
+    - apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'Ready' && c.status == 'True' && c.observedGeneration == metadata.generation)

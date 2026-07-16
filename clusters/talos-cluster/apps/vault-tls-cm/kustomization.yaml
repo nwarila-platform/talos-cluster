@@ -1,0 +1,10 @@
+# CP-5 — cert-manager Vault issuer stack (rendered by the dedicated Flux
+# Kustomization apps/kustomization-vault-tls-cm.yaml, NOT by the root — the
+# ClusterIssuer CRD comes from cert-manager and the Vault-side identity from
+# vault-config-managed, so this app orders itself behind both via dependsOn).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - rbac-token-request.yaml
+  - clusterissuer.yaml
