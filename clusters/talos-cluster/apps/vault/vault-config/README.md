@@ -16,8 +16,18 @@ runs `vault write` for a managed object (zero-manual / everything-in-band).
 |---|---|---|
 | `managed/policy-*.yaml` | **reconciled** | redhatcop `Policy` CRs (type `acl`); `spec.policy` is the exact HCL the operator converges `sys/policies/acl/<name>` to |
 | `managed/role-*.yaml` | **reconciled** | redhatcop `KubernetesAuthEngineRole` CRs converging `auth/kubernetes/role/<name>` |
+| `managed/secretenginemount-*.yaml` | **reconciled** (S5b) | redhatcop `SecretEngineMount` CR pinning the `pki-int-tcn` mount tune (existing mount → tune-only; the operator has NO delete capability on it, so it can never unmount) |
+| `managed/pkirole-*.yaml` | **reconciled** (S5b) | redhatcop `PKISecretEngineRole` CRs converging `pki-int-tcn/roles/<name>` (`vault-server`, `tcn-server`, `tcn-client`) |
 | `auth/kubernetes/roles/*.json` | capture-only (S4b pending) | the 3 namespace-**selector** roles the operator CRD cannot express (below) |
 | `bootstrap/` | out-of-band exception | the operator's own policy+role (ADR-0028); NEVER GitOps-applied |
+
+**Deliberately NOT managed: the PKI CA material.** The `pki-int-tcn`
+intermediate cert/key (and its issuer config) is cryptographic **state**, not
+declarative config — no `PKISecretEngineConfig` CR is authored, ever. A
+config CR could re-generate or re-sign the intermediate; adoption covers the
+mount **tune** and the issuance **roles** only. Parity for both directions is
+proven by `scripts/vault-config/verify-adoption-parity.py` (pre-merge against
+live, and again after the first reconcile).
 
 Reconciliation wiring: the `vault-config-managed` Flux Kustomization
 (`apps/kustomization-vault-config-managed.yaml`) applies `managed/` with

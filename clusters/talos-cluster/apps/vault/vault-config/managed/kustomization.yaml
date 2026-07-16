@@ -24,3 +24,7 @@ resources:
   - policy-vso-org-pull-read-nwp.yaml
   - role-source-minter-hwg.yaml
   - role-vault-snapshot-backup.yaml
+  - secretenginemount-pki-int-tcn.yaml
+  - pkirole-vault-server.yaml
+  - pkirole-tcn-server.yaml
+  - pkirole-tcn-client.yaml
