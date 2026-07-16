@@ -240,6 +240,9 @@ jobs:
       - name: "Guard self-test: bootstrap-invariant guard bites"
         run: python3 scripts/check-vault-config-operator-bootstrap-invariants.selftest.py
 
+      - name: "Guard self-test: adoption-parity projections bite"
+        run: python3 scripts/vault-config/verify-adoption-parity.selftest.py
+
       - name: "Guard: Vault restore-validator boundary"
         run: bash scripts/check-vault-restore-validator-boundaries.sh
 

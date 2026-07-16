@@ -13,6 +13,19 @@ Checks, per managed CR under clusters/talos-cluster/apps/vault/vault-config/mana
 - KubernetesAuthEngineRole CR: every field of the operator's write projection
   (``VRole.toMap()``: bound SA names/namespaces, alias_name_source, token_*)
   equals the live ``auth/kubernetes/role/<name>`` value.
+- PKISecretEngineRole CR (CP-4 S5): every field of the operator's write
+  projection (``PKIRole.toMap()``, v0.8.49 — 38 keys, durations converted to
+  seconds) equals the live ``<path>/roles/<name>`` value, AND every live field
+  OUTSIDE the projection equals the Vault 2.0 write-default (the operator's
+  role write is a full replace: a live field not in the payload gets
+  re-defaulted, so live != default would be a silent semantic rewrite).
+  The CR must set every projected field EXPLICITLY — this script reads the
+  git YAML, not the server-defaulted object, so an omitted field (whose value
+  the API server would fill from a CRD default) is a tooling error (exit 2).
+- SecretEngineMount CR (CP-4 S5): the live resolved tune config
+  (``sys/mounts/<path>/tune``) equals the CR's config projection
+  (``MountConfig.toMap()``), the live mount type matches spec.type, and
+  listing_visibility honours the documented unset ≡ "hidden" equivalence.
 
 Read-only: needs VAULT_ADDR + VAULT_TOKEN (a read-capable token) and
 VAULT_CACERT. Never prints token material; prints unified diffs of POLICY
@@ -92,6 +105,14 @@ def role_projection(spec: dict) -> dict:
     return projection
 
 
+CHECKED_KINDS = {
+    "Policy",
+    "KubernetesAuthEngineRole",
+    "PKISecretEngineRole",
+    "SecretEngineMount",
+}
+
+
 def iter_managed_docs(managed_dir: Path):
     if not managed_dir.is_dir():
         raise fail_usage(f"{managed_dir} does not exist (run from the repo root)")
@@ -99,8 +120,16 @@ def iter_managed_docs(managed_dir: Path):
         for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
             if not isinstance(doc, dict) or doc.get("apiVersion") != API_VERSION:
                 continue
-            if doc.get("kind") in {"Policy", "KubernetesAuthEngineRole"}:
+            kind = doc.get("kind")
+            if kind in CHECKED_KINDS:
                 yield path, doc
+            else:
+                # Fail-closed: a redhatcop kind this script has no checker for
+                # must not silently skip parity (it would read as "verified").
+                raise fail_usage(
+                    f"{path}: unsupported managed kind {kind!r} — extend "
+                    "verify-adoption-parity.py before adopting this kind"
+                )
 
 
 def effective_name(doc: dict) -> str:
@@ -178,16 +207,247 @@ def check_role(name: str, spec: dict) -> list[str]:
     return findings
 
 
+_DURATION_UNITS = {"h": 3600, "m": 60, "s": 1}
+
+
+def parse_go_duration(value: object, where: str) -> int:
+    """Convert a CR duration (metav1.Duration string like '2160h'/'30s', or a
+    bare integer meaning seconds) into whole seconds, mirroring how Vault
+    stores what the operator writes."""
+    if isinstance(value, bool):
+        raise fail_usage(f"{where}: boolean is not a duration")
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str) or not value:
+        raise fail_usage(f"{where}: expected a duration string, got {value!r}")
+    text = value.strip()
+    if text.isdigit():
+        return int(text)
+    total = 0
+    number = ""
+    for char in text:
+        if char.isdigit():
+            number += char
+        elif char in _DURATION_UNITS and number:
+            total += int(number) * _DURATION_UNITS[char]
+            number = ""
+        else:
+            raise fail_usage(f"{where}: unsupported duration {value!r}")
+    if number:
+        raise fail_usage(f"{where}: trailing number without unit in {value!r}")
+    return total
+
+
+# The operator's PKIRole.toMap() payload (v0.8.49, source-verified): live Vault
+# role key -> (CR spec key, converter). EVERY key here is written on every
+# reconcile (full-replace role write), so EVERY key must be explicit in the CR
+# and equal live.
+PKI_ROLE_FIELDS = {
+    "ttl": ("TTL", "duration"),
+    "max_ttl": ("maxTTL", "duration"),
+    "not_before_duration": ("notBeforeDuration", "duration"),
+    "allow_localhost": ("allowLocalhost", None),
+    "allowed_domains": ("allowedDomains", None),
+    "allowed_domains_template": ("allowedDomainsTemplate", None),
+    "allow_bare_domains": ("allowBareDomains", None),
+    "allow_subdomains": ("allowSubdomains", None),
+    "allow_glob_domains": ("allowGlobDomains", None),
+    "allow_any_name": ("allowAnyName", None),
+    "enforce_hostnames": ("enforceHostnames", None),
+    "allow_ip_sans": ("allowIPSans", None),
+    "allowed_uri_sans": ("allowedURISans", None),
+    "allowed_other_sans": ("allowedOtherSans", None),
+    "server_flag": ("serverFlag", None),
+    "client_flag": ("clientFlag", None),
+    "code_signing_flag": ("codeSigningFlag", None),
+    "email_protection_flag": ("emailProtectionFlag", None),
+    "key_type": ("keyType", None),
+    "key_bits": ("keyBits", None),
+    "key_usage": ("keyUsage", None),
+    "ext_key_usage": ("extKeyUsage", None),
+    "ext_key_usage_oids": ("extKeyUsageOids", None),
+    "use_csr_common_name": ("useCSRCommonName", None),
+    "use_csr_sans": ("useCSRSans", None),
+    "ou": ("ou", None),
+    "organization": ("organization", None),
+    "country": ("country", None),
+    "locality": ("locality", None),
+    "province": ("province", None),
+    "street_address": ("streetAddress", None),
+    "postal_code": ("postalCode", None),
+    "serial_number": ("serialNumber", None),
+    "generate_lease": ("generateLease", None),
+    "no_store": ("noStore", None),
+    "require_cn": ("requireCn", None),
+    "policy_identifiers": ("policyIdentifiers", None),
+    "basic_constraints_valid_for_non_ca": ("basicConstraintsValidForNonCa", None),
+}
+
+# Vault 2.0 pki role WRITE defaults for fields the operator payload cannot
+# express. The operator's role write is a full replace: these fields are
+# re-defaulted on every reconcile, so adoption is only parity-safe while the
+# live value already equals the default. Live != default => the reconcile
+# would silently rewrite it => finding (the S4b class).
+EXPECTED_PKI_ROLE_DEFAULTS = {
+    "issuer_ref": "default",
+    "allow_wildcard_certificates": True,
+    "cn_validations": ["email", "hostname"],
+    "allow_token_displayname": False,
+    "allowed_serial_numbers": [],
+    "allowed_user_ids": [],
+    "allowed_uri_sans_template": False,
+    "signature_bits": 0,
+    "use_pss": False,
+    "not_after": "",
+    "serial_number_source": "json-csr",
+}
+
+
+def pki_role_projection(name: str, spec: dict) -> dict:
+    projection = {}
+    for live_key, (spec_key, conv) in PKI_ROLE_FIELDS.items():
+        if spec_key not in spec:
+            raise fail_usage(
+                f"pki role {name!r}: spec.{spec_key} must be EXPLICIT (this "
+                "script reads git YAML, not the server-defaulted object; an "
+                "omitted field hides what the operator will write)"
+            )
+        value = spec[spec_key]
+        if conv == "duration":
+            value = parse_go_duration(value, f"pki role {name!r} spec.{spec_key}")
+        projection[live_key] = value
+    return projection
+
+
+def check_pki_role(name: str, spec: dict) -> list[str]:
+    engine_path = spec.get("path")
+    if not isinstance(engine_path, str) or not engine_path:
+        raise fail_usage(f"pki role {name!r}: spec.path is required")
+    live = vault_get(f"{engine_path}/roles/{name}")
+    if live is None:
+        return [f"pki role {name!r}: MISSING live ({engine_path}/roles/{name} = 404)"]
+    findings = []
+    projection = pki_role_projection(name, spec)
+    for key, want in projection.items():
+        got = live.get(key)
+        if got != want:
+            findings.append(
+                f"pki role {name!r}: field {key!r} live={got!r} git={want!r}"
+            )
+    for key, got in sorted(live.items()):
+        if key in projection:
+            continue
+        if key in EXPECTED_PKI_ROLE_DEFAULTS:
+            want = EXPECTED_PKI_ROLE_DEFAULTS[key]
+            if got != want:
+                findings.append(
+                    f"pki role {name!r}: live field {key!r}={got!r} differs "
+                    f"from the Vault write-default {want!r} — the operator's "
+                    "full-replace write would silently re-default it"
+                )
+            continue
+        if got in BENIGN_EXTRA_ROLE_VALUES:
+            continue
+        findings.append(
+            f"pki role {name!r}: live-only field {key!r}={got!r} is outside "
+            "the operator write projection and its write-default is unknown "
+            "to this script — extend EXPECTED_PKI_ROLE_DEFAULTS after "
+            "source-verifying the default"
+        )
+    return findings
+
+
+def check_mount(name: str, spec: dict) -> list[str]:
+    findings = []
+    mounts = vault_get("sys/mounts") or {}
+    entry = mounts.get(f"{name}/")
+    if not isinstance(entry, dict):
+        return [f"mount {name!r}: MISSING live (no sys/mounts entry)"]
+    want_type = spec.get("type")
+    if entry.get("type") != want_type:
+        findings.append(
+            f"mount {name!r}: type live={entry.get('type')!r} git={want_type!r}"
+        )
+    tune = vault_get(f"sys/mounts/{name}/tune")
+    if tune is None:
+        return findings + [f"mount {name!r}: sys/mounts/{name}/tune unreadable"]
+    config = spec.get("config") or {}
+    for spec_key, live_key in (
+        ("defaultLeaseTTL", "default_lease_ttl"),
+        ("maxLeaseTTL", "max_lease_ttl"),
+    ):
+        if spec_key not in config:
+            raise fail_usage(
+                f"mount {name!r}: spec.config.{spec_key} must be EXPLICIT — "
+                "the operator's tune write always sends it, and an omitted "
+                "value would re-tune the mount to the system default"
+            )
+        want = parse_go_duration(
+            config[spec_key], f"mount {name!r} spec.config.{spec_key}"
+        )
+        got = tune.get(live_key)
+        if got != want:
+            findings.append(
+                f"mount {name!r}: tune field {live_key!r} live={got!r} "
+                f"git={want!r} (resolved seconds)"
+            )
+    want_fnc = bool(config.get("forceNoCache", False))
+    if bool(tune.get("force_no_cache")) != want_fnc:
+        findings.append(
+            f"mount {name!r}: force_no_cache live={tune.get('force_no_cache')!r} "
+            f"git={want_fnc!r}"
+        )
+    live_description = tune.get("description") or ""
+    want_description = spec.get("description") or ""
+    if live_description != want_description:
+        findings.append(
+            f"mount {name!r}: description live={live_description!r} "
+            f"git={want_description!r} (tune does not write description — "
+            "align the CR to live)"
+        )
+    # listing_visibility: the operator always tunes the CRD default "hidden";
+    # Vault treats unset as hidden, so unset/""/"hidden" are all parity with a
+    # CR saying "hidden". Anything else (e.g. "unauth") would be rewritten.
+    want_lv = config.get("listingVisibility", "hidden")
+    live_lv = (entry.get("config") or {}).get("listing_visibility") or "hidden"
+    if live_lv != want_lv:
+        findings.append(
+            f"mount {name!r}: listing_visibility live={live_lv!r} git={want_lv!r}"
+        )
+    # The tune payload also always writes the three header/audit list params
+    # the CRD leaves unset (nil -> empty). A live NON-EMPTY value would be
+    # wiped by the first reconcile.
+    for live_key in (
+        "audit_non_hmac_request_keys",
+        "audit_non_hmac_response_keys",
+        "passthrough_request_headers",
+        "allowed_response_headers",
+    ):
+        got = tune.get(live_key)
+        if got and got not in BENIGN_EXTRA_ROLE_VALUES:
+            findings.append(
+                f"mount {name!r}: live tune field {live_key!r}={got!r} is set "
+                "but the CR cannot express it — the operator's tune write "
+                "would wipe it"
+            )
+    return findings
+
+
+CHECKERS = {
+    "Policy": check_policy,
+    "KubernetesAuthEngineRole": check_role,
+    "PKISecretEngineRole": check_pki_role,
+    "SecretEngineMount": check_mount,
+}
+
+
 def main() -> int:
     findings: list[str] = []
     checked = 0
     for path, doc in iter_managed_docs(MANAGED_DIR):
         name = effective_name(doc)
         spec = doc["spec"]
-        if doc["kind"] == "Policy":
-            findings.extend(check_policy(name, spec))
-        else:
-            findings.extend(check_role(name, spec))
+        findings.extend(CHECKERS[doc["kind"]](name, spec))
         checked += 1
     if checked == 0:
         raise fail_usage(f"no managed CRs found under {MANAGED_DIR}")

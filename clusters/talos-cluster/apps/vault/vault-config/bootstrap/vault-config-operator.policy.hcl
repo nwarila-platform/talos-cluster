@@ -55,6 +55,12 @@ path "auth/kubernetes/role/vault-server"          { capabilities = ["create", "r
 # --- pki-int-tcn intermediate mount + its config/roles (S5; CP-5 serving cert) ---
 # sys/mounts is management-plane but NOT sudo-gated for a secrets-engine mount
 # (unlike sys/auth, which requires sudo). Scoped to the single mount path.
+# sys/mounts READ (no create/update): SecretEngineMount.Exists() reads the
+# whole sys/mounts map to find the mount's accessor (source-verified,
+# vaultengineobject.go retrieveAccessor via GetEngineListPath). This is the
+# read the NOTE above anticipated — info disclosure of mount metadata only,
+# not escalation: no write capability on any mount but pki-int-tcn.
+path "sys/mounts"                  { capabilities = ["read"] }
 path "sys/mounts/pki-int-tcn"      { capabilities = ["create", "read", "update"] }
 path "sys/mounts/pki-int-tcn/tune" { capabilities = ["create", "read", "update"] }
 # CONFIGURE-only sub-paths (NOT the whole mount): the operator authors the

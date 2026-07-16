@@ -367,6 +367,7 @@
 !/scripts/vault-config/
 !/scripts/vault-config/seed-operator-bootstrap.sh
 !/scripts/vault-config/verify-adoption-parity.py
+!/scripts/vault-config/verify-adoption-parity.selftest.py
 !/scripts/sync-deploy-repos.sh
 !/scripts/backup-handoff-ledger.sh
 !/scripts/s3-sync.sh
