@@ -493,6 +493,73 @@ def main() -> int:
                 ),
                 ("path-not-allowlisted", "auth/kubernetes/*"),
             ),
+            # --- CP-5: the single pki-int-tcn sign endpoint (and nothing wider) ---
+            run_case(
+                "pki-sign-vault-server-allowlisted",
+                0,
+                "the exact CP-5 sign endpoint with create+update is covered",
+                policy_path_fixture(
+                    "pki-sign-vault-server.hcl",
+                    "pki-int-tcn/sign/vault-server",
+                    ("create", "update"),
+                ),
+                ("allowlist-covered", "pki-sign-vault-server.hcl"),
+            ),
+            run_case(
+                "pki-sign-excess-capability",
+                1,
+                "delete on the sign endpoint exceeds the allowlisted capabilities",
+                policy_path_fixture(
+                    "pki-sign-excess-capability.hcl",
+                    "pki-int-tcn/sign/vault-server",
+                    ("create", "update", "delete"),
+                ),
+                ("capability-exceeds-allowlist", "pki-int-tcn/sign/vault-server"),
+            ),
+            run_case(
+                "pki-sign-any-role-denied",
+                1,
+                "pki-int-tcn/sign/* (any-role signing) is broader than the allowlist",
+                policy_path_fixture(
+                    "pki-sign-any-role.hcl",
+                    "pki-int-tcn/sign/*",
+                    ("create", "update"),
+                ),
+                ("path-not-allowlisted", "pki-int-tcn/sign/*"),
+            ),
+            run_case(
+                "pki-sign-other-role-denied",
+                1,
+                "signing under a different PKI role name is not allowlisted",
+                policy_path_fixture(
+                    "pki-sign-other-role.hcl",
+                    "pki-int-tcn/sign/tcn-server",
+                    ("create", "update"),
+                ),
+                ("path-not-allowlisted", "pki-int-tcn/sign/tcn-server"),
+            ),
+            run_case(
+                "pki-issue-denied",
+                1,
+                "issue/* (server-side key generation) stays denied even for vault-server",
+                policy_path_fixture(
+                    "pki-issue-denied.hcl",
+                    "pki-int-tcn/issue/vault-server",
+                    ("create", "update"),
+                ),
+                ("path-not-allowlisted", "pki-int-tcn/issue/vault-server"),
+            ),
+            run_case(
+                "pki-mount-broad-denied",
+                1,
+                "pki-int-tcn/* (whole data plane) is not allowlisted",
+                policy_path_fixture(
+                    "pki-mount-broad.hcl",
+                    "pki-int-tcn/*",
+                    ("read",),
+                ),
+                ("path-not-allowlisted", "pki-int-tcn/*"),
+            ),
             run_case(
                 "broad-sys-policies-prefix",
                 1,
