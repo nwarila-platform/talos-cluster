@@ -38,7 +38,7 @@ Design notes:
   - ACL policy-name comparisons are case-folded (Vault lowercases policy
     names on write — also a #312 lesson). Role/mount/issuer names stay exact
     (Kubernetes object names are case-sensitive).
-  - PINNED_CONSUMERS anchor the two consumers whose references live in
+  - PINNED_CONSUMERS anchor the consumers whose references live in
     unstructured content (a CronJob env value, a shell script). If a pinned
     file disappears or no longer contains its expected reference, that is a
     LOUD tooling error (exit 2) — never a silent scope loss.
@@ -69,7 +69,7 @@ MANAGED_DIR = Path("clusters/talos-cluster/apps/vault/vault-config/managed")
 CAPTURE_ROLE_DIR = Path("clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles")
 CLUSTERS_DIR = Path("clusters")
 
-# The two consumers whose Vault-role references live in unstructured content.
+# The consumers whose Vault-role references live in unstructured content.
 # (path, expected substring, role name it references)
 PINNED_CONSUMERS: tuple[tuple[str, str, str], ...] = (
     (
