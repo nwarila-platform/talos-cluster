@@ -56,14 +56,16 @@ eventual Enterprise-vs-OSS decision.
 
 ## vault-admin — the break-glass admin capture (owner decision 2026-07-15)
 
-[`vault-admin.policy.hcl`](vault-admin.policy.hcl) is the BYTE-EXACT capture of
-the live `sys/policies/acl/vault-admin` policy — the identity attached to the
-durable admin token minted by the 2026-07-14 generate-root break-glass
-(`_handoff/VAULT-LIVE-ADMIN-RECOVERY-RUNBOOK.md`). Same paradox class as the
-operator identity: **never operator-managed, never GitOps-applied** — a repo
-compromise must not be able to rewrite or neuter the recovery identity. The
-invariants guard enforces this (protected-identity set: no redhatcop CR may
-carry the name, the operator bootstrap policy may never cover its path, and no
-managed `vault-admin.hcl` may exist). Re-applied only by the owner during a
+[`vault-admin.policy.hcl`](vault-admin.policy.hcl) is the grant-identical,
+LF-normalized capture of the live `sys/policies/acl/vault-admin` policy (the
+raw live body carries one trailing CRLF; every grant line is byte-identical) —
+the identity attached to the durable admin token minted by the 2026-07-14
+generate-root break-glass (`_handoff/VAULT-LIVE-ADMIN-RECOVERY-RUNBOOK.md`).
+Same paradox class as the operator identity: **never operator-managed, never
+GitOps-applied** — a repo compromise must not be able to rewrite or neuter the
+recovery identity. The invariants guard enforces this (protected-identity set,
+case-folded and List-envelope-aware: no redhatcop CR may carry the name, the
+operator bootstrap policy may never cover its path, and no managed
+`vault-admin.hcl` may exist). Re-applied only by the owner during a
 break-glass ceremony; if the live policy is ever changed deliberately,
 re-capture it here in the same PR that records why.

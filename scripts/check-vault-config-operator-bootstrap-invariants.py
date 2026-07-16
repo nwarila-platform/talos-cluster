@@ -44,7 +44,14 @@ OPERATOR_IDENTITY_NAME = "vault-config-operator"
 # self-lockout, ADR-0028) and the break-glass admin policy (a git compromise
 # must not be able to rewrite the recovery identity; owner decision
 # 2026-07-15, captured out-of-band in bootstrap/vault-admin.policy.hcl).
+# All name/path comparisons in this guard are CASE-FOLDED: Vault lowercases
+# ACL policy names on write, so a CR named VAULT-ADMIN lands on vault-admin
+# live — a case-sensitive compare is a green bypass (#312 audit FAIL-2).
 PROTECTED_IDENTITY_NAMES = (OPERATOR_IDENTITY_NAME, "vault-admin")
+
+
+def _fold(name: str) -> str:
+    return name.strip().lower()
 # Compared against S0-normalized paths (leading slash stripped), so `path "/"`
 # and `path ""` both normalize to "" and `path "/*"` to "*".
 ROOT_PATHS = {"", "*", "sys/*", "auth/*", "identity/*"}
@@ -122,12 +129,14 @@ def check_bootstrap_present_and_out_of_scope(
 
 def _managed_names(paths: BootstrapPaths) -> tuple[set[str], set[str]]:
     policy_names = (
-        {p.stem for p in paths.managed_policy_dir.glob("*.hcl")}
+        {_fold(p.stem) for p in paths.managed_policy_dir.glob("*.hcl")}
         if paths.managed_policy_dir.is_dir()
         else set()
     )
     roles_dir = paths.cluster_root / "apps/vault/vault-config/auth/kubernetes/roles"
-    role_names = {p.stem for p in roles_dir.glob("*.json")} if roles_dir.is_dir() else set()
+    role_names = (
+        {_fold(p.stem) for p in roles_dir.glob("*.json")} if roles_dir.is_dir() else set()
+    )
     # CP-4 S4a: managed objects live as redhatcop CRs (GitOps-reconciled). The
     # effective Vault object name is spec.name when set, else metadata.name
     # (mirrors the operator's GetPath()). The operator's own identity is
@@ -148,6 +157,7 @@ def _managed_names(paths: BootstrapPaths) -> tuple[set[str], set[str]]:
                 name = spec.get("name") or metadata.get("name")
                 if not isinstance(name, str) or not name:
                     continue
+                name = _fold(name)
                 if name in PROTECTED_IDENTITY_NAMES:
                     continue
                 if kind == "Policy":
@@ -193,7 +203,11 @@ def check_bootstrap_policy_content(
     seen_role: set[str] = set()
 
     for stanza in stanzas:
-        norm = s0.normalize_vault_path(stanza.path)
+        # Case-fold the granted path before every comparison (audit FAIL-2):
+        # Vault lowercases ACL policy names, so `sys/policies/acl/VAULT-ADMIN`
+        # writes to vault-admin live — the fold makes the guard see it.
+        norm = _fold(s0.normalize_vault_path(stanza.path))
+        folded_path = _fold(stanza.path)
         caps = {c.lower() for c in stanza.capabilities}
         where = f"path {stanza.path!r} line {stanza.line}"
 
@@ -207,7 +221,7 @@ def check_bootstrap_policy_content(
                 "must be path-scoped"
             )
         # Self-escalation: any path that COVERS the operator's own identity.
-        if s0.covers(stanza.path, self_policy) or s0.covers(stanza.path, self_role):
+        if s0.covers(folded_path, self_policy) or s0.covers(folded_path, self_role):
             findings.append(
                 f"bootstrap policy grants a path that COVERS its own identity "
                 f"({OPERATOR_IDENTITY_NAME}) — the operator could rewrite its own "
@@ -215,8 +229,8 @@ def check_bootstrap_policy_content(
             )
         # Break-glass protection: the operator must never be able to touch
         # the vault-admin recovery policy (or a role of that name).
-        if s0.covers(stanza.path, f"{MANAGED_POLICY_PREFIX}vault-admin") or s0.covers(
-            stanza.path, f"{MANAGED_ROLE_PREFIX}vault-admin"
+        if s0.covers(folded_path, f"{MANAGED_POLICY_PREFIX}vault-admin") or s0.covers(
+            folded_path, f"{MANAGED_ROLE_PREFIX}vault-admin"
         ):
             findings.append(
                 f"bootstrap policy grants a path that COVERS the break-glass "
@@ -277,9 +291,24 @@ def _iter_yaml_docs(path: Path):
         docs = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     except (OSError, yaml.YAMLError) as exc:
         raise SystemExit(f"failed to parse {path}: {exc}")
+    yield from _flatten_docs(docs)
+
+
+def _flatten_docs(docs):
+    # kubectl kustomize (Flux's builder) EXPANDS a k8s List envelope
+    # (kind: List / kind: <Type>List with an items: array) into standalone
+    # resources, so a CR wrapped in a List IS applied to the cluster. A guard
+    # that only looks at top-level documents scans right past it (#312 audit
+    # FAIL-1) — descend into items (recursively, Lists can nest).
     for doc in docs:
-        if isinstance(doc, dict):
-            yield doc
+        if not isinstance(doc, dict):
+            continue
+        kind = doc.get("kind")
+        items = doc.get("items")
+        if isinstance(kind, str) and kind.endswith("List") and isinstance(items, list):
+            yield from _flatten_docs(items)
+            continue
+        yield doc
 
 
 def check_identity_never_managed(paths: BootstrapPaths, findings: list[str]) -> None:
@@ -308,7 +337,9 @@ def check_identity_never_managed(paths: BootstrapPaths, findings: list[str]) -> 
                 continue
             name = (doc.get("metadata") or {}).get("name")
             spec = doc.get("spec") or {}
-            candidates = {name, spec.get("name")}
+            candidates = {
+                _fold(c) for c in (name, spec.get("name")) if isinstance(c, str)
+            }
             for protected in PROTECTED_IDENTITY_NAMES:
                 if protected in candidates:
                     findings.append(

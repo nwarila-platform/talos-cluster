@@ -508,6 +508,25 @@ def collect_hcl_sources(policy_roots: Iterable[Path]) -> list[PolicySource]:
     return [load_policy_file_source(path) for path in iter_hcl_paths(policy_roots)]
 
 
+def flatten_k8s_documents(documents: Iterable[object]) -> Iterable[dict]:
+    """Yield every mapping document, descending into k8s List envelopes.
+
+    kubectl kustomize (Flux's builder) expands a ``kind: List`` /
+    ``kind: <Type>List`` envelope's ``items`` into standalone resources, so a
+    Policy CR wrapped in a List IS applied live. Scanning only top-level
+    documents walks right past it (#312 audit FAIL-1) — descend recursively.
+    """
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        kind = document.get("kind")
+        items = document.get("items")
+        if isinstance(kind, str) and kind.endswith("List") and isinstance(items, list):
+            yield from flatten_k8s_documents(items)
+            continue
+        yield document
+
+
 def collect_policy_cr_sources(cr_roots: Iterable[Path]) -> list[PolicySource]:
     sources: list[PolicySource] = []
     for path in iter_yaml_paths(cr_roots):
@@ -520,9 +539,7 @@ def collect_policy_cr_sources(cr_roots: Iterable[Path]) -> list[PolicySource]:
         except yaml.YAMLError as exc:
             raise GuardUsageError(f"{path} does not parse as YAML: {exc}") from exc
 
-        for document in documents:
-            if not isinstance(document, dict):
-                continue
+        for document in flatten_k8s_documents(documents):
             if document.get("apiVersion") != "redhatcop.redhat.io/v1alpha1":
                 continue
             if document.get("kind") != "Policy":
