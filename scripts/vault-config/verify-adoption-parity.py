@@ -298,6 +298,10 @@ EXPECTED_PKI_ROLE_DEFAULTS = {
     "allowed_serial_numbers": [],
     "allowed_user_ids": [],
     "allowed_uri_sans_template": False,
+    # signature_bits is ISSUER-KEY-TYPE-dependent (Vault validateRole →
+    # ValidateDefaultOrValueHashBits): an ECDSA issuer preserves 0, an RSA
+    # issuer would store 256. 0 is correct for THIS cluster (pki-int-tcn's
+    # intermediate is ECDSA P-384, ADR-0013); re-derive if the issuer changes.
     "signature_bits": 0,
     "use_pss": False,
     "not_after": "",
