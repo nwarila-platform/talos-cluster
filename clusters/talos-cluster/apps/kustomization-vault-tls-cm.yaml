@@ -40,3 +40,9 @@ spec:
     - apiVersion: cert-manager.io/v1
       kind: ClusterIssuer
       current: has(status.conditions) && status.conditions.exists(c, c.type == 'Ready' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    # CP-5c: gate Ready on the Certificate too — Ready=True means a cert was
+    # ISSUED into the target Secret (a failed issuance leaves Ready=False and
+    # the Kustomization NotReady at timeout, fail-closed and visible).
+    - apiVersion: cert-manager.io/v1
+      kind: Certificate
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'Ready' && c.status == 'True' && c.observedGeneration == metadata.generation)

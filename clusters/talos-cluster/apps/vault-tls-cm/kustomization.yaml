@@ -8,3 +8,4 @@ resources:
   - serviceaccount.yaml
   - rbac-token-request.yaml
   - clusterissuer.yaml
+  - certificate.yaml
