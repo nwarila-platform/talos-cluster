@@ -1,0 +1,51 @@
+# CP-5 — managed Kubernetes-auth role for the cert-manager Vault ClusterIssuer
+# (the `vault-server` identity, forward-declared in the bootstrap policy since
+# S2b and live-seeded). CREATE-class (not adoption): no live role exists until
+# the operator's first reconcile writes it, so pre-merge parity 404s on it by
+# design and the proof is the POST-reconcile parity run.
+#
+# Binding discipline (Hardened Model A): bound to the DEDICATED, pod-less
+# ServiceAccount cert-manager-vault-issuer in the static cert-manager
+# namespace — an unforgeable SA-name binding, never a mutable label. The
+# cert-manager controller mints 600s TokenRequests for that SA
+# (serviceAccountRef; the chart ships no serviceaccounts/token RBAC, the
+# vault-tls-cm app adds the resourceNames-scoped Role/RoleBinding).
+#
+# audience: cert-manager v1.21.0 sends two default audiences on the minted
+# JWT — vault://<cluster-issuer-name> and the spec.vault.server URL
+# (internal/vault/vault.go:576-583). Pinning the role to the vault:// form
+# means a token minted for this SA for ANY OTHER purpose (no vault://
+# audience) cannot log in to this role. Vault validates it against the JWT
+# aud claim and passes it to TokenReview (plugin v0.24.1 path_login.go).
+#
+# tokenTTL 300s: every reconcile mints a fresh single-use Vault token that is
+# used for exactly one sign call immediately after login and then abandoned
+# (source-verified: v1.21.0 makes 2 Vault calls per issuance — unauthenticated
+# POST auth/kubernetes/login + one token-authenticated POST to the sign path;
+# it never calls auth/token/lookup-self or renew-self and starts no lifetime
+# watcher, so token_no_default_policy=true is safe with a sign-only policy —
+# the VSO renew-self requirement does NOT transfer to cert-manager). A short
+# TTL ages the abandoned tokens out quickly.
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: KubernetesAuthEngineRole
+metadata:
+  name: vault-server
+  namespace: vault-config-operator
+spec:
+  path: kubernetes
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  targetServiceAccounts:
+    - cert-manager-vault-issuer
+  targetNamespaces:
+    targetNamespaces:
+      - cert-manager
+  policies:
+    - vault-server
+  aliasNameSource: serviceaccount_uid
+  tokenTTL: 300
+  tokenNoDefaultPolicy: true
+  audience: "vault://vault-server"

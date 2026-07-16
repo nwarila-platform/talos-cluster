@@ -1,0 +1,34 @@
+# CP-5 — TokenRequest grant for the ClusterIssuer's dedicated SA.
+#
+# cert-manager v1.21.0 ships NO serviceaccounts/token RBAC in its chart
+# (source-verified: deploy/charts/cert-manager/templates/rbac.yaml has zero
+# serviceaccounts grants), so the operator of the cluster must grant the
+# controller the right to mint tokens for the issuer SA. Scoped as tightly as
+# RBAC allows: single verb (create), single resource (serviceaccounts/token),
+# single resourceName (cert-manager-vault-issuer), namespace-local Role (not
+# a ClusterRole) — the controller can mint tokens for exactly this one SA and
+# no other.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cert-manager-vault-issuer-tokenrequest
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["cert-manager-vault-issuer"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cert-manager-vault-issuer-tokenrequest
+  namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cert-manager-vault-issuer-tokenrequest
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager

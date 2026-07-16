@@ -1,7 +1,10 @@
 # CP-4 S4a — the MANAGED Vault-config set, reconciled by Flux through the
 # vault-config-managed Flux Kustomization (prune: false until S7 — see
 # apps/kustomization-vault-config-managed.yaml). Every CR here is an ADOPTION
-# of a pre-existing live object (adopt-before-prune, the crown-jewel care).
+# of a pre-existing live object (adopt-before-prune, the crown-jewel care) —
+# EXCEPT the CP-5 vault-server policy/role pair, which is CREATE-class: the
+# operator's first reconcile writes the new live objects (forward-declared in
+# the bootstrap policy since S2b), so post-reconcile parity is their proof.
 #
 # NOT here (deliberately):
 # - bootstrap/ — the operator's OWN identity; never GitOps-applied (ADR-0028,
@@ -22,8 +25,10 @@ resources:
   - policy-vault-snapshot-backup.yaml
   - policy-vso-org-pull-read-hwg.yaml
   - policy-vso-org-pull-read-nwp.yaml
+  - policy-vault-server.yaml
   - role-source-minter-hwg.yaml
   - role-vault-snapshot-backup.yaml
+  - role-vault-server.yaml
   - secretenginemount-pki-int-tcn.yaml
   - pkirole-vault-server.yaml
   - pkirole-tcn-server.yaml

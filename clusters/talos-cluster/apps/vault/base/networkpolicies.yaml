@@ -86,6 +86,36 @@ spec:
         - port: 8200
           protocol: TCP
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cert-manager-vault-api-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    # CP-5: the cert-manager controller logs in (auth/kubernetes/login) and
+    # signs CSRs (pki-int-tcn/sign/vault-server) over the API, plus the
+    # issuer-readiness sys/health probe. Scoped to the controller pod only —
+    # webhook/cainjector/startupapicheck get no Vault path. Every new Vault
+    # client needs BOTH this ingress allow AND an egress CNP on its own side
+    # (Vault ingress = k8s NetworkPolicy default-deny, NOT CNP).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cert-manager
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cert-manager
+              app.kubernetes.io/component: controller
+      ports:
+        - port: 8200
+          protocol: TCP
+---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

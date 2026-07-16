@@ -3,21 +3,42 @@ kind: CiliumNetworkPolicy
 metadata:
   name: allow-cert-manager-egress
   namespace: cert-manager
-spec:
+specs:
   # Helm CRD hook Jobs run without stable app labels, so DNS/API egress stays
   # namespace-scoped instead of component-label-scoped.
-  endpointSelector: {}
-  egress:
-    - toEndpoints:
-        - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": kube-system
-            "k8s:k8s-app": kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: ANY
-          rules:
-            dns:
-              - matchPattern: "*"
-    - toEntities:
-        - kube-apiserver
+  - endpointSelector: {}
+    egress:
+      - toEndpoints:
+          - matchLabels:
+              "k8s:io.kubernetes.pod.namespace": kube-system
+              "k8s:k8s-app": kube-dns
+        toPorts:
+          - ports:
+              - port: "53"
+                protocol: ANY
+            rules:
+              dns:
+                - matchPattern: "*"
+      - toEntities:
+          - kube-apiserver
+  # CP-5: only the CONTROLLER reaches Vault (:8200) — it performs the
+  # ClusterIssuer's k8s-auth login + CSR sign calls. Scoped to the controller
+  # pod label, NOT namespace-wide, so webhook/cainjector/hook Jobs get no
+  # Vault egress (the vault-config-operator/VSO precedent). Mirrors the
+  # canonical component=server/name=vault selector the other Vault consumers
+  # use; the Vault side has the matching allow-cert-manager-vault-api-ingress
+  # NetworkPolicy (Vault ingress = k8s NetworkPolicy default-deny, NOT CNP).
+  - endpointSelector:
+      matchLabels:
+        app.kubernetes.io/name: cert-manager
+        app.kubernetes.io/component: controller
+    egress:
+      - toEndpoints:
+          - matchLabels:
+              "k8s:io.kubernetes.pod.namespace": deploy-vault
+              "k8s:app.kubernetes.io/component": server
+              "k8s:app.kubernetes.io/name": vault
+        toPorts:
+          - ports:
+              - port: "8200"
+                protocol: TCP

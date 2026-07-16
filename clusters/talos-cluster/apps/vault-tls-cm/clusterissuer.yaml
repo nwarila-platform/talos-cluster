@@ -1,0 +1,37 @@
+# CP-5 — the cert-manager Vault ClusterIssuer that auto-renews certificates
+# from the pki-int-tcn intermediate CA (first consumer: Vault's own serving
+# cert, replacing the static SOPS-delivered one whose expiry is 2026-09-10).
+#
+# NAME IS LOAD-BEARING: cert-manager v1.21.0 mints the SA token with default
+# audiences [vault://<cluster-issuer-name>, <spec.vault.server>]
+# (internal/vault/vault.go:576-583) and the managed Vault k8s-auth role pins
+# audience = "vault://vault-server" — renaming this issuer breaks the pairing.
+#
+# auth.kubernetes.mountPath is omitted: the default constant is
+# /v1/auth/kubernetes (pkg/apis/certmanager/v1/const.go:42), which is exactly
+# our mount. serviceAccountRef resolves in the cluster-resource-namespace,
+# which the Helm chart defaults to the release namespace (cert-manager) —
+# where serviceaccount.yaml creates the dedicated SA.
+#
+# caBundle = the Trinity Technical Services ROOT CA (public material; same
+# trust anchor as apps/dr-backup/vault-ca-configmap.yaml and the VSO CA
+# secret). It validates the serving chain (leaf <- TCN Internal Intermediate
+# CA 2026 <- root) on the issuer's HTTPS calls to Vault.
+#
+# The sign path is the FULL Vault endpoint (mount/sign/role): issuance is a
+# CSR sign — the private key never leaves the cluster, and the vault-server
+# PKI role constrains every certificate parameter server-side.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: vault-server
+spec:
+  vault:
+    server: https://vault.deploy-vault.svc.cluster.local:8200
+    path: pki-int-tcn/sign/vault-server
+    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUNVekNDQWRtZ0F3SUJBZ0lVWCttQlk5ZG50cVpTNXpHMEZuR3lUUDJwbTQ0d0NnWUlLb1pJemowRUF3TXcKVnpFd01DNEdBMVVFQXd3blZISnBibWwwZVNCVVpXTm9ibWxqWVd3Z1UyVnlkbWxqWlhNZ1VtOXZkQ0JEUVNBeQpNREkyTVNNd0lRWURWUVFLREJwVWNtbHVhWFI1SUZSbFkyaHVhV05oYkNCVFpYSjJhV05sY3pBZUZ3MHlOakEyCk1USXhNakU0TVRWYUZ3MDBOakEyTURjeE1qRTRNVFZhTUZjeE1EQXVCZ05WQkFNTUoxUnlhVzVwZEhrZ1ZHVmoKYUc1cFkyRnNJRk5sY25acFkyVnpJRkp2YjNRZ1EwRWdNakF5TmpFak1DRUdBMVVFQ2d3YVZISnBibWwwZVNCVQpaV05vYm1sallXd2dVMlZ5ZG1salpYTXdkakFRQmdjcWhrak9QUUlCQmdVcmdRUUFJZ05pQUFSSjQwMU40S1N3Cm1lR1RlN2pjV0pyQlFKb2p0Qy9kNnh6dlRHOHhBK1NVRVN1a05NSHFnQUFtSkxaeG1pbmdLNnFYOHhPVFlMN3UKeUwzYlpNaklrTExjNHh0ZTd1YmMrbGM5TlBSNUFlZ1ZIcWlYM0QvVVBOd1BhQkxqM2I5S1l0Q2paakJrTUJJRwpBMVVkRXdFQi93UUlNQVlCQWY4Q0FRRXdEZ1lEVlIwUEFRSC9CQVFEQWdFR01CMEdBMVVkRGdRV0JCU01SSTFxClFUS0dUL3lodTJydHZtUGJzbzZwT3pBZkJnTlZIU01FR0RBV2dCU01SSTFxUVRLR1QveWh1MnJ0dm1QYnNvNnAKT3pBS0JnZ3Foa2pPUFFRREF3Tm9BREJsQWpFQSthS1ZXYklobGpUaGlkSUNHTnAzSUZoQk1ld3JFT3BBZ0pBMQpyMFFnbVJVZ05LTy85N2VRaDcyRS9kcnljcm5jQWpBTFNaZzNQaFh5dFVQR0RESVY3bGFKRzhTMmpsNFZlOHJiCm1TbDIvN2pVUEpPaDVRTmludzAwZjZEYTFIWUhwTG89Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+    auth:
+      kubernetes:
+        role: vault-server
+        serviceAccountRef:
+          name: cert-manager-vault-issuer

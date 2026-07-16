@@ -59,7 +59,10 @@ MANAGED_POLICY_PREFIX = "sys/policies/acl/"
 MANAGED_ROLE_PREFIX = "auth/kubernetes/role/"
 # Forward-looking managed objects that the operator will create later (S5) — not
 # yet a file in the managed tree, but allowed in the bootstrap enumeration.
-FORWARD_LOOKING_NAMES = {"vault-server"}
+# Empty since CP-5b: vault-server became a managed-in-git Policy/Role CR pair,
+# so nothing is forward-declared anymore. Names go here ONLY between the PR
+# that grants them in the bootstrap policy and the PR that lands their CRs.
+FORWARD_LOOKING_NAMES: set[str] = set()
 # Throwaway S3 smoke objects: the only names allowed to carry `delete` before
 # prune is armed (S7). Any managed-plane path containing this marker is smoke.
 SMOKE_MARKER = "smoke"

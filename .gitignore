@@ -222,6 +222,12 @@
 !/clusters/talos-cluster/apps/vault-tls/
 !/clusters/talos-cluster/apps/vault-tls/kustomization.yaml
 !/clusters/talos-cluster/apps/vault-tls/vault-serving-cert.sops.yaml
+!/clusters/talos-cluster/apps/kustomization-vault-tls-cm.yaml
+!/clusters/talos-cluster/apps/vault-tls-cm/
+!/clusters/talos-cluster/apps/vault-tls-cm/kustomization.yaml
+!/clusters/talos-cluster/apps/vault-tls-cm/serviceaccount.yaml
+!/clusters/talos-cluster/apps/vault-tls-cm/rbac-token-request.yaml
+!/clusters/talos-cluster/apps/vault-tls-cm/clusterissuer.yaml
 !/clusters/talos-cluster/tenants/
 !/clusters/talos-cluster/tenants/kustomization.yaml
 !/clusters/talos-cluster/tenants/arc-runners/

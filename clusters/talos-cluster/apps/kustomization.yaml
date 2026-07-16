@@ -26,3 +26,4 @@ resources:
   - vault-restore-validator
   - vault-secrets-operator
   - vault-tls
+  - kustomization-vault-tls-cm.yaml
