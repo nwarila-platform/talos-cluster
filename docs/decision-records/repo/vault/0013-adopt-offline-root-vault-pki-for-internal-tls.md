@@ -188,23 +188,24 @@ The Phase-1 listener flip is therefore:
    `talos-cluster`. Do not let a tenant repo self-declare its own trust-root
    secret.
 
-Required Vault listener SANs:
+Required Vault listener SANs (AMENDED 2026-07-16, CP-5d — the mid-form
+`.svc` names were listed as required here but the serving cert has NEVER
+carried them since original issuance and every consumer connects by full
+FQDN, consistent with this ADR's own "Use FQDNs instead" rule; the mid-forms
+remain in the `vault-server` PKI role's `allowed_domains`, so re-adding one
+later is a Certificate edit, not a role change):
 
 - `vault.tcn.trinitytechnicalservices.com`
-- `vault.deploy-vault.svc`
 - `vault.deploy-vault.svc.cluster.local`
-- `vault-internal.deploy-vault.svc`
 - `vault-internal.deploy-vault.svc.cluster.local`
-- `vault-0.vault-internal.deploy-vault.svc`
-- `vault-1.vault-internal.deploy-vault.svc`
-- `vault-2.vault-internal.deploy-vault.svc`
 - `vault-0.vault-internal.deploy-vault.svc.cluster.local`
 - `vault-1.vault-internal.deploy-vault.svc.cluster.local`
 - `vault-2.vault-internal.deploy-vault.svc.cluster.local`
 
-Do not include short SANs such as `vault`, `vault-internal`, or
-`*.vault-internal`. Use FQDNs instead. Add IP SAN `10.69.112.62` only if a
-client truly connects to the VIP by IP rather than by DNS.
+Do not include short SANs such as `vault`, `vault-internal`,
+`*.vault-internal`, or the mid-form `<svc>.deploy-vault.svc` names. Use
+FQDNs instead. Add IP SAN `10.69.112.62` only if a client truly connects to
+the VIP by IP rather than by DNS.
 
 Vault's TCP listener documentation marks `tls_cert_file` as reloadable on
 SIGHUP, so a future renewer may update the Secret and signal Vault. The safer

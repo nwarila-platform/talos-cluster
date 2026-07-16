@@ -24,6 +24,7 @@ resources:
   - serviceaccount-rbac.yaml
   - services.yaml
   - vault-statefulset.yaml
+  - vault-tls-trust-configmap.yaml
   - networkpolicies.yaml
   - allow-tenant-vault-api-ingress.yaml
 

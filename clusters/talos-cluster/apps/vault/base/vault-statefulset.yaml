@@ -247,17 +247,33 @@ spec:
           secret:
             secretName: vault-ra-cert
             defaultMode: 0400
+        # CP-5d cutover: the serving LEAF+KEY now come from the cert-manager
+        # managed Secret (auto-renewed ~every 60d by the vault-server
+        # ClusterIssuer; CP-5c), while the TRUST ANCHOR (tls_client_ca_file +
+        # raft leader_ca_cert_file read /vault/tls/ca.crt) comes from the
+        # vault-tls-trust ConfigMap — byte-identical to the pre-cutover
+        # root+intermediate bundle, so the roll changes ONLY the leaf/key and
+        # never silently moves a trust decision (the issued Secret's ca.crt
+        # carries just the intermediate, which would have narrowed it).
+        # ROLLBACK: revert this volume to `secret: vault-serving-cert` (the
+        # SOPS-delivered static secret, kept live until the first auto-renewal
+        # is proven; its cert is valid to 2026-09-10).
         - name: vault-serving-cert
-          secret:
-            secretName: vault-serving-cert
+          projected:
             defaultMode: 0400
-            items:
-              - key: tls.crt
-                path: tls.crt
-              - key: tls.key
-                path: tls.key
-              - key: ca.crt
-                path: ca.crt
+            sources:
+              - secret:
+                  name: vault-serving-cert-cm
+                  items:
+                    - key: tls.crt
+                      path: tls.crt
+                    - key: tls.key
+                      path: tls.key
+              - configMap:
+                  name: vault-tls-trust
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         # Shared, memory-backed (tmpfs) volume carrying the short-lived AWS
         # credentials file the helper writes and Vault's awskms seal reads.
         # Never touches disk; sized for a single credentials file.
