@@ -125,6 +125,31 @@ def policy_cr_path_fixture(
     return fixture
 
 
+def policy_cr_list_envelope_fixture(
+    root: Path,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    # #312 audit FAIL-1: kustomize expands kind:List items into standalone
+    # resources — a List-wrapped Policy CR IS applied, so it must be scanned.
+    write_text(
+        root / "vault/policy-cr-list.yaml",
+        """
+        apiVersion: v1
+        kind: List
+        items:
+        - apiVersion: redhatcop.redhat.io/v1alpha1
+          kind: Policy
+          metadata:
+            name: wrapped-policy
+          spec:
+            policy: |
+              path "auth/*" {
+                capabilities = ["update"]
+              }
+        """,
+    )
+    return (), (root / "vault",)
+
+
 def malformed_hcl_fixture(root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     write_text(
         root / "policies/malformed.hcl",
@@ -587,6 +612,13 @@ def main() -> int:
                 "Policy CR spec.policy is scanned and denied",
                 policy_cr_path_fixture("auth/*", ("update",)),
                 ("Policy CR synthetic-policy", "path-not-allowlisted", "auth/*"),
+            ),
+            run_case(
+                "policy-cr-list-envelope",
+                1,
+                "List-wrapped Policy CR is descended into and denied",
+                policy_cr_list_envelope_fixture,
+                ("Policy CR wrapped-policy", "path-not-allowlisted", "auth/*"),
             ),
             run_case(
                 "malformed-hcl",

@@ -253,6 +253,102 @@ def case_cr_specname_enumeration(root: Path) -> None:
     ))
 
 
+def case_vault_admin_policy_cr(root: Path) -> None:
+    # Break-glass protection: a redhatcop Policy CR managing vault-admin.
+    build_valid_tree(root)
+    cr = guard.paths_for_root(root).cluster_root / "apps/foo/breakglass.yaml"
+    write(cr, (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: Policy\n"
+        "metadata:\n"
+        "  name: vault-admin\n"
+        "spec:\n"
+        "  policy: |\n"
+        '    path "secret/data/x" { capabilities = ["read"] }\n'
+    ))
+
+
+def case_vault_admin_specname_bypass(root: Path) -> None:
+    build_valid_tree(root)
+    cr = guard.paths_for_root(root).cluster_root / "apps/foo/sneaky-admin.yaml"
+    write(cr, (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: Policy\n"
+        "metadata:\n"
+        "  name: innocent-name\n"
+        "spec:\n"
+        "  name: vault-admin\n"
+        "  policy: |\n"
+        '    path "secret/data/x" { capabilities = ["read"] }\n'
+    ))
+
+
+def case_bootstrap_grants_vault_admin_path(root: Path) -> None:
+    # The operator bootstrap policy must never cover the break-glass policy.
+    build_valid_tree(
+        root,
+        VALID_POLICY
+        + 'path "sys/policies/acl/vault-admin" { capabilities = ["create", "read", "update"] }\n',
+    )
+
+
+def case_vault_admin_list_envelope_bypass(root: Path) -> None:
+    # #312 audit FAIL-1: kustomize expands a kind:List envelope into standalone
+    # resources, so a List-wrapped vault-admin Policy CR IS applied live. The
+    # guard must descend into items.
+    build_valid_tree(root)
+    cr = guard.paths_for_root(root).cluster_root / "apps/foo/wrapped.yaml"
+    write(cr, (
+        "apiVersion: v1\n"
+        "kind: List\n"
+        "items:\n"
+        "- apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "  kind: Policy\n"
+        "  metadata:\n"
+        "    name: vault-admin\n"
+        "  spec:\n"
+        "    policy: |\n"
+        '      path "secret/data/x" { capabilities = ["read"] }\n'
+    ))
+
+
+def case_vault_admin_case_fold_bypass(root: Path) -> None:
+    # #312 audit FAIL-2: Vault lowercases ACL policy names on write, so a CR
+    # named VAULT-ADMIN lands on vault-admin live. The name compare must fold.
+    build_valid_tree(root)
+    cr = guard.paths_for_root(root).cluster_root / "apps/foo/shouty-admin.yaml"
+    write(cr, (
+        "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+        "kind: Policy\n"
+        "metadata:\n"
+        "  name: innocent-name\n"
+        "spec:\n"
+        "  name: VAULT-ADMIN\n"
+        "  policy: |\n"
+        '    path "secret/data/x" { capabilities = ["read"] }\n'
+    ))
+
+
+def case_bootstrap_grants_vault_admin_case_path(root: Path) -> None:
+    # #312 audit FAIL-2 (bootstrap leg): a case-variant grant still covers the
+    # break-glass policy once Vault folds the name — the covers() compare must
+    # fold too.
+    build_valid_tree(
+        root,
+        VALID_POLICY
+        + 'path "sys/policies/acl/VAULT-ADMIN" { capabilities = ["create", "read", "update"] }\n',
+    )
+
+
+def case_clean_with_vault_admin_capture(root: Path) -> None:
+    # The out-of-band vault-admin DR capture in bootstrap/ must NOT trip the
+    # guard (it is deliberately outside the managed set and the S0 scan).
+    build_valid_tree(root)
+    bdir = guard.paths_for_root(root).bootstrap_dir
+    write(bdir / "vault-admin.policy.hcl",
+          'path "auth/*" { capabilities = ["create", "read", "update", "delete", "list", "sudo"] }\n')
+
+
 def case_bootstrap_in_kustomization(root: Path) -> None:
     build_valid_tree(root)
     bdir = guard.paths_for_root(root).bootstrap_dir
@@ -284,6 +380,13 @@ CASES = [
     ("clean-cr-only-managed-set", case_clean_cr_only, True),
     ("cr-missing-enumeration", case_cr_missing_enumeration, False),
     ("cr-specname-enumeration", case_cr_specname_enumeration, False),
+    ("vault-admin-as-policy-cr", case_vault_admin_policy_cr, False),
+    ("vault-admin-specname-bypass", case_vault_admin_specname_bypass, False),
+    ("bootstrap-grants-vault-admin-path", case_bootstrap_grants_vault_admin_path, False),
+    ("vault-admin-list-envelope-bypass", case_vault_admin_list_envelope_bypass, False),
+    ("vault-admin-case-fold-bypass", case_vault_admin_case_fold_bypass, False),
+    ("bootstrap-grants-vault-admin-case-path", case_bootstrap_grants_vault_admin_case_path, False),
+    ("clean-with-vault-admin-capture", case_clean_with_vault_admin_capture, True),
     ("bootstrap-referenced-by-kustomization", case_bootstrap_in_kustomization, False),
 ]
 
