@@ -1,0 +1,76 @@
+# CP-4 S5b — ADOPTED live PKI issuance role (redhat-cop vault-config-operator).
+# Field-for-field translation of the live pki-int-tcn/roles/vault-server
+# captured 2026-07-16 (EC P-256, 90d, CSR-driven server role for the Vault
+# serving cert — the CP-5 cert-manager issuer signs against THIS role).
+# Every PKIRole.toMap() payload field is EXPLICIT (parity script enforces it);
+# the 11 live fields the payload cannot express (issuer_ref,
+# allow_wildcard_certificates, cn_validations, serial_number_source, ...) are
+# live-at-Vault-default, so the operator's full-replace rewrite lands
+# field-identical (proven by verify-adoption-parity.py read-back, pre + post).
+# Role writes are idempotent RE-WRITES (S4a-declared behavior); a bad write
+# cannot touch the CA or existing certs — instant rollback = re-write the
+# captured JSON. Connection: none (global VAULT_ADDR/VAULT_CACERT, PR #309).
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: PKISecretEngineRole
+metadata:
+  name: vault-server
+  namespace: vault-config-operator
+spec:
+  path: pki-int-tcn
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  TTL: "2160h"
+  maxTTL: "2160h"
+  notBeforeDuration: "30s"
+  allowLocalhost: false
+  allowedDomains:
+    - vault.tcn.trinitytechnicalservices.com
+    - vault.deploy-vault.svc
+    - vault.deploy-vault.svc.cluster.local
+    - vault-internal.deploy-vault.svc
+    - vault-internal.deploy-vault.svc.cluster.local
+    - vault-0.vault-internal.deploy-vault.svc
+    - vault-1.vault-internal.deploy-vault.svc
+    - vault-2.vault-internal.deploy-vault.svc
+    - vault-0.vault-internal.deploy-vault.svc.cluster.local
+    - vault-1.vault-internal.deploy-vault.svc.cluster.local
+    - vault-2.vault-internal.deploy-vault.svc.cluster.local
+  allowedDomainsTemplate: false
+  allowBareDomains: true
+  allowSubdomains: false
+  allowGlobDomains: false
+  allowAnyName: false
+  enforceHostnames: true
+  allowIPSans: true
+  allowedURISans: []
+  allowedOtherSans: []
+  serverFlag: true
+  clientFlag: false
+  codeSigningFlag: false
+  emailProtectionFlag: false
+  keyType: "ec"
+  keyBits: 256
+  keyUsage:
+    - DigitalSignature
+    - KeyAgreement
+    - KeyEncipherment
+  extKeyUsage: []
+  extKeyUsageOids: []
+  useCSRCommonName: true
+  useCSRSans: true
+  ou: []
+  organization: []
+  country: []
+  locality: []
+  province: []
+  streetAddress: []
+  postalCode: []
+  serialNumber: ""
+  generateLease: false
+  noStore: false
+  requireCn: true
+  policyIdentifiers: []
+  basicConstraintsValidForNonCa: false

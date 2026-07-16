@@ -57,3 +57,14 @@ spec:
     - apiVersion: redhatcop.redhat.io/v1alpha1
       kind: KubernetesAuthEngineRole
       current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    # CP-4 S5b: the two PKI adoption kinds share the operator's condition
+    # machinery (vaultresourcecontroller ManageOutcome), so the same
+    # fail-closed expression applies. Without an expr a new kind would fall
+    # back to kstatus and read Current immediately — a failed adoption would
+    # look healthy.
+    - apiVersion: redhatcop.redhat.io/v1alpha1
+      kind: SecretEngineMount
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    - apiVersion: redhatcop.redhat.io/v1alpha1
+      kind: PKISecretEngineRole
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)

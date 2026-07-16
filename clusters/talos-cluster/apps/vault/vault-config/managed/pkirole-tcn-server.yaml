@@ -1,0 +1,61 @@
+# CP-4 S5b — ADOPTED live PKI issuance role (redhat-cop vault-config-operator).
+# Field-for-field translation of the live pki-int-tcn/roles/tcn-server
+# captured 2026-07-16: the general internal-server role of the tcn private CA
+# (Candidate-A cert architecture — Vault PKI as the central internal CA);
+# 30d TTL, subdomains of tcn.trinitytechnicalservices.com + cluster.local.
+# Same adoption/parity/rollback discipline as pkirole-vault-server.yaml.
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: PKISecretEngineRole
+metadata:
+  name: tcn-server
+  namespace: vault-config-operator
+spec:
+  path: pki-int-tcn
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  TTL: "720h"
+  maxTTL: "2160h"
+  notBeforeDuration: "30s"
+  allowLocalhost: false
+  allowedDomains:
+    - tcn.trinitytechnicalservices.com
+    - cluster.local
+  allowedDomainsTemplate: false
+  allowBareDomains: true
+  allowSubdomains: true
+  allowGlobDomains: false
+  allowAnyName: false
+  enforceHostnames: true
+  allowIPSans: false
+  allowedURISans: []
+  allowedOtherSans: []
+  serverFlag: true
+  clientFlag: false
+  codeSigningFlag: false
+  emailProtectionFlag: false
+  keyType: "ec"
+  keyBits: 256
+  keyUsage:
+    - DigitalSignature
+    - KeyAgreement
+    - KeyEncipherment
+  extKeyUsage: []
+  extKeyUsageOids: []
+  useCSRCommonName: true
+  useCSRSans: true
+  ou: []
+  organization: []
+  country: []
+  locality: []
+  province: []
+  streetAddress: []
+  postalCode: []
+  serialNumber: ""
+  generateLease: false
+  noStore: false
+  requireCn: true
+  policyIdentifiers: []
+  basicConstraintsValidForNonCa: false
