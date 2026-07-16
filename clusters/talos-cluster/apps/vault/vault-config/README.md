@@ -32,13 +32,45 @@ live, and again after the first reconcile).
 
 Reconciliation wiring: the `vault-config-managed` Flux Kustomization
 (`apps/kustomization-vault-config-managed.yaml`) applies `managed/` with
-`prune: false` (adopt-before-prune; prune arms in S7 — its S6b precondition,
-the reference-safety guard `scripts/check-vault-config-reference-safety.py`,
-is CI-wired: every Vault-object reference in the tree must resolve to an
-in-git provider, so a PR removing a still-referenced policy/role/mount/issuer
-fails CI before prune or a reconcile could delete the live object under a
-consumer), `dependsOn` vault + vault-config-operator, and
-CEL health checks on `ReconcileSuccessful`.
+`prune: true` (ARMED in S7 — see the section below), `dependsOn` vault +
+vault-config-operator, and CEL health checks on `ReconcileSuccessful`.
+
+## Prune (ARMED in S7) and the #133 finalizer runbook
+
+`vault-config-managed` runs with `prune: true` since S7: removing a managed CR
+file from git deletes the CR, and the operator's finalizer then deletes the
+LIVE Vault object. The controls that make this safe:
+
+1. **Reference-safety guard (S6b, CI):** `scripts/check-vault-config-reference-safety.py`
+   fails any PR that removes a provider (policy/role/mount/PKI role/issuer)
+   still referenced by a consumer in git — the delete-under-a-consumer class
+   cannot reach main. The intended retirement flow is consumers-first, then
+   the provider.
+2. **Don't-prune-while-Vault-is-down (structural):** the Kustomization
+   `dependsOn` vault (+ vault-config-operator). While the vault Kustomization
+   is NotReady, vault-config-managed does not reconcile at all — including
+   prune — so a deletion merged during a Vault outage is applied only after
+   Vault is healthy again.
+3. **Stuck-Terminating visibility (upstream #133):** if the operator's Vault
+   delete errors, the finalizer strands and the CR hangs `Terminating`; with
+   `wait: true` the Kustomization goes NotReady at `timeout` — the stall is
+   VISIBLE in `kubectl get kustomization -n flux-system`, never silent. A
+   dedicated alert rides the deferred observability track.
+4. **Unstick runbook (#133):** confirm the live Vault object's intended fate
+   first. If the delete SHOULD proceed, fix Vault reachability/permissions and
+   let the operator retry. If the CR must be released WITHOUT deleting the
+   live object (e.g. Vault-side already handled, or a mistaken delete being
+   reverted):
+   ```
+   kubectl -n vault-config-operator patch <kind>.redhatcop.redhat.io <name> \
+     --type=merge -p '{"metadata":{"finalizers":null}}'
+   ```
+   then let Flux converge. Always name the full resource — `kubectl get
+   policy` is ambiguous (kyverno also defines `policies`).
+5. **Never-prunable set:** the operator's own bootstrap identity is not a CR
+   (ADR-0028) and the break-glass `vault-admin` policy is captured out-of-band
+   — neither can be pruned by git changes, enforced by
+   `check-vault-config-operator-bootstrap-invariants.py`.
 
 ## Guards (CI, fail-closed)
 
