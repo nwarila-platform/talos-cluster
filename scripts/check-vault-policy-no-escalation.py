@@ -103,6 +103,16 @@ MANAGED_POLICY_ALLOWLIST: tuple[ManagedPolicyAllowlistEntry, ...] = (
     ManagedPolicyAllowlistEntry("sys/storage/raft/snapshot", frozenset({"read"})),
     ManagedPolicyAllowlistEntry("auth/token/renew-self", frozenset({"update"})),
     ManagedPolicyAllowlistEntry("auth/token/lookup-self", frozenset({"read"})),
+    # CP-5: the cert-manager ClusterIssuer identity (managed policy
+    # `vault-server`) signs CSRs against the SINGLE named PKI role. Sign is
+    # the least-privilege issuance capability: it cannot read key material,
+    # cannot alter the role or mount config, and the role itself constrains
+    # every certificate parameter (domains, TTL, key type). Exactly this one
+    # sign endpoint — a broader `pki-int-tcn/sign/*` (any role) or an
+    # `issue/*` (server-side key generation) grant stays denied.
+    ManagedPolicyAllowlistEntry(
+        "pki-int-tcn/sign/vault-server", frozenset({"create", "update"})
+    ),
 )
 
 
