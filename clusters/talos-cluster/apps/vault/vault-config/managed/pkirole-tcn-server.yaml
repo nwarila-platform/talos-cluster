@@ -31,7 +31,7 @@ spec:
   enforceHostnames: true
   allowIPSans: false
   allowedURISans: []
-  allowedOtherSans: []
+  allowedOtherSans: ""
   serverFlag: true
   clientFlag: false
   codeSigningFlag: false
@@ -46,13 +46,13 @@ spec:
   extKeyUsageOids: []
   useCSRCommonName: true
   useCSRSans: true
-  ou: []
-  organization: []
-  country: []
-  locality: []
-  province: []
-  streetAddress: []
-  postalCode: []
+  ou: ""
+  organization: ""
+  country: ""
+  locality: ""
+  province: ""
+  streetAddress: ""
+  postalCode: ""
   serialNumber: ""
   generateLease: false
   noStore: false
