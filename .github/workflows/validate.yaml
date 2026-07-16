@@ -243,6 +243,12 @@ jobs:
       - name: "Guard self-test: adoption-parity projections bite"
         run: python3 scripts/vault-config/verify-adoption-parity.selftest.py
 
+      - name: "Guard: vault-config reference safety (S6b prune precondition)"
+        run: python3 scripts/check-vault-config-reference-safety.py
+
+      - name: "Guard self-test: reference-safety guard bites"
+        run: python3 scripts/check-vault-config-reference-safety.selftest.py
+
       - name: "Guard: Vault restore-validator boundary"
         run: bash scripts/check-vault-restore-validator-boundaries.sh
 

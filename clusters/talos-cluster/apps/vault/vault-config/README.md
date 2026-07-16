@@ -32,8 +32,12 @@ live, and again after the first reconcile).
 
 Reconciliation wiring: the `vault-config-managed` Flux Kustomization
 (`apps/kustomization-vault-config-managed.yaml`) applies `managed/` with
-`prune: false` (adopt-before-prune; prune arms in S7 after the S6b
-reference-safety guard), `dependsOn` vault + vault-config-operator, and
+`prune: false` (adopt-before-prune; prune arms in S7 — its S6b precondition,
+the reference-safety guard `scripts/check-vault-config-reference-safety.py`,
+is CI-wired: every Vault-object reference in the tree must resolve to an
+in-git provider, so a PR removing a still-referenced policy/role/mount/issuer
+fails CI before prune or a reconcile could delete the live object under a
+consumer), `dependsOn` vault + vault-config-operator, and
 CEL health checks on `ReconcileSuccessful`.
 
 ## Guards (CI, fail-closed)
