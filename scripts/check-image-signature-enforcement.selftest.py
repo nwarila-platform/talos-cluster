@@ -96,6 +96,7 @@ def verify_block(
     issuer: str | None = None,
     subject_regexp: str | None = None,
     roots: str | None = None,
+    rekor_url: str | None = None,
     rekor_pubkey: str | None = None,
     ctlog_pubkey: str | None = None,
     ignore_tlog: str | None = None,
@@ -142,6 +143,7 @@ def verify_block(
             else canonical["subjectRegExp"]
         )
         roots = roots if roots is not None else guard.FULCIO_ROOTS_PEM
+        rekor_url = rekor_url if rekor_url is not None else guard.REKOR_URL
         rekor_pubkey = (
             rekor_pubkey if rekor_pubkey is not None else guard.REKOR_PUBKEY_PEM
         )
@@ -160,6 +162,7 @@ def verify_block(
                 "                    roots: |-",
                 *(f"                      {line}" for line in roots.split("\n")),
                 "                    rekor:",
+                f"                      url: \"{rekor_url}\"",
                 f"                      ignoreTlog: {ignore_tlog}",
                 "                      pubkey: |-",
                 *(
@@ -655,6 +658,22 @@ def attestor_ignore_tlog_true_fixture(root: Path) -> None:
     )
 
 
+def attestor_rekor_url_repointed_fixture(root: Path) -> None:
+    # rekor.url is a runtime dead fallback, but repointing it to a rogue log is a
+    # weakening (it would be used for a bundle-less signature); the pinned REKOR_URL
+    # exact-match must bite.
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {
+                    "rekor_url": "https://rekor.attacker.example",
+                },
+            },
+        ),
+    )
+
+
 def attestor_issuer_changed_fixture(root: Path) -> None:
     write_real_shape_fixture(
         root,
@@ -919,6 +938,13 @@ def main() -> int:
             1,
             "I7 ignoreTlog:true (insecure keyless) bites",
             attestor_ignore_tlog_true_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "attestor-rekor-url-repointed",
+            1,
+            "I7 rekor.url repoint bites",
+            attestor_rekor_url_repointed_fixture,
             ("attestors must exactly match",),
         ),
         run_case(

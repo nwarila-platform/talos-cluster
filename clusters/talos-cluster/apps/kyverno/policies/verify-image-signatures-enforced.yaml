@@ -8,9 +8,16 @@
 # outage window fail-closed first-party pod creation (Vault + the hwg tenant).
 # FIX (this change): the three first-party keyless attestors now verify OFFLINE —
 # the embedded cosign bundle SET is checked against a pinned Rekor public key
-# (rekor.pubkey, with `rekor.url` REMOVED so Kyverno creates no RekorClient / makes
-# no online GET), the Fulcio leaf chain against pinned `roots` (Sigstore root +
+# (rekor.pubkey). `rekor.url` is KEPT (Kyverno v1.18.2's policy-validation webhook
+# REJECTS a keyless attestor without a non-empty rekor.url — "An URL is required" —
+# so it cannot be omitted), but with a pinned pubkey and the embedded bundle present
+# Kyverno verifies the SET offline via VerifyBundle and the RekorClient(url) is a
+# DEAD FALLBACK reached only if a signature lacks a bundle (ours never do) — so no
+# online Rekor GET on the admission path. (ctlog has no url field — pubkey only.)
+# The Fulcio leaf chain is checked against pinned `roots` (Sigstore root +
 # intermediate), and the Fulcio SCT against a pinned CTFE key (ctlog.pubkey).
+# The offline behavior is established by the Kyverno/cosign code path AND MUST be
+# confirmed by a live kyverno->rekor egress-blackhole canary before the Enforce flip.
 # ignoreTlog / ignoreSCT stay FALSE, so the tlog + SCT security properties are fully
 # preserved; the pins remove the Sigstore/Rekor/Fulcio/CTFE/TUF online dependency
 # from the admission path entirely — the exact 2026-07-14 brick vector, eliminated.
@@ -131,6 +138,7 @@ spec:
                       mygUY7Ii2zbdCdliiow=
                       -----END CERTIFICATE-----
                     rekor:
+                      url: "https://rekor.sigstore.dev"
                       ignoreTlog: false
                       pubkey: |-
                         -----BEGIN PUBLIC KEY-----
@@ -190,6 +198,7 @@ spec:
                       mygUY7Ii2zbdCdliiow=
                       -----END CERTIFICATE-----
                     rekor:
+                      url: "https://rekor.sigstore.dev"
                       ignoreTlog: false
                       pubkey: |-
                         -----BEGIN PUBLIC KEY-----
@@ -253,6 +262,7 @@ spec:
                       mygUY7Ii2zbdCdliiow=
                       -----END CERTIFICATE-----
                     rekor:
+                      url: "https://rekor.sigstore.dev"
                       ignoreTlog: false
                       pubkey: |-
                         -----BEGIN PUBLIC KEY-----

@@ -86,8 +86,10 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
         ),
     },
 }
-# Offline keyless verification pins (Sigstore public-good keys) that REPLACE the
-# online rekor.url. The enforced policy verifies the embedded cosign bundle SET
+# Offline keyless verification pins (Sigstore public-good keys). rekor.url is KEPT
+# (Kyverno v1.18.2 rejects a keyless attestor without a non-empty rekor.url) but with
+# a pinned pubkey + the embedded bundle it is a runtime DEAD FALLBACK, so verification
+# is offline. The enforced policy verifies the embedded cosign bundle SET
 # against REKOR_PUBKEY_PEM (no online Rekor GET), the Fulcio leaf chain against
 # FULCIO_ROOTS_PEM (Sigstore root+intermediate), and the Fulcio SCT against
 # CTFE_PUBKEY_PEM; ignoreTlog/ignoreSCT stay false so both log proofs are checked
@@ -137,6 +139,9 @@ CTFE_PUBKEY_PEM = "\n".join([
     'AaYalIJmBZ8yyezPjTqhxrKBpMnaocVtLJBI1eM3uXnQzQGAJdJ4gs9Fyw==',
     '-----END PUBLIC KEY-----',
 ])
+# Schema-required (Kyverno rejects an empty rekor.url); a runtime dead fallback given
+# the pinned pubkey + embedded bundle. Pinned so it cannot be repointed to a rogue log.
+REKOR_URL = "https://rekor.sigstore.dev"
 
 # OFFLINE-PINS re-arm (2026-07-17). The online-Rekor dependency that BRICKED first-party
 # pod creation (Vault + the hwg tenant) on 2026-07-14 is REMOVED: the canonical attestors
@@ -623,7 +628,11 @@ def canonical_attestors_for(org_glob: str) -> object:
                         "issuer": attestor["issuer"],
                         "subjectRegExp": attestor["subjectRegExp"],
                         "roots": FULCIO_ROOTS_PEM,
-                        "rekor": {"ignoreTlog": "false", "pubkey": REKOR_PUBKEY_PEM},
+                        "rekor": {
+                            "url": REKOR_URL,
+                            "ignoreTlog": "false",
+                            "pubkey": REKOR_PUBKEY_PEM,
+                        },
                         "ctlog": {"ignoreSCT": "false", "pubkey": CTFE_PUBKEY_PEM},
                     }
                 }
