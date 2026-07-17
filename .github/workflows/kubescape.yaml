@@ -141,3 +141,20 @@ jobs:
           "${RUNNER_TEMP}/kubectl" get \
             policies.redhatcop.redhat.io,kubernetesauthengineroles.redhatcop.redhat.io,pkisecretengineroles.redhatcop.redhat.io,secretenginemounts.redhatcop.redhat.io \
             -A -o json | python3 scripts/check-vault-config-terminating.py
+
+      # CP-1 sigstore-pin drift detector: verify-image-signatures-enforced verifies
+      # first-party GHCR signatures OFFLINE against single-valued Sigstore key pins
+      # (rekor.pubkey/ctlog.pubkey/roots). If Sigstore rotates a key our signing
+      # switches to (e.g. Rekor v1->v2), a new first-party image's signature stops
+      # verifying against the stale pin — a PolicyReport `fail` here (at Enforce it
+      # would fail-closed a pod). This daily step turns that into a RED workflow (the
+      # zero-red sweep signal) so the pins get bumped. Rides this job deliberately:
+      # same scoped scanner role + single-object kubeconfig + kubectl, zero new creds.
+      - name: "Detect sigstore-pin offline-verification drift (CP-1 first-party)"
+        run: |
+          set -euo pipefail
+          source cluster/config.env
+          export KUBECONFIG="${LOCAL_S3_DIR}/configs/kubeconfig"
+          "${RUNNER_TEMP}/kubectl" get \
+            clusterpolicies.kyverno.io,policyreports.wgpolicyk8s.io,clusterpolicyreports.wgpolicyk8s.io \
+            -A -o json | python3 scripts/check-sigstore-pin-verification.py
