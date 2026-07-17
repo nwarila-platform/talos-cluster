@@ -20,12 +20,20 @@ records it in the enforced policy's PolicyReport, so this detector reads that
 ground truth instead of re-implementing verification or second-guessing TUF.
 
 THE MECHANISM: the daily scheduled scan workflow feeds this script
-`kubectl get policyreport,clusterpolicyreport -A -o json` on stdin. Any
-verify-image-signatures-enforced result of `fail` or `error` fails the run RED
-(a red scheduled workflow is the repo's established zero-red-sweep visibility
-surface) — a deployed first-party signature no longer verifies against the pins,
-so the pins must be bumped to the current Sigstore keys (or the failing image
-investigated). All `pass`/`skip` = the pins are current.
+`kubectl get clusterpolicies.kyverno.io,policyreports.wgpolicyk8s.io,\
+clusterpolicyreports.wgpolicyk8s.io -A -o json` on stdin. It fails the run RED
+(the repo's established zero-red-sweep visibility surface) on EITHER:
+  (a) the enforced ClusterPolicy is MISSING or not Ready — it is verifying
+      nothing, so an absence of `fail` results is meaningless (closes the
+      "policy deleted/broken => silent green" blind spot; a WARN on a green run
+      is invisible in a zero-red model); OR
+  (b) any enforced-policy result is not `pass`/`skip` (fail-closed allowlist:
+      `fail` and `error` and any future/unexpected status all count as drift —
+      a deployed first-party signature no longer verifies against the pins, so
+      the pins must be bumped to the current Sigstore keys or the failing image
+      investigated).
+A healthy, Ready policy with simply no first-party workloads scanned is a
+legitimate PASS.
 
 SCOPE (honest): this is REACTIVE — it catches drift once a mismatched image is
 deployed and scanned. At Audit that is a non-destructive early warning. Truly
@@ -33,8 +41,9 @@ PROACTIVE (catch a rotation before a new-key image is ever deployed) belongs to
 the source repos' CI verify-at-ingest (supply-chain doctrine) — booked, not here.
 
 Pure stdin -> exit-code filter (no cluster access) so the selftest drives it with
-fixtures. Exit 0 = pins current; 1 = a first-party verification failed (drift);
-2 = tooling/usage error (malformed input fails CLOSED).
+fixtures. Exit 0 = policy healthy + pins current; 1 = policy missing/not-Ready OR
+a first-party verification failed (drift); 2 = tooling/usage error (malformed
+input fails CLOSED).
 """
 
 from __future__ import annotations
@@ -44,13 +53,18 @@ import json
 import sys
 
 ENFORCED_POLICY_NAME = "verify-image-signatures-enforced"
-DRIFT_RESULTS = {"fail", "error"}
+CLUSTERPOLICY_KIND = "ClusterPolicy"
+# Fail-closed ALLOWLIST: only these enforced-policy result statuses are safe.
+# Everything else (fail, error, warn, null, any future status) is treated as
+# drift, so an unexpected verification status can never silently pass.
+SAFE_RESULTS = {"pass", "skip"}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Fail if any first-party image no longer verifies against the "
+            "Fail if the enforced first-party signature policy is missing/not "
+            "Ready, or if any first-party image no longer verifies against the "
             "pinned Sigstore keys (offline-verification drift)."
         )
     )
@@ -67,6 +81,14 @@ def fail_usage(message: str) -> SystemExit:
     return SystemExit(2)
 
 
+def policy_is_ready(item: dict) -> bool:
+    conditions = ((item.get("status") or {}).get("conditions")) or []
+    for cond in conditions:
+        if isinstance(cond, dict) and cond.get("type") == "Ready":
+            return cond.get("status") == "True"
+    return False
+
+
 def main() -> int:
     args = parse_args()
     raw = sys.stdin.read()
@@ -80,21 +102,28 @@ def main() -> int:
     if not isinstance(items, list):
         raise fail_usage("input has no items list (expected a kubectl List)")
 
+    enforced_present = False
+    enforced_ready = False
     scanned = 0
     passed = 0
     drift: list[str] = []
-    for report in items:
-        if not isinstance(report, dict):
-            raise fail_usage(f"report item is not an object: {report!r}")
-        meta = report.get("metadata") or {}
-        report_ns = meta.get("namespace", "-")
-        results = report.get("results")
+    for item in items:
+        if not isinstance(item, dict):
+            raise fail_usage(f"list item is not an object: {item!r}")
+        meta = item.get("metadata") or {}
+        if item.get("kind") == CLUSTERPOLICY_KIND and meta.get("name") == args.policy_name:
+            enforced_present = True
+            enforced_ready = policy_is_ready(item)
+            continue
+        results = item.get("results")
         if results is None:
             continue
         if not isinstance(results, list):
             raise fail_usage(
-                f"report {report_ns}/{meta.get('name', '?')} has non-list results"
+                f"report {meta.get('namespace', '-')}/{meta.get('name', '?')} "
+                "has non-list results"
             )
+        report_ns = meta.get("namespace", "-")
         for result in results:
             if not isinstance(result, dict):
                 raise fail_usage(f"result is not an object: {result!r}")
@@ -109,44 +138,66 @@ def main() -> int:
                 f"{first.get('namespace', report_ns)}/{first.get('name', '?')} "
                 f"[{status}]"
             )
-            if status in DRIFT_RESULTS:
+            if status in SAFE_RESULTS:
+                if status == "pass":
+                    passed += 1
+            else:
                 drift.append(ident)
-            elif status == "pass":
-                passed += 1
 
-    if scanned == 0:
-        # No first-party images scanned by the enforced policy. Not drift (there
-        # may be no first-party workloads at scan time), but surface it so a
-        # silently-not-running policy is visible.
+    # Policy-health gate: a missing or not-Ready enforced policy verifies NOTHING,
+    # so an absence of `fail` results is meaningless -> fail RED (BS-1a). This is
+    # checked BEFORE the drift/empty-scan branches so a broken policy can never
+    # masquerade as "pins current".
+    if not enforced_present:
         print(
-            f"WARN: no '{args.policy_name}' results found in the supplied "
-            "PolicyReports (no first-party images scanned, or the policy is not "
-            "producing reports). Not treated as drift.",
+            f"FAIL: enforced policy '{args.policy_name}' is NOT PRESENT in the "
+            "supplied ClusterPolicies. First-party signatures are being verified "
+            "by NOTHING (or the policy was deleted). Restore it (Flux reconciles "
+            "clusters/talos-cluster/apps/kyverno/policies) before trusting any "
+            "offline-verification result.",
+            file=sys.stderr,
         )
-        return 0
+        return 1
+    if not enforced_ready:
+        print(
+            f"FAIL: enforced policy '{args.policy_name}' is present but NOT Ready "
+            "(status.conditions Ready != True). Kyverno is not enforcing/scanning "
+            "it, so drift cannot be observed. Investigate the policy + Kyverno.",
+            file=sys.stderr,
+        )
+        return 1
 
     if drift:
         print(
             f"FAIL: {len(drift)} first-party image(s) no longer verify against "
-            f"the pinned Sigstore keys under '{args.policy_name}'. This is "
-            "offline-verification DRIFT: our GitHub-Actions cosign signing has "
-            "likely rotated to a Sigstore key the single-valued pins do not "
-            "cover (e.g. a Rekor v1->v2 tlog-key switch). Runbook: re-source the "
-            "current keys from the Sigstore TUF root (cosign initialize) and "
-            "bump rekor.pubkey / ctlog.pubkey / roots in "
-            "verify-image-signatures-enforced.yaml AND "
+            f"the pinned Sigstore keys under '{args.policy_name}' (result not "
+            "pass/skip). This is offline-verification DRIFT: our GitHub-Actions "
+            "cosign signing has likely rotated to a Sigstore key the "
+            "single-valued pins do not cover (e.g. a Rekor v1->v2 tlog-key "
+            "switch). Runbook: re-source the current keys from the Sigstore TUF "
+            "root (cosign initialize) and bump rekor.pubkey / ctlog.pubkey / "
+            "roots in verify-image-signatures-enforced.yaml AND "
             "scripts/check-image-signature-enforcement.py (they must stay "
             "byte-identical), OR investigate the failing image if it is a "
-            "genuinely bad signature.",
+            "genuinely bad signature or a transient registry/error status.",
             file=sys.stderr,
         )
         for ident in drift:
             print(f"  - {ident}", file=sys.stderr)
         return 1
 
+    if scanned == 0:
+        print(
+            f"PASS: enforced policy '{args.policy_name}' is present + Ready; no "
+            "first-party images were scanned (no first-party workloads at scan "
+            "time). Nothing to drift-check, and the policy is confirmed healthy."
+        )
+        return 0
+
     print(
-        f"PASS: all {scanned} '{args.policy_name}' result(s) verify against the "
-        f"pinned Sigstore keys ({passed} pass; pins are current)."
+        f"PASS: enforced policy '{args.policy_name}' is Ready and all {scanned} "
+        f"result(s) verify against the pinned Sigstore keys ({passed} pass; pins "
+        "are current)."
     )
     return 0
 

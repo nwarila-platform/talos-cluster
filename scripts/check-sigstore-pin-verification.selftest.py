@@ -16,18 +16,32 @@ def kube_list(items) -> str:
     return json.dumps({"apiVersion": "v1", "kind": "List", "items": items})
 
 
+def clusterpolicy(name: str = ENFORCED, ready: bool = True) -> dict:
+    return {
+        "apiVersion": "kyverno.io/v1",
+        "kind": "ClusterPolicy",
+        "metadata": {"name": name},
+        "status": {
+            "conditions": [{"type": "Ready", "status": "True" if ready else "False"}]
+        },
+    }
+
+
 def report(results, kind: str = "PolicyReport", ns: str = "deploy-vault") -> dict:
     meta = {"name": "cpol-report", "namespace": ns}
-    return {"apiVersion": "wgpolicyk8s.io/v1alpha2", "kind": kind, "metadata": meta, "results": results}
-
-
-def result(policy: str, rule: str, res: str, name: str = "vault-0") -> dict:
     return {
-        "policy": policy,
-        "rule": rule,
-        "result": res,
-        "resources": [{"namespace": "deploy-vault", "name": name}],
+        "apiVersion": "wgpolicyk8s.io/v1alpha2",
+        "kind": kind,
+        "metadata": meta,
+        "results": results,
     }
+
+
+def result(policy: str, rule: str, res, name: str = "vault-0") -> dict:
+    out = {"policy": policy, "rule": rule, "resources": [{"namespace": "deploy-vault", "name": name}]}
+    if res is not None:
+        out["result"] = res
+    return out
 
 
 def run(stdin: str, *extra: str) -> tuple[int, str]:
@@ -41,26 +55,27 @@ def run(stdin: str, *extra: str) -> tuple[int, str]:
 
 
 CASES = [
+    # --- healthy policy, drift analysis ---
     (
-        "no-enforced-results-warns-pass",
-        kube_list([report([result("verify-image-signatures", "verify-flux-images", "fail")])]),
+        "healthy-policy-no-first-party-results-passes",
+        kube_list([clusterpolicy(), report([result("verify-image-signatures", "verify-flux-images", "fail")])]),
         (),
         0,
-        ["WARN", "no 'verify-image-signatures-enforced'"],
+        ["PASS", "no first-party images were scanned"],
     ),
     (
         "all-first-party-pass",
-        kube_list([report([
+        kube_list([clusterpolicy(), report([
             result(ENFORCED, "verify-nwarila-platform-images", "pass"),
             result(ENFORCED, "verify-nwarila-images", "pass"),
         ])]),
         (),
         0,
-        ["PASS", "2 ", "pins are current"],
+        ["PASS", "2 result", "pins are current"],
     ),
     (
         "first-party-fail-is-drift",
-        kube_list([report([
+        kube_list([clusterpolicy(), report([
             result(ENFORCED, "verify-nwarila-platform-images", "pass"),
             result(ENFORCED, "verify-nwarila-images", "fail"),
         ])]),
@@ -70,58 +85,81 @@ CASES = [
     ),
     (
         "first-party-error-is-drift",
-        kube_list([report([result(ENFORCED, "verify-herowars-images", "error")])]),
+        kube_list([clusterpolicy(), report([result(ENFORCED, "verify-herowars-images", "error")])]),
+        (),
+        1,
+        ["FAIL", "DRIFT"],
+    ),
+    (
+        "first-party-unexpected-warn-is-drift",  # fail-closed allowlist: not pass/skip => drift
+        kube_list([clusterpolicy(), report([result(ENFORCED, "verify-nwarila-images", "warn")])]),
+        (),
+        1,
+        ["FAIL", "DRIFT"],
+    ),
+    (
+        "first-party-null-result-is-drift",  # missing result field => not pass/skip => drift
+        kube_list([clusterpolicy(), report([result(ENFORCED, "verify-nwarila-images", None)])]),
         (),
         1,
         ["FAIL", "DRIFT"],
     ),
     (
         "skip-only-passes",
-        kube_list([report([result(ENFORCED, "verify-nwarila-images", "skip")])]),
+        kube_list([clusterpolicy(), report([result(ENFORCED, "verify-nwarila-images", "skip")])]),
         (),
         0,
         ["PASS"],
     ),
     (
         "third-party-fail-ignored",
-        # Only the enforced (first-party) policy drives drift; third-party Audit
-        # fails (cilium/kyverno/vso) are the known TD-0001/0002 state, not drift.
-        kube_list([report([
+        kube_list([clusterpolicy(), report([
             result("verify-image-signatures", "verify-cilium-images", "fail"),
             result(ENFORCED, "verify-nwarila-platform-images", "pass"),
         ])]),
         (),
         0,
-        ["PASS", "1 "],
+        ["PASS", "1 result"],
     ),
     (
         "clusterpolicyreport-kind-scanned",
-        kube_list([report([result(ENFORCED, "verify-nwarila-images", "fail")], kind="ClusterPolicyReport")]),
+        kube_list([clusterpolicy(), report([result(ENFORCED, "verify-nwarila-images", "fail")], kind="ClusterPolicyReport")]),
         (),
         1,
         ["FAIL", "DRIFT"],
     ),
     (
         "custom-policy-name-arg",
-        kube_list([report([result("other-enforced", "r", "fail")])]),
+        kube_list([clusterpolicy(name="other-enforced"), report([result("other-enforced", "r", "fail")])]),
         ("--policy-name", "other-enforced"),
         1,
         ["FAIL", "DRIFT"],
     ),
+    # --- policy-health gate (BS-1a) ---
     (
-        "empty-stdin-fails-closed",
-        "",
+        "policy-missing-fails-red",
+        kube_list([report([result(ENFORCED, "verify-nwarila-images", "pass")])]),
         (),
-        2,
-        ["ERROR", "no input"],
+        1,
+        ["FAIL", "NOT PRESENT"],
     ),
     (
-        "malformed-json-fails-closed",
-        "{not json",
+        "policy-not-ready-fails-red",
+        kube_list([clusterpolicy(ready=False), report([result(ENFORCED, "verify-nwarila-images", "pass")])]),
         (),
-        2,
-        ["ERROR", "not valid JSON"],
+        1,
+        ["FAIL", "NOT Ready"],
     ),
+    (
+        "policy-present-ready-no-workloads-passes",
+        kube_list([clusterpolicy()]),
+        (),
+        0,
+        ["PASS", "no first-party images were scanned"],
+    ),
+    # --- fail-closed on malformed input ---
+    ("empty-stdin-fails-closed", "", (), 2, ["ERROR", "no input"]),
+    ("malformed-json-fails-closed", "{not json", (), 2, ["ERROR", "not valid JSON"]),
     (
         "no-items-list-fails-closed",
         json.dumps({"apiVersion": "v1", "kind": "List"}),
@@ -145,7 +183,7 @@ def main() -> int:
         rc, out = run(stdin, *extra)
         ok = rc == want_rc and all(s in out for s in want_substrings)
         status = "PASS" if ok else "FAIL"
-        print(f"{name:38s} rc={rc} (want {want_rc})  {status}")
+        print(f"{name:46s} rc={rc} (want {want_rc})  {status}")
         if not ok:
             failures += 1
             if rc != want_rc:

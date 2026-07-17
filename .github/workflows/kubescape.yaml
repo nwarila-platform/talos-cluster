@@ -156,5 +156,5 @@ jobs:
           source cluster/config.env
           export KUBECONFIG="${LOCAL_S3_DIR}/configs/kubeconfig"
           "${RUNNER_TEMP}/kubectl" get \
-            policyreports.wgpolicyk8s.io,clusterpolicyreports.wgpolicyk8s.io \
+            clusterpolicies.kyverno.io,policyreports.wgpolicyk8s.io,clusterpolicyreports.wgpolicyk8s.io \
             -A -o json | python3 scripts/check-sigstore-pin-verification.py
