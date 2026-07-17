@@ -1,13 +1,20 @@
 # ClusterPolicy: verify-image-signatures-enforced
 #
-# ⚠️ STILL INTERIM AUDIT in THIS change (offline verification now configured; the
-# Enforce/Fail flip is the next PR — this one lands the offline config as a live
-# canary and proves it via PolicyReports before anything blocks).
-# Root cause of the 2026-07-14 brick: keyless verification against `rekor.url` made
-# an ONLINE Rekor transparency-log query on the admission hot path, and a Rekor
-# outage window fail-closed first-party pod creation (Vault + the hwg tenant).
-# FIX (this change): the three first-party keyless attestors now verify OFFLINE —
-# the embedded cosign bundle SET is checked against a pinned Rekor public key
+# ENFORCED / FAIL-CLOSED. Fail-closed keyless cosign signature verification for
+# first-party nwarila, nwarila-platform, and the-hero-wars-guys images, scoped by
+# API-server matchConditions so unrelated pods do not enter this availability
+# boundary. A first-party image Kyverno cannot verify as validly signed is DENIED at
+# admission (validationFailureAction: Enforce, per-rule failureAction: Enforce,
+# webhookConfiguration.failurePolicy: Fail). Owner decision 2026-07-13: fail closed
+# for first-party images everywhere the Kyverno admission webhook applies, including
+# deploy-vault.
+#
+# Why this is safe to fail closed now (the 2026-07-14 brick vector is removed):
+# The original fail-closed keyless config verified against `rekor.url`, which made an
+# ONLINE Rekor transparency-log query on the admission hot path; a Rekor outage
+# window fail-closed first-party pod creation (Vault + the hwg tenant) and locked out
+# cluster admin. The three first-party keyless attestors now verify OFFLINE — the
+# embedded cosign bundle SET is checked against a pinned Rekor public key
 # (rekor.pubkey). `rekor.url` is KEPT (Kyverno v1.18.2's policy-validation webhook
 # REJECTS a keyless attestor without a non-empty rekor.url — "An URL is required" —
 # so it cannot be omitted), but with a pinned pubkey and the embedded bundle present
@@ -16,32 +23,29 @@
 # online Rekor GET on the admission path. (ctlog has no url field — pubkey only.)
 # The Fulcio leaf chain is checked against pinned `roots` (Sigstore root +
 # intermediate), and the Fulcio SCT against a pinned CTFE key (ctlog.pubkey).
-# The offline behavior is established by the Kyverno/cosign code path AND MUST be
-# confirmed by a live kyverno->rekor egress-blackhole canary before the Enforce flip.
 # ignoreTlog / ignoreSCT stay FALSE, so the tlog + SCT security properties are fully
 # preserved; the pins remove the Sigstore/Rekor/Fulcio/CTFE/TUF online dependency
 # from the admission path entirely — the exact 2026-07-14 brick vector, eliminated.
-# The pins are Sigstore public-good keys that rotate on Sigstore's schedule; the
-# single-valued-pin residual (a stale pin fail-closing a NEW post-rotation signature)
-# WILL be engineered out by the sigstore-TUF-root drift-watcher — a follow-up PR that
-# lands BEFORE the Enforce flip and opens a bump PR when Sigstore rotates a key. It is
-# NOT built yet; until it lands the residual is bounded (this policy stays non-blocking
-# Audit, so a stale pin surfaces only as a PolicyReport fail, never a brick; Sigstore
-# rotations are rare — Rekor key stable since 2021, Fulcio root valid to 2031). The
-# pins are mirrored in scripts/check-image-signature-enforcement.py
-# (CANONICAL_FIRST_PARTY_ATTESTORS) which the guard exact-matches. RESTORE fail-closed
-# (failureAction: Enforce, failurePolicy: Fail, guard FIRST_PARTY_ENFORCEMENT_MODE) in
-# the next PR, once the Audit canary proves first-party PolicyReports PASS offline.
-# Tracked in vault_live_admin_lockout / cp1_offline_verify_decision.
+# The offline behavior was proven BEFORE this Enforce flip by a blackholed cosign
+# v3.0.6 run (Kyverno's exact vendored lib, url present + all network dead-proxied →
+# verified offline) plus the live Audit canary (first-party PolicyReports 5 pass /
+# 0 fail, offline). The residual availability tradeoff at Enforce is narrowed to:
+# while Kyverno itself or GHCR (the image + signature layers) is unreachable,
+# first-party pods cannot be created or restarted; running pods are unaffected
+# because admission is create-time.
 #
-# Original CP-1 fail-closed rationale (restore target):
-# Fail-closed cosign keyless signature verification for first-party images.
-# Owner decision 2026-07-13: fail closed for first-party images everywhere the
-# Kyverno admission webhook applies, including deploy-vault. With the offline pins
-# above, Sigstore/Rekor/Fulcio/CTFE/TUF are NO LONGER on the admission path, so the
-# residual availability tradeoff at Enforce is narrowed to: while Kyverno itself or
-# GHCR (the image + signature layers) is unreachable, first-party pods cannot be
-# created or restarted; running pods are unaffected because admission is create-time.
+# Rotation residual: the pins are Sigstore public-good keys that rotate on Sigstore's
+# schedule; a stale single-valued pin fail-closing a NEW post-rotation signature is
+# guarded by the sigstore-pin drift detector (scripts/check-sigstore-pin-verification.py,
+# wired into the daily kubescape workflow — PR #334): a real deployed first-party
+# signature that stops verifying turns that workflow RED before a rotation can bite.
+# Sigstore rotations are rare (Rekor key stable since 2021, Fulcio root valid to 2031).
+# The pins are mirrored in scripts/check-image-signature-enforcement.py
+# (CANONICAL_FIRST_PARTY_ATTESTORS) which the guard exact-matches; the guard also pins
+# failureAction: Enforce + failurePolicy: Fail (FIRST_PARTY_ENFORCEMENT_MODE /
+# FIRST_PARTY_REQUIRED_FAILURE_POLICY) so this control cannot be silently reverted to
+# Audit/Ignore with CI green. Tracked in vault_live_admin_lockout /
+# cp1_offline_verify_decision.
 #
 # Superset invariant: the matchConditions CEL must match a superset of every
 # imageReferences glob below. If an enforced image can match Kyverno's
@@ -69,10 +73,10 @@ metadata:
       API-server matchConditions so unrelated pods do not enter this
       availability boundary.
 spec:
-  validationFailureAction: Audit # INTERIM (restore: Enforce) — see header
+  validationFailureAction: Enforce # fail-closed — see header
   background: true
   webhookConfiguration:
-    failurePolicy: Ignore # INTERIM (restore: Fail) — see header
+    failurePolicy: Fail # fail-closed — see header
     timeoutSeconds: 30
     matchConditions:
       - name: first-party-image-present
@@ -101,7 +105,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nwarila-platform/*"
-          failureAction: Audit # INTERIM (restore: Enforce) — see header
+          failureAction: Enforce # fail-closed — see header
           mutateDigest: false
           required: true
           attestors:
@@ -161,7 +165,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nwarila/*"
-          failureAction: Audit # INTERIM (restore: Enforce) — see header
+          failureAction: Enforce # fail-closed — see header
           mutateDigest: false
           required: true
           attestors:
@@ -225,7 +229,7 @@ spec:
             allowInsecureRegistry: false
             secrets:
               - ghcr-pull
-          failureAction: Audit # INTERIM (restore: Enforce) — see header
+          failureAction: Enforce # fail-closed — see header
           mutateDigest: false
           required: true
           attestors:
