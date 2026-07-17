@@ -14,7 +14,7 @@ spec:
   chart:
     spec:
       chart: kyverno
-      version: 3.8.1
+      version: 3.8.2
       sourceRef:
         kind: HelmRepository
         name: kyverno
@@ -28,7 +28,7 @@ spec:
     cleanupOnFail: true
   values:
     # Kyverno publishes cosign-verifiable release images to GHCR. The
-    # reg.kyverno.io mirrors do not expose discoverable signatures for v1.18.1.
+    # reg.kyverno.io mirrors do not expose discoverable signatures for v1.18.2.
     global:
       image:
         registry: ghcr.io

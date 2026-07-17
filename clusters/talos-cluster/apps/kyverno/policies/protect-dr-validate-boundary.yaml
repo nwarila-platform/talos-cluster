@@ -21,7 +21,7 @@
 #     role. Preventing unapproved grants of such roles is generic RBAC hardening covered by the git-declared CI guard,
 #     out of scope here. Rules 2-3 still deny bindings that name the guarded SAs/roles directly.
 #
-# !!! SHIPS IN AUDIT MODE. Validated offline with the kyverno CLI v1.18.1 (matches cluster app version): 13 attack
+# !!! SHIPS IN AUDIT MODE. Validated offline with the kyverno CLI v1.18.2 (matches cluster app version): 13 attack
 # objects FAIL (un-suspended/rewritten CronJob, guarded-SA/-role bindings, impersonate role, data-vault fromBackup
 # Volume, arbitrary workload, SA-token Secret, destructive RecurringJob, weakened approved-VAP, driver-selecting CCNP).
 # A live 272-object RBAC soak found built-in false positives in rules 3/6 and a name-only approved-binding exemption
@@ -30,8 +30,9 @@
 # to Enforce and failurePolicy to Fail:
 #   1. Soak in Audit ON THE CLUSTER; inspect PolicyReports for false-positives on real live applies (the offline set
 #      cannot cover every operator/controller object).
-#   2. Re-run the offline check: `podman run --rm --user 0 -v <dir>:/work -w /work ghcr.io/kyverno/kyverno-cli:v1.18.1
+#   2. Re-run the offline check: `podman run --rm --user 0 -v <dir>:/work -w /work ghcr.io/kyverno/kyverno-cli:v1.18.2
 #      apply /work/protect-dr-validate-boundary.yaml --resource /work/<fixture>` (approved PASS, attacks FAIL).
+#      (v1.18.2 CLI re-validation confirmed on the v1.18.1->v1.18.2 bump: approved PASS, all attack fixtures FAIL.)
 #   3. A buggy Enforce+Fail rule would BLOCK legit Flux reconciliation cluster-wide, so do not skip the soak.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
@@ -200,7 +201,7 @@ spec:
         message: >-
           Only the approved restore-validator bindings may name the guarded ServiceAccounts dr-orchestrator /
           dr-generate-root (by ServiceAccount, by their User username, or by a Group that contains them).
-        # Flat deny on a single precomputed boolean: kyverno-CLI v1.18.1 skips a policy that nests
+        # Flat deny on a single precomputed boolean: kyverno-CLI v1.18.2 skips a policy that nests
         # deny.conditions (all>any>all), so the direct-OR-(group-AND-non-trivial-roleRef) logic is folded
         # into the 'violation' context variable below and denied with one condition.
         deny:

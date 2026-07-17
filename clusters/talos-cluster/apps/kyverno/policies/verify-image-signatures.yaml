@@ -20,7 +20,7 @@
 # Longhorn, registry.k8s.io, first-party GHCR images, and other image families
 # are out of scope for this policy; they fall through here because their
 # registries are not listed in imageReferences. Kyverno release images are
-# verified from GHCR because the reg.kyverno.io v1.18.1 mirrors do not expose
+# verified from GHCR because the reg.kyverno.io v1.18.2 mirrors do not expose
 # discoverable cosign signatures. Kyverno component signatures live in the
 # upstream shared signature repository, not co-located with each component
 # image. Vault Secrets Operator is matched explicitly; its HelmRelease remains
@@ -104,12 +104,12 @@ spec:
                 - Pod
       verifyImages:
         - imageReferences:
-            - "ghcr.io/kyverno/kyverno:v1.18.1"
-            - "ghcr.io/kyverno/kyvernopre:v1.18.1"
-            - "ghcr.io/kyverno/kyverno-cli:v1.18.1"
-            - "ghcr.io/kyverno/background-controller:v1.18.1"
-            - "ghcr.io/kyverno/cleanup-controller:v1.18.1"
-            - "ghcr.io/kyverno/reports-controller:v1.18.1"
+            - "ghcr.io/kyverno/kyverno:v1.18.2"
+            - "ghcr.io/kyverno/kyvernopre:v1.18.2"
+            - "ghcr.io/kyverno/kyverno-cli:v1.18.2"
+            - "ghcr.io/kyverno/background-controller:v1.18.2"
+            - "ghcr.io/kyverno/cleanup-controller:v1.18.2"
+            - "ghcr.io/kyverno/reports-controller:v1.18.2"
           repository: "ghcr.io/kyverno/signatures"
           failureAction: Audit
           mutateDigest: false
