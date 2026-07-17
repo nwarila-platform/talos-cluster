@@ -44,7 +44,7 @@ jobs:
           KS_SHA256="3603bab7dab0da948967769db803843af70c11295f05d63beff4ecd7c91a9b20"
           url="https://github.com/kubescape/kubescape/releases/download/${KS_VERSION}/kubescape_${KS_VER_NUM}_linux_amd64"
           mkdir -p "${RUNNER_TEMP}/bin"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/bin/kubescape" "${url}"
+          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${RUNNER_TEMP}/bin/kubescape" "${url}"
           echo "${KS_SHA256}  ${RUNNER_TEMP}/bin/kubescape" | sha256sum -c -
           chmod +x "${RUNNER_TEMP}/bin/kubescape"
           echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
@@ -56,7 +56,7 @@ jobs:
           PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.12.13%2B20260623-x86_64-unknown-linux-gnu-install_only.tar.gz"
           PYTHON_SHA256="9fa869d69be54f6b8eeae64272fbd9bb0646e0e1a8da9d80e51ba5a3bee48930"
           archive="${RUNNER_TEMP}/cpython-3.12.13+20260623-x86_64-unknown-linux-gnu-install_only.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${archive}" "${PYTHON_URL}"
+          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${archive}" "${PYTHON_URL}"
           echo "${PYTHON_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}/python/bin" >> "$GITHUB_PATH"
@@ -68,7 +68,7 @@ jobs:
           AWSCLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.35.21.zip"
           AWSCLI_SHA256="1fe665267a6149dfb8551cec52b419fa6e82533fab6dd7678939209246e792ee"
           zip="${RUNNER_TEMP}/awscliv2.zip"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${zip}" "${AWSCLI_URL}"
+          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${zip}" "${AWSCLI_URL}"
           echo "${AWSCLI_SHA256}  ${zip}" | sha256sum -c -
           unzip -q "${zip}" -d "${RUNNER_TEMP}"
           mkdir -p "${RUNNER_TEMP}/bin"
@@ -121,13 +121,20 @@ jobs:
       # THIS workflow red — the zero-red sweep's established signal surface.
       # Rides this job deliberately: same scoped scanner role, same
       # single-object kubeconfig, zero new credentials.
+      # Egress-resilience (2026-07-17): the ARC runner began timing out (5 min)
+      # fetching kubectl from dl.k8s.io (Fastly) while github.com/AWS downloads
+      # kept working -> the kubectl-dependent detector steps below (sigstore-pin
+      # drift + vault-config terminating) went dark. All download curls now force
+      # IPv4 (-4, defeats an IPv6-blackhole to the CDN), retry, and fail a bad
+      # connect in 20s instead of hanging. Integrity is unchanged: every artifact
+      # is still pinned by version + sha256sum -c.
       - name: Install kubectl (pinned + checksum-verified)
         run: |
           set -euo pipefail
           KUBECTL_VERSION="v1.36.2"
           KUBECTL_SHA256="1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
           bin="${RUNNER_TEMP}/kubectl"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "${bin}" \
+          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${bin}" \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           echo "${KUBECTL_SHA256}  ${bin}" | sha256sum -c -
           chmod +x "${bin}"
