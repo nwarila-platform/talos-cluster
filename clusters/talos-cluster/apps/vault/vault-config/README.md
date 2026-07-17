@@ -51,11 +51,21 @@ LIVE Vault object. The controls that make this safe:
    is NotReady, vault-config-managed does not reconcile at all — including
    prune — so a deletion merged during a Vault outage is applied only after
    Vault is healthy again.
-3. **Stuck-Terminating visibility (upstream #133):** if the operator's Vault
-   delete errors, the finalizer strands and the CR hangs `Terminating`; with
-   `wait: true` the Kustomization goes NotReady at `timeout` — the stall is
-   VISIBLE in `kubectl get kustomization -n flux-system`, never silent. A
-   dedicated alert rides the deferred observability track.
+3. **Stuck-Terminating detection (upstream #133):** if the operator's Vault
+   delete errors, the finalizer strands and the CR hangs `Terminating` —
+   and this is **SILENT at the Flux layer** (source-verified at
+   kustomize-controller v1.9.1: the apiserver ACCEPTS the DELETE of a
+   finalizer-bearing object, pkg/ssa records a successful DeletedAction, the
+   object leaves `status.Inventory`, and `wait` health-checks only the APPLY
+   set — the upstream test "accepted delete leaves inventory" pins the
+   Kustomization reporting Ready while the CR hangs). Detection is therefore
+   EXTERNAL: the daily scan workflow (`kubescape.yaml`) feeds the live
+   redhatcop CRs to `scripts/check-vault-config-terminating.py` and turns
+   RED on any deletion stuck >30 minutes — the zero-red sweep's established
+   signal surface. Because of control 1, the blast radius of a stranded
+   delete is an inert orphaned Vault object (nothing references it), never
+   a consumer break. Only a REJECTED delete (webhook/RBAC/apiserver error)
+   surfaces as `PruneFailed`/NotReady in Flux itself.
 4. **Unstick runbook (#133):** confirm the live Vault object's intended fate
    first. If the delete SHOULD proceed, fix Vault reachability/permissions and
    let the operator retry. If the CR must be released WITHOUT deleting the

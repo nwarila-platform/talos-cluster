@@ -12,10 +12,18 @@
 #      reconcile AT ALL — including prune — so deletions merged during an
 #      outage apply only once Vault is healthy (don't-prune-when-unreachable).
 #   3. Upstream #133 (a Vault-side delete error strands the finalizer, CR
-#      hangs Terminating): with wait:true the stall turns this Kustomization
-#      NotReady at timeout — visible, never silent. Unstick runbook in the
-#      README (remove the finalizer ONLY after deciding the live object's
-#      intended fate).
+#      hangs Terminating): SILENT at the Flux layer — prune of a
+#      finalizer-bearing object reports SUCCESS (source-verified at
+#      kustomize-controller v1.9.1: the apiserver accepts the DELETE, the
+#      object leaves status.Inventory, wait health-checks only the apply
+#      set; upstream test "accepted delete leaves inventory" pins it).
+#      DETECTION is therefore external: the daily scan workflow runs
+#      scripts/check-vault-config-terminating.py against the live CRs and
+#      goes RED on any deletion stuck >30m (the zero-red sweep surface).
+#      Blast radius is bounded by control 1: only UNREFERENCED objects can
+#      be pruned, so a stranded delete leaves an inert orphan, never a
+#      consumer break. Unstick runbook in the README (remove the finalizer
+#      ONLY after deciding the live object's intended fate).
 #
 # ROLLBACK of an individual mistaken deletion: revert the removing PR before
 # reconcile; if the CR is already Terminating, follow the README runbook.
