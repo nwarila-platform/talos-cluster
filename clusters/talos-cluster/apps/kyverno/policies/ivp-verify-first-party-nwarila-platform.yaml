@@ -10,8 +10,8 @@
 # (Fulcio roots + Rekor pubkey + CT pubkey) with ctlog.url present as a runtime dead
 # fallback (cosign's opts builder requires a non-empty url even when rekorPubKey is
 # pinned) -> no online Rekor/Fulcio/CT/TUF call on the admission path.
-# validationActions [Audit] here; flipped to [Deny] (fail-closed) in a later PR once
-# the admission-path canary proves signed images ADMIT and unsigned images are DENIED.
+# validationActions [Deny] + failurePolicy Fail: first-party signatures ENFORCE
+# fail-closed -- unsigned/mis-signed first-party pods are DENIED at admission.
 # Pins mirror scripts/check-image-signature-enforcement.py. See cp1_offline_verify_decision.
 apiVersion: policies.kyverno.io/v1beta1
 kind: ImageValidatingPolicy
@@ -22,8 +22,8 @@ metadata:
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/severity: high
 spec:
-  validationActions: [Audit]
-  failurePolicy: Ignore
+  validationActions: [Deny]
+  failurePolicy: Fail
   evaluation:
     admission:
       enabled: true
