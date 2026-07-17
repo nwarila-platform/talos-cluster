@@ -92,8 +92,9 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
 # FULCIO_ROOTS_PEM (Sigstore root+intermediate), and the Fulcio SCT against
 # CTFE_PUBKEY_PEM; ignoreTlog/ignoreSCT stay false so both log proofs are checked
 # offline. These MUST stay byte-identical to the PEMs inlined in
-# verify-image-signatures-enforced.yaml (this guard exact-matches them). Rotated by
-# the sigstore-TUF-root drift-watcher. Sources: Sigstore TUF trusted_root targets
+# verify-image-signatures-enforced.yaml (this guard exact-matches them). To be rotated
+# by the sigstore-TUF-root drift-watcher (a follow-up PR, before the Enforce flip; not
+# built yet). Sources: Sigstore TUF trusted_root targets
 # rekor.pub / ctfe_2022.pub / fulcio_v1.crt.pem + fulcio_intermediate_v1.crt.pem.
 FULCIO_ROOTS_PEM = "\n".join([
     '-----BEGIN CERTIFICATE-----',

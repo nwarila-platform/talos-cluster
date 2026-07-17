@@ -16,8 +16,12 @@
 # from the admission path entirely — the exact 2026-07-14 brick vector, eliminated.
 # The pins are Sigstore public-good keys that rotate on Sigstore's schedule; the
 # single-valued-pin residual (a stale pin fail-closing a NEW post-rotation signature)
-# is engineered out by the sigstore-TUF-root drift-watcher (opens a bump PR before a
-# rotation bites). The pins are mirrored in scripts/check-image-signature-enforcement.py
+# WILL be engineered out by the sigstore-TUF-root drift-watcher — a follow-up PR that
+# lands BEFORE the Enforce flip and opens a bump PR when Sigstore rotates a key. It is
+# NOT built yet; until it lands the residual is bounded (this policy stays non-blocking
+# Audit, so a stale pin surfaces only as a PolicyReport fail, never a brick; Sigstore
+# rotations are rare — Rekor key stable since 2021, Fulcio root valid to 2031). The
+# pins are mirrored in scripts/check-image-signature-enforcement.py
 # (CANONICAL_FIRST_PARTY_ATTESTORS) which the guard exact-matches. RESTORE fail-closed
 # (failureAction: Enforce, failurePolicy: Fail, guard FIRST_PARTY_ENFORCEMENT_MODE) in
 # the next PR, once the Audit canary proves first-party PolicyReports PASS offline.
