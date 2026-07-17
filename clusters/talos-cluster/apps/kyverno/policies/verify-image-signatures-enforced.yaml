@@ -1,24 +1,40 @@
 # ClusterPolicy: verify-image-signatures-enforced
 #
-# ⚠️ INTERIM AUDIT (owner decision 2026-07-15) — TEMPORARILY NON-BLOCKING.
-# Kyverno v1.18's keyless verification depends on an ONLINE Rekor query on the
-# admission hot path, which is episodically flaky and DID brick first-party pod
-# creation (Vault + the hwg tenant) on 2026-07-14 during a Rekor failure window.
-# v1.18 has no offline-bundle-verification path. So this policy is temporarily
-# Audit (failureAction) + Ignore (failurePolicy) — it still VERIFIES and reports
-# via PolicyReports, but never blocks. Integrity is meanwhile carried by
-# digest-pinning (immutable image bytes) + the planned CI verify-at-ingest.
-# RESTORE fail-closed (failureAction: Enforce, failurePolicy: Fail, and flip the
-# guard's FIRST_PARTY_ENFORCEMENT_MODE back) AFTER the Kyverno v1.18→v1.19+
-# upgrade lands offline bundle verification. Tracked in vault_live_admin_lockout.
+# ⚠️ STILL INTERIM AUDIT in THIS change (offline verification now configured; the
+# Enforce/Fail flip is the next PR — this one lands the offline config as a live
+# canary and proves it via PolicyReports before anything blocks).
+# Root cause of the 2026-07-14 brick: keyless verification against `rekor.url` made
+# an ONLINE Rekor transparency-log query on the admission hot path, and a Rekor
+# outage window fail-closed first-party pod creation (Vault + the hwg tenant).
+# FIX (this change): the three first-party keyless attestors now verify OFFLINE —
+# the embedded cosign bundle SET is checked against a pinned Rekor public key
+# (rekor.pubkey, with `rekor.url` REMOVED so Kyverno creates no RekorClient / makes
+# no online GET), the Fulcio leaf chain against pinned `roots` (Sigstore root +
+# intermediate), and the Fulcio SCT against a pinned CTFE key (ctlog.pubkey).
+# ignoreTlog / ignoreSCT stay FALSE, so the tlog + SCT security properties are fully
+# preserved; the pins remove the Sigstore/Rekor/Fulcio/CTFE/TUF online dependency
+# from the admission path entirely — the exact 2026-07-14 brick vector, eliminated.
+# The pins are Sigstore public-good keys that rotate on Sigstore's schedule; the
+# single-valued-pin residual (a stale pin fail-closing a NEW post-rotation signature)
+# WILL be engineered out by the sigstore-TUF-root drift-watcher — a follow-up PR that
+# lands BEFORE the Enforce flip and opens a bump PR when Sigstore rotates a key. It is
+# NOT built yet; until it lands the residual is bounded (this policy stays non-blocking
+# Audit, so a stale pin surfaces only as a PolicyReport fail, never a brick; Sigstore
+# rotations are rare — Rekor key stable since 2021, Fulcio root valid to 2031). The
+# pins are mirrored in scripts/check-image-signature-enforcement.py
+# (CANONICAL_FIRST_PARTY_ATTESTORS) which the guard exact-matches. RESTORE fail-closed
+# (failureAction: Enforce, failurePolicy: Fail, guard FIRST_PARTY_ENFORCEMENT_MODE) in
+# the next PR, once the Audit canary proves first-party PolicyReports PASS offline.
+# Tracked in vault_live_admin_lockout / cp1_offline_verify_decision.
 #
 # Original CP-1 fail-closed rationale (restore target):
 # Fail-closed cosign keyless signature verification for first-party images.
 # Owner decision 2026-07-13: fail closed for first-party images everywhere the
-# Kyverno admission webhook applies, including deploy-vault. The accepted
-# availability tradeoff is that while Kyverno, GHCR, or sigstore/rekor is
-# unreachable, first-party pods cannot be created or restarted; running pods are
-# unaffected because admission is create-time.
+# Kyverno admission webhook applies, including deploy-vault. With the offline pins
+# above, Sigstore/Rekor/Fulcio/CTFE/TUF are NO LONGER on the admission path, so the
+# residual availability tradeoff at Enforce is narrowed to: while Kyverno itself or
+# GHCR (the image + signature layers) is unreachable, first-party pods cannot be
+# created or restarted; running pods are unaffected because admission is create-time.
 #
 # Superset invariant: the matchConditions CEL must match a superset of every
 # imageReferences glob below. If an enforced image can match Kyverno's
@@ -86,8 +102,48 @@ spec:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
                     subjectRegExp: "^https://github\\.com/nwarila-platform/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    roots: |-
+                      -----BEGIN CERTIFICATE-----
+                      MIIB9zCCAXygAwIBAgIUALZNAPFdxHPwjeDloDwyYChAO/4wCgYIKoZIzj0EAwMw
+                      KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y
+                      MTEwMDcxMzU2NTlaFw0zMTEwMDUxMzU2NThaMCoxFTATBgNVBAoTDHNpZ3N0b3Jl
+                      LmRldjERMA8GA1UEAxMIc2lnc3RvcmUwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAAT7
+                      XeFT4rb3PQGwS4IajtLk3/OlnpgangaBclYpsYBr5i+4ynB07ceb3LP0OIOZdxex
+                      X69c5iVuyJRQ+Hz05yi+UF3uBWAlHpiS5sh0+H2GHE7SXrk1EC5m1Tr19L9gg92j
+                      YzBhMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRY
+                      wB5fkUWlZql6zJChkyLQKsXF+jAfBgNVHSMEGDAWgBRYwB5fkUWlZql6zJChkyLQ
+                      KsXF+jAKBggqhkjOPQQDAwNpADBmAjEAj1nHeXZp+13NWBNa+EDsDP8G1WWg1tCM
+                      WP/WHPqpaVo0jhsweNFZgSs0eE7wYI4qAjEA2WB9ot98sIkoF3vZYdd3/VtWB5b9
+                      TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
+                      -----END CERTIFICATE-----
+                      -----BEGIN CERTIFICATE-----
+                      MIICGjCCAaGgAwIBAgIUALnViVfnU0brJasmRkHrn/UnfaQwCgYIKoZIzj0EAwMw
+                      KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y
+                      MjA0MTMyMDA2MTVaFw0zMTEwMDUxMzU2NThaMDcxFTATBgNVBAoTDHNpZ3N0b3Jl
+                      LmRldjEeMBwGA1UEAxMVc2lnc3RvcmUtaW50ZXJtZWRpYXRlMHYwEAYHKoZIzj0C
+                      AQYFK4EEACIDYgAE8RVS/ysH+NOvuDZyPIZtilgUF9NlarYpAd9HP1vBBH1U5CV7
+                      7LSS7s0ZiH4nE7Hv7ptS6LvvR/STk798LVgMzLlJ4HeIfF3tHSaexLcYpSASr1kS
+                      0N/RgBJz/9jWCiXno3sweTAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYB
+                      BQUHAwMwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQU39Ppz1YkEZb5qNjp
+                      KFWixi4YZD8wHwYDVR0jBBgwFoAUWMAeX5FFpWapesyQoZMi0CrFxfowCgYIKoZI
+                      zj0EAwMDZwAwZAIwPCsQK4DYiZYDPIaDi5HFKnfxXx6ASSVmERfsynYBiX2X6SJR
+                      nZU84/9DZdnFvvxmAjBOt6QpBlc4J/0DxvkTCqpclvziL6BCCPnjdlIB3Pu3BxsP
+                      mygUY7Ii2zbdCdliiow=
+                      -----END CERTIFICATE-----
                     rekor:
-                      url: "https://rekor.sigstore.dev"
+                      ignoreTlog: false
+                      pubkey: |-
+                        -----BEGIN PUBLIC KEY-----
+                        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr
+                        kBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==
+                        -----END PUBLIC KEY-----
+                    ctlog:
+                      ignoreSCT: false
+                      pubkey: |-
+                        -----BEGIN PUBLIC KEY-----
+                        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiPSlFi0CmFTfEjCUqF9HuCEcYXNK
+                        AaYalIJmBZ8yyezPjTqhxrKBpMnaocVtLJBI1eM3uXnQzQGAJdJ4gs9Fyw==
+                        -----END PUBLIC KEY-----
     - name: verify-nwarila-images
       match:
         any:
@@ -105,8 +161,48 @@ spec:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
                     subjectRegExp: "^https://github\\.com/[Nn][Ww]arila/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    roots: |-
+                      -----BEGIN CERTIFICATE-----
+                      MIIB9zCCAXygAwIBAgIUALZNAPFdxHPwjeDloDwyYChAO/4wCgYIKoZIzj0EAwMw
+                      KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y
+                      MTEwMDcxMzU2NTlaFw0zMTEwMDUxMzU2NThaMCoxFTATBgNVBAoTDHNpZ3N0b3Jl
+                      LmRldjERMA8GA1UEAxMIc2lnc3RvcmUwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAAT7
+                      XeFT4rb3PQGwS4IajtLk3/OlnpgangaBclYpsYBr5i+4ynB07ceb3LP0OIOZdxex
+                      X69c5iVuyJRQ+Hz05yi+UF3uBWAlHpiS5sh0+H2GHE7SXrk1EC5m1Tr19L9gg92j
+                      YzBhMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRY
+                      wB5fkUWlZql6zJChkyLQKsXF+jAfBgNVHSMEGDAWgBRYwB5fkUWlZql6zJChkyLQ
+                      KsXF+jAKBggqhkjOPQQDAwNpADBmAjEAj1nHeXZp+13NWBNa+EDsDP8G1WWg1tCM
+                      WP/WHPqpaVo0jhsweNFZgSs0eE7wYI4qAjEA2WB9ot98sIkoF3vZYdd3/VtWB5b9
+                      TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
+                      -----END CERTIFICATE-----
+                      -----BEGIN CERTIFICATE-----
+                      MIICGjCCAaGgAwIBAgIUALnViVfnU0brJasmRkHrn/UnfaQwCgYIKoZIzj0EAwMw
+                      KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y
+                      MjA0MTMyMDA2MTVaFw0zMTEwMDUxMzU2NThaMDcxFTATBgNVBAoTDHNpZ3N0b3Jl
+                      LmRldjEeMBwGA1UEAxMVc2lnc3RvcmUtaW50ZXJtZWRpYXRlMHYwEAYHKoZIzj0C
+                      AQYFK4EEACIDYgAE8RVS/ysH+NOvuDZyPIZtilgUF9NlarYpAd9HP1vBBH1U5CV7
+                      7LSS7s0ZiH4nE7Hv7ptS6LvvR/STk798LVgMzLlJ4HeIfF3tHSaexLcYpSASr1kS
+                      0N/RgBJz/9jWCiXno3sweTAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYB
+                      BQUHAwMwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQU39Ppz1YkEZb5qNjp
+                      KFWixi4YZD8wHwYDVR0jBBgwFoAUWMAeX5FFpWapesyQoZMi0CrFxfowCgYIKoZI
+                      zj0EAwMDZwAwZAIwPCsQK4DYiZYDPIaDi5HFKnfxXx6ASSVmERfsynYBiX2X6SJR
+                      nZU84/9DZdnFvvxmAjBOt6QpBlc4J/0DxvkTCqpclvziL6BCCPnjdlIB3Pu3BxsP
+                      mygUY7Ii2zbdCdliiow=
+                      -----END CERTIFICATE-----
                     rekor:
-                      url: "https://rekor.sigstore.dev"
+                      ignoreTlog: false
+                      pubkey: |-
+                        -----BEGIN PUBLIC KEY-----
+                        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr
+                        kBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==
+                        -----END PUBLIC KEY-----
+                    ctlog:
+                      ignoreSCT: false
+                      pubkey: |-
+                        -----BEGIN PUBLIC KEY-----
+                        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiPSlFi0CmFTfEjCUqF9HuCEcYXNK
+                        AaYalIJmBZ8yyezPjTqhxrKBpMnaocVtLJBI1eM3uXnQzQGAJdJ4gs9Fyw==
+                        -----END PUBLIC KEY-----
     - name: verify-herowars-images
       match:
         any:
@@ -128,5 +224,45 @@ spec:
                 - keyless:
                     issuer: "https://token.actions.githubusercontent.com"
                     subjectRegExp: "^https://github\\.com/the-hero-wars-guys/.+/\\.github/workflows/.+@refs/(heads/main|tags/v.*)$"
+                    roots: |-
+                      -----BEGIN CERTIFICATE-----
+                      MIIB9zCCAXygAwIBAgIUALZNAPFdxHPwjeDloDwyYChAO/4wCgYIKoZIzj0EAwMw
+                      KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y
+                      MTEwMDcxMzU2NTlaFw0zMTEwMDUxMzU2NThaMCoxFTATBgNVBAoTDHNpZ3N0b3Jl
+                      LmRldjERMA8GA1UEAxMIc2lnc3RvcmUwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAAT7
+                      XeFT4rb3PQGwS4IajtLk3/OlnpgangaBclYpsYBr5i+4ynB07ceb3LP0OIOZdxex
+                      X69c5iVuyJRQ+Hz05yi+UF3uBWAlHpiS5sh0+H2GHE7SXrk1EC5m1Tr19L9gg92j
+                      YzBhMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRY
+                      wB5fkUWlZql6zJChkyLQKsXF+jAfBgNVHSMEGDAWgBRYwB5fkUWlZql6zJChkyLQ
+                      KsXF+jAKBggqhkjOPQQDAwNpADBmAjEAj1nHeXZp+13NWBNa+EDsDP8G1WWg1tCM
+                      WP/WHPqpaVo0jhsweNFZgSs0eE7wYI4qAjEA2WB9ot98sIkoF3vZYdd3/VtWB5b9
+                      TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
+                      -----END CERTIFICATE-----
+                      -----BEGIN CERTIFICATE-----
+                      MIICGjCCAaGgAwIBAgIUALnViVfnU0brJasmRkHrn/UnfaQwCgYIKoZIzj0EAwMw
+                      KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y
+                      MjA0MTMyMDA2MTVaFw0zMTEwMDUxMzU2NThaMDcxFTATBgNVBAoTDHNpZ3N0b3Jl
+                      LmRldjEeMBwGA1UEAxMVc2lnc3RvcmUtaW50ZXJtZWRpYXRlMHYwEAYHKoZIzj0C
+                      AQYFK4EEACIDYgAE8RVS/ysH+NOvuDZyPIZtilgUF9NlarYpAd9HP1vBBH1U5CV7
+                      7LSS7s0ZiH4nE7Hv7ptS6LvvR/STk798LVgMzLlJ4HeIfF3tHSaexLcYpSASr1kS
+                      0N/RgBJz/9jWCiXno3sweTAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYB
+                      BQUHAwMwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQU39Ppz1YkEZb5qNjp
+                      KFWixi4YZD8wHwYDVR0jBBgwFoAUWMAeX5FFpWapesyQoZMi0CrFxfowCgYIKoZI
+                      zj0EAwMDZwAwZAIwPCsQK4DYiZYDPIaDi5HFKnfxXx6ASSVmERfsynYBiX2X6SJR
+                      nZU84/9DZdnFvvxmAjBOt6QpBlc4J/0DxvkTCqpclvziL6BCCPnjdlIB3Pu3BxsP
+                      mygUY7Ii2zbdCdliiow=
+                      -----END CERTIFICATE-----
                     rekor:
-                      url: "https://rekor.sigstore.dev"
+                      ignoreTlog: false
+                      pubkey: |-
+                        -----BEGIN PUBLIC KEY-----
+                        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr
+                        kBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==
+                        -----END PUBLIC KEY-----
+                    ctlog:
+                      ignoreSCT: false
+                      pubkey: |-
+                        -----BEGIN PUBLIC KEY-----
+                        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiPSlFi0CmFTfEjCUqF9HuCEcYXNK
+                        AaYalIJmBZ8yyezPjTqhxrKBpMnaocVtLJBI1eM3uXnQzQGAJdJ4gs9Fyw==
+                        -----END PUBLIC KEY-----

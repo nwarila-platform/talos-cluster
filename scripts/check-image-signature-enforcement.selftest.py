@@ -95,7 +95,11 @@ def verify_block(
     required: str | None = "true",
     issuer: str | None = None,
     subject_regexp: str | None = None,
-    rekor_url: str | None = None,
+    roots: str | None = None,
+    rekor_pubkey: str | None = None,
+    ctlog_pubkey: str | None = None,
+    ignore_tlog: str | None = None,
+    ignore_sct: str | None = None,
     rule_extra_lines: tuple[str, ...] = (),
     match_namespaces: tuple[str, ...] = (),
 ) -> str:
@@ -137,7 +141,15 @@ def verify_block(
             if subject_regexp is not None
             else canonical["subjectRegExp"]
         )
-        rekor_url = rekor_url if rekor_url is not None else canonical["rekor.url"]
+        roots = roots if roots is not None else guard.FULCIO_ROOTS_PEM
+        rekor_pubkey = (
+            rekor_pubkey if rekor_pubkey is not None else guard.REKOR_PUBKEY_PEM
+        )
+        ctlog_pubkey = (
+            ctlog_pubkey if ctlog_pubkey is not None else guard.CTFE_PUBKEY_PEM
+        )
+        ignore_tlog = ignore_tlog if ignore_tlog is not None else "false"
+        ignore_sct = ignore_sct if ignore_sct is not None else "false"
         lines.extend(
             [
                 "          attestors:",
@@ -145,8 +157,22 @@ def verify_block(
                 "                - keyless:",
                 f"                    issuer: \"{issuer}\"",
                 f"                    subjectRegExp: '{subject_regexp}'",
+                "                    roots: |-",
+                *(f"                      {line}" for line in roots.split("\n")),
                 "                    rekor:",
-                f"                      url: \"{rekor_url}\"",
+                f"                      ignoreTlog: {ignore_tlog}",
+                "                      pubkey: |-",
+                *(
+                    f"                        {line}"
+                    for line in rekor_pubkey.split("\n")
+                ),
+                "                    ctlog:",
+                f"                      ignoreSCT: {ignore_sct}",
+                "                      pubkey: |-",
+                *(
+                    f"                        {line}"
+                    for line in ctlog_pubkey.split("\n")
+                ),
             ]
         )
     return "\n".join(lines)
@@ -602,13 +628,28 @@ def attestor_required_false_fixture(root: Path) -> None:
 
 
 def attestor_rekor_repointed_fixture(root: Path) -> None:
+    # Repoint the Rekor verification key to a valid-but-wrong key (the CTFE key):
+    # the guard's exact-match against the pinned REKOR_PUBKEY_PEM must bite.
     write_real_shape_fixture(
         root,
         policy_yaml(
             block_kwargs={
                 "ghcr.io/nwarila-platform/*": {
-                    "rekor_url": "https://rekor.attacker.example",
+                    "rekor_pubkey": guard.CTFE_PUBKEY_PEM,
                 },
+            },
+        ),
+    )
+
+
+def attestor_ignore_tlog_true_fixture(root: Path) -> None:
+    # ignoreTlog: true is the DANGEROUS keyless mode (drops the signing-time anchor
+    # for the ephemeral Fulcio cert). The guard's exact-match (pins "false") must bite.
+    write_real_shape_fixture(
+        root,
+        policy_yaml(
+            block_kwargs={
+                "ghcr.io/nwarila-platform/*": {"ignore_tlog": "true"},
             },
         ),
     )
@@ -869,8 +910,15 @@ def main() -> int:
         run_case(
             "attestor-rekor-repointed",
             1,
-            "I7 Rekor URL repoint bites",
+            "I7 Rekor pubkey repoint bites",
             attestor_rekor_repointed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "attestor-ignore-tlog-true",
+            1,
+            "I7 ignoreTlog:true (insecure keyless) bites",
+            attestor_ignore_tlog_true_fixture,
             ("attestors must exactly match",),
         ),
         run_case(
