@@ -6,9 +6,10 @@ trees such as apps/vault/restore-drill/ that are intentionally not rendered by
 Flux validation.
 
 The required verifyImages action is parameterized by FIRST_PARTY_ENFORCEMENT_MODE
-(currently the interim ``Audit`` — see that constant). Restore it to ``Enforce``
-after the Kyverno upgrade lands offline bundle verification; every "Enforce" in
-the prose/messages below tracks that constant.
+(``Enforce`` — fail-closed) and the required webhook failurePolicy by
+FIRST_PARTY_REQUIRED_FAILURE_POLICY (``Fail``). Both are pinned so the first-party
+signature control cannot be silently reverted to Audit/Ignore with CI green; every
+mode word in the mode-parameterized messages below tracks those constants.
 
 Deliberate scope:
 - Extract inline ``image:`` string scalars.
@@ -143,22 +144,25 @@ CTFE_PUBKEY_PEM = "\n".join([
 # the pinned pubkey + embedded bundle. Pinned so it cannot be repointed to a rogue log.
 REKOR_URL = "https://rekor.sigstore.dev"
 
-# OFFLINE-PINS re-arm (2026-07-17). The online-Rekor dependency that BRICKED first-party
-# pod creation (Vault + the hwg tenant) on 2026-07-14 is REMOVED: the canonical attestors
-# above verify keyless signatures OFFLINE against the pinned Sigstore keys (rekor.pubkey +
-# ctlog.pubkey + Fulcio roots), no admission-path online GET. The first-party rules are
-# STILL non-blocking in this change (failureAction Audit + failurePolicy Ignore) as a live
-# canary: the offline PolicyReports must PASS before the Enforce/Fail flip. This guard fully
-# verifies the rule SHAPE (canonical offline attestors, matchConditions, first-party scoping,
-# background, exempt-ns, required, no skip/exclude/preconditions) and pins the offline
-# material. FLIP both constants below (Enforce / Fail) in the next PR once the Audit canary
-# proves out. See vault_live_admin_lockout / cp1_offline_verify_decision.
-FIRST_PARTY_ENFORCEMENT_MODE = "Audit"  # restore-target: "Enforce"
-FIRST_PARTY_REQUIRED_FAILURE_POLICY = "Ignore"  # restore-target: "Fail"
+# ENFORCED / FAIL-CLOSED (2026-07-17, CP-1 PR-4). First-party keyless signatures are
+# verified OFFLINE against the pinned Sigstore keys (rekor.pubkey + ctlog.pubkey +
+# Fulcio roots) with no admission-path online GET — the online-Rekor dependency that
+# BRICKED first-party pod creation (Vault + the hwg tenant) on 2026-07-14 is REMOVED.
+# The offline path was proven before this flip by a blackholed cosign v3.0.6 run
+# (Kyverno's exact vendored lib) plus a live Audit canary (first-party PolicyReports
+# 5 pass / 0 fail). The two constants below pin the fail-closed posture (failureAction
+# Enforce + failurePolicy Fail); together with the SHAPE checks (canonical offline
+# attestors, matchConditions, first-party scoping, background, exempt-ns, required,
+# no skip/exclude/preconditions) and the pinned offline material, they make the
+# control impossible to silently revert to Audit/Ignore with CI green. The rotation
+# residual (a stale single-valued pin) is caught by the sigstore-pin drift detector
+# (scripts/check-sigstore-pin-verification.py, daily kubescape workflow — PR #334).
+# See vault_live_admin_lockout / cp1_offline_verify_decision.
+FIRST_PARTY_ENFORCEMENT_MODE = "Enforce"
+FIRST_PARTY_REQUIRED_FAILURE_POLICY = "Fail"
 # The dedicated first-party signature policy. Scoping the first-party checks by
-# this name (not just the action) keeps the third-party Audit policy
-# (verify-image-signatures) out of the first-party enforcement checks now that
-# first-party is also Audit during the interim.
+# this name (not just the action) keeps the separate third-party Audit policy
+# (verify-image-signatures) out of the first-party enforcement checks.
 FIRST_PARTY_ENFORCED_POLICY_NAME = "verify-image-signatures-enforced"
 EXPECTED_ENFORCE_RULE_MATCH = {"any": [{"resources": {"kinds": ["Pod"]}}]}
 IMAGE_SIGNATURE_POLICY_NAMES = (
@@ -275,7 +279,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Scan raw YAML for first-party GHCR image refs that are not covered "
             "by Kyverno verifyImages rules with the effective "
-            "FIRST_PARTY_ENFORCEMENT_MODE action (interim: Audit)."
+            "FIRST_PARTY_ENFORCEMENT_MODE action (Enforce)."
         )
     )
     parser.add_argument(

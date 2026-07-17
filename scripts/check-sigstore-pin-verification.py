@@ -36,9 +36,12 @@ A healthy, Ready policy with simply no first-party workloads scanned is a
 legitimate PASS.
 
 SCOPE (honest): this is REACTIVE — it catches drift once a mismatched image is
-deployed and scanned. At Audit that is a non-destructive early warning. Truly
-PROACTIVE (catch a rotation before a new-key image is ever deployed) belongs to
-the source repos' CI verify-at-ingest (supply-chain doctrine) — booked, not here.
+deployed and scanned. The daily background scan is report-only in both modes, so
+the detector still fires as an early warning; but with the policy at ENFORCE a
+drifted new-key image is also DENIED at admission until the pins are bumped
+(running pods are unaffected, since admission is create-time). Truly PROACTIVE
+(catch a rotation before a new-key image is ever deployed) belongs to the source
+repos' CI verify-at-ingest (supply-chain doctrine) — booked, not here.
 
 Pure stdin -> exit-code filter (no cluster access) so the selftest drives it with
 fixtures. Exit 0 = policy healthy + pins current; 1 = policy missing/not-Ready OR
