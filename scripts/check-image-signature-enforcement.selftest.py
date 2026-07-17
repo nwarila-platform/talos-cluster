@@ -240,6 +240,172 @@ spec:
     return header + rule_text + "\n"
 
 
+def _indent_block(text: str, spaces: int) -> list[str]:
+    pad = " " * spaces
+    return [f"{pad}{line}" for line in text.split("\n")]
+
+
+def ivp_filename(org_glob: str) -> str:
+    return f"ivp-{guard.FIRST_PARTY_IVP[org_glob]['policy_name']}.yaml"
+
+
+def ivp_yaml(
+    org_glob: str,
+    *,
+    policy_name: str | None = None,
+    validation_actions: tuple[str, ...] = ("Audit",),
+    failure_policy: str | None = "Ignore",
+    admission_enabled: str | None = "true",
+    background_enabled: str | None = "true",
+    match_constraints_operations: tuple[str, ...] = ("CREATE", "UPDATE"),
+    include_match_conditions: bool = True,
+    match_expression: str | None = None,
+    match_condition_name: str | None = None,
+    match_image_references: tuple[str, ...] | None = None,
+    attestor_name: str | None = None,
+    issuer: str | None = None,
+    subject_regexp: str | None = None,
+    roots: str | None = None,
+    rekor_url: str | None = None,
+    rekor_pubkey: str | None = None,
+    ctlog_pubkey: str | None = None,
+    ignore_tlog: str | None = None,
+    ignore_sct: str | None = None,
+    credentials: tuple[str, ...] | None = None,
+    validation_expression: str | None = None,
+) -> str:
+    spec = guard.FIRST_PARTY_IVP[org_glob]
+    policy_name = policy_name if policy_name is not None else spec["policy_name"]
+    attestor_name = attestor_name if attestor_name is not None else spec["attestor"]
+    identity = guard.CANONICAL_FIRST_PARTY_ATTESTORS[org_glob]
+    issuer = issuer if issuer is not None else identity["issuer"]
+    subject_regexp = (
+        subject_regexp if subject_regexp is not None else identity["subjectRegExp"]
+    )
+    roots = roots if roots is not None else guard.FULCIO_ROOTS_PEM
+    rekor_url = rekor_url if rekor_url is not None else guard.REKOR_URL
+    rekor_pubkey = rekor_pubkey if rekor_pubkey is not None else guard.REKOR_PUBKEY_PEM
+    ctlog_pubkey = ctlog_pubkey if ctlog_pubkey is not None else guard.CTFE_PUBKEY_PEM
+    ignore_tlog = ignore_tlog if ignore_tlog is not None else "false"
+    ignore_sct = ignore_sct if ignore_sct is not None else "false"
+    credentials = credentials if credentials is not None else spec["credentials"]
+    match_image_references = (
+        match_image_references
+        if match_image_references is not None
+        else (org_glob,)
+    )
+    match_condition_name = (
+        match_condition_name
+        if match_condition_name is not None
+        else guard.FIRST_PARTY_MATCH_CONDITION_NAME
+    )
+    match_expression = (
+        match_expression
+        if match_expression is not None
+        else guard.canonical_ivp_match_expression(org_glob)
+    )
+    validation_expression = (
+        validation_expression
+        if validation_expression is not None
+        else guard.canonical_ivp_validation_expression(attestor_name)
+    )
+
+    operations = ", ".join(f'"{op}"' for op in match_constraints_operations)
+    actions = ", ".join(validation_actions)
+    lines = [
+        "apiVersion: policies.kyverno.io/v1beta1",
+        "kind: ImageValidatingPolicy",
+        "metadata:",
+        f"  name: {policy_name}",
+        "spec:",
+        f"  validationActions: [{actions}]",
+    ]
+    if failure_policy is not None:
+        lines.append(f"  failurePolicy: {failure_policy}")
+    lines.append("  evaluation:")
+    lines.append("    admission:")
+    if admission_enabled is not None:
+        lines.append(f"      enabled: {admission_enabled}")
+    lines.append("    background:")
+    if background_enabled is not None:
+        lines.append(f"      enabled: {background_enabled}")
+    lines.extend(
+        [
+            "  matchConstraints:",
+            "    resourceRules:",
+            '      - apiGroups: [""]',
+            '        apiVersions: ["v1"]',
+            f"        operations: [{operations}]",
+            '        resources: ["pods"]',
+        ]
+    )
+    if include_match_conditions:
+        lines.extend(
+            [
+                "  matchConditions:",
+                f"    - name: {match_condition_name}",
+                "      expression: |-",
+                *_indent_block(match_expression, 8),
+            ]
+        )
+    lines.append("  matchImageReferences:")
+    for glob in match_image_references:
+        lines.append(f'    - glob: "{glob}"')
+    if credentials:
+        lines.append("  credentials:")
+        lines.append("    secrets:")
+        for secret in credentials:
+            lines.append(f"      - {secret}")
+    lines.extend(
+        [
+            "  attestors:",
+            f"    - name: {attestor_name}",
+            "      cosign:",
+            "        keyless:",
+            "          identities:",
+            f'            - issuer: "{issuer}"',
+            f"              subjectRegExp: '{subject_regexp}'",
+            "          roots: |-",
+            *_indent_block(roots, 12),
+            "        ctlog:",
+            f'          url: "{rekor_url}"',
+            "          rekorPubKey: |-",
+            *_indent_block(rekor_pubkey, 12),
+            "          ctLogPubKey: |-",
+            *_indent_block(ctlog_pubkey, 12),
+            f"          insecureIgnoreTlog: {ignore_tlog}",
+            f"          insecureIgnoreSCT: {ignore_sct}",
+            "  validations:",
+            "    - expression: |-",
+            *_indent_block(validation_expression, 8),
+            '      message: "first-party image failed keyless signature verification"',
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_ivps(
+    root: Path,
+    omit: tuple[str, ...] = (),
+    overrides: dict[str, dict[str, object]] | None = None,
+) -> tuple[str, ...]:
+    overrides = overrides or {}
+    filenames: list[str] = []
+    for org_glob in guard.FIRST_PARTY_ORG_GLOBS:
+        # Skip orgs absent from FIRST_PARTY_IVP (e.g. the synthetic org the
+        # constants-consistency case injects): the guard's startup assert fires
+        # on that inconsistency at evaluation time (rc 2) before any IVP check.
+        if org_glob in omit or org_glob not in guard.FIRST_PARTY_IVP:
+            continue
+        filename = ivp_filename(org_glob)
+        write_yaml(
+            root / f"policies/{filename}",
+            ivp_yaml(org_glob, **overrides.get(org_glob, {})),
+        )
+        filenames.append(filename)
+    return tuple(filenames)
+
+
 def audit_policy_yaml() -> str:
     return """
     apiVersion: kyverno.io/v1
@@ -355,9 +521,27 @@ def write_real_shape_fixture(
     image: str = FIRST_PARTY_IMAGE,
     namespace: str | None = None,
     kustomize_namespace: str | None = None,
+    ivp_omit: tuple[str, ...] = (),
+    ivp_overrides: dict[str, dict[str, object]] | None = None,
+    ivp_kustomization_omit: tuple[str, ...] = (),
 ) -> None:
     write_yaml(root / "policies/verify-image-signatures.yaml", audit_policy_yaml())
-    write_policy_kustomization(root)
+    write_ivps(root, omit=ivp_omit, overrides=ivp_overrides)
+    listed_ivps = tuple(
+        ivp_filename(org_glob)
+        for org_glob in guard.FIRST_PARTY_ORG_GLOBS
+        if org_glob in guard.FIRST_PARTY_IVP
+        and org_glob not in ivp_omit
+        and org_glob not in ivp_kustomization_omit
+    )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+        )
+        + listed_ivps,
+    )
     write_base_fixture(
         root,
         enforced_policy if enforced_policy is not None else policy_yaml(),
@@ -411,7 +595,15 @@ def audit_skip_image_references_fixture(root: Path) -> None:
         root / "policies/verify-image-signatures.yaml",
         audit_policy_with_cilium_skips_yaml(),
     )
-    write_policy_kustomization(root)
+    ivp_filenames = write_ivps(root)
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+        )
+        + ivp_filenames,
+    )
     write_base_fixture(root, policy_yaml())
 
 
@@ -536,7 +728,8 @@ def fail_mutate_no_matchconditions_fixture(root: Path) -> None:
             "verify-image-signatures.yaml",
             "verify-image-signatures-enforced.yaml",
             "fail-mutate-no-matchconditions.yaml",
-        ),
+        )
+        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
     )
 
 
@@ -565,7 +758,8 @@ def fail_mutate_no_webhook_configuration_fixture(root: Path) -> None:
             "verify-image-signatures.yaml",
             "verify-image-signatures-enforced.yaml",
             "fail-mutate-no-webhook-configuration.yaml",
-        ),
+        )
+        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
     )
 
 
@@ -587,7 +781,11 @@ def first_party_in_kustomize_namespace_fixture(root: Path) -> None:
 
 def missing_policy_kustomization_resource_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
-    write_policy_kustomization(root, ("verify-image-signatures.yaml",))
+    write_policy_kustomization(
+        root,
+        ("verify-image-signatures.yaml",)
+        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
+    )
 
 
 def kyverno_default_registry_ghcr_fixture(root: Path) -> None:
@@ -744,6 +942,227 @@ def background_false_fixture(root: Path) -> None:
 
 def autogen_removed_fixture(root: Path) -> None:
     write_real_shape_fixture(root, policy_yaml(autogen_controllers=None))
+
+
+# ---- ImageValidatingPolicy (IVP) weakening fixtures --------------------------
+# Independent constructions (NOT the guard's own builders) so a builder bug can't
+# hide a real weakening. The clean baseline (3 IVPs) is written by
+# write_real_shape_fixture; each case mutates exactly one IVP via ivp_overrides.
+HWG_ORG = "ghcr.io/the-hero-wars-guys/*"
+NWARILA_ORG = "ghcr.io/nwarila/*"
+
+
+def ivp_weak_cel(
+    prefix: str,
+    fields: tuple[str, ...] = ("containers", "initContainers", "ephemeralContainers"),
+) -> str:
+    clauses = [
+        f"(has(object.spec.{field}) && object.spec.{field}.exists(c, "
+        f"c.image.startsWith('{prefix}')))"
+        for field in fields
+    ]
+    return "object != null && (\n  " + " ||\n  ".join(clauses) + "\n)"
+
+
+def ivp_weak_validation(
+    attestor: str,
+    fields: tuple[str, ...] = ("containers", "initContainers", "ephemeralContainers"),
+) -> str:
+    clauses = [
+        f"images.{field}.map(image, verifyImageSignatures(image, "
+        f"[attestors.{attestor}])).all(e, e > 0)"
+        for field in fields
+    ]
+    return " &&\n".join(clauses)
+
+
+def ivp_over(org_glob: str, **kwargs: object) -> dict[str, dict[str, object]]:
+    return {org_glob: kwargs}
+
+
+def ivp_missing_org_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, ivp_omit=(HWG_ORG,))
+
+
+def ivp_validation_action_deny_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, validation_actions=("Deny",))
+    )
+
+
+def ivp_validation_action_warn_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, validation_actions=("Warn",))
+    )
+
+
+def ivp_failure_policy_fail_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, failure_policy="Fail")
+    )
+
+
+def ivp_admission_disabled_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, admission_enabled="false")
+    )
+
+
+def ivp_background_disabled_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, background_enabled="false")
+    )
+
+
+def ivp_matchconstraints_narrowed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG, match_constraints_operations=("CREATE",)
+        ),
+    )
+
+
+def ivp_no_matchconditions_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, include_match_conditions=False)
+    )
+
+
+def ivp_matchconditions_missing_field_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            match_expression=ivp_weak_cel(
+                "ghcr.io/nwarila/", fields=("containers", "ephemeralContainers")
+            ),
+        ),
+    )
+
+
+def ivp_matchconditions_wrong_org_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG, match_expression=ivp_weak_cel("ghcr.io/the-hero-wars-guys/")
+        ),
+    )
+
+
+def ivp_matchimagereferences_broadened_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(NWARILA_ORG, match_image_references=("ghcr.io/*",)),
+    )
+
+
+def ivp_attestor_roots_repointed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, roots=guard.CTFE_PUBKEY_PEM)
+    )
+
+
+def ivp_attestor_rekor_repointed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, rekor_pubkey=guard.CTFE_PUBKEY_PEM)
+    )
+
+
+def ivp_attestor_ctlog_repointed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, ctlog_pubkey=guard.REKOR_PUBKEY_PEM)
+    )
+
+
+def ivp_attestor_ignore_tlog_true_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, ignore_tlog="true")
+    )
+
+
+def ivp_attestor_ignore_sct_true_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, ignore_sct="true")
+    )
+
+
+def ivp_attestor_rekor_url_repointed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG, rekor_url="https://rekor.attacker.example"
+        ),
+    )
+
+
+def ivp_attestor_issuer_changed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(NWARILA_ORG, issuer="https://issuer.attacker.example"),
+    )
+
+
+def ivp_attestor_subject_wildcard_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, subject_regexp=".*")
+    )
+
+
+def ivp_validations_weakened_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            validation_expression=ivp_weak_validation(
+                "nwarila", fields=("containers", "ephemeralContainers")
+            ),
+        ),
+    )
+
+
+def ivp_hwg_credentials_dropped_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, ivp_overrides=ivp_over(HWG_ORG, credentials=()))
+
+
+def ivp_file_not_in_kustomization_fixture(root: Path) -> None:
+    write_real_shape_fixture(root, ivp_kustomization_omit=(HWG_ORG,))
+
+
+def ivp_fail_no_matchconditions_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root / "policies/extra-fail-ivp.yaml",
+        """
+        apiVersion: policies.kyverno.io/v1beta1
+        kind: ImageValidatingPolicy
+        metadata:
+          name: extra-fail-ivp
+        spec:
+          validationActions: [Deny]
+          failurePolicy: Fail
+          matchConstraints:
+            resourceRules:
+              - apiGroups: [""]
+                apiVersions: ["v1"]
+                operations: ["CREATE"]
+                resources: ["pods"]
+          matchImageReferences:
+            - glob: "example.com/*"
+          attestors: []
+          validations:
+            - expression: "true"
+        """,
+    )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            "extra-fail-ivp.yaml",
+        )
+        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
+    )
 
 
 def run_guard_for_roots(roots: tuple[Path, ...]) -> GuardRun:
@@ -1154,6 +1573,173 @@ def main() -> int:
             "I6 defaultRegistry coupling bites",
             kyverno_default_registry_ghcr_fixture,
             ("config.defaultRegistry must remain docker.io",),
+        ),
+        run_case(
+            "ivp-missing-org",
+            1,
+            "IVP1 a missing per-org IVP bites",
+            ivp_missing_org_fixture,
+            (
+                "first-party org ghcr.io/the-hero-wars-guys/* has no "
+                "ImageValidatingPolicy verify-first-party-hwg",
+            ),
+        ),
+        run_case(
+            "ivp-validation-action-deny",
+            1,
+            "IVP2 premature [Deny] flip bites (Audit interim)",
+            ivp_validation_action_deny_fixture,
+            ("validationActions must be [Audit]",),
+        ),
+        run_case(
+            "ivp-validation-action-warn",
+            1,
+            "IVP2 [Warn] downgrade bites",
+            ivp_validation_action_warn_fixture,
+            ("validationActions must be [Audit]",),
+        ),
+        run_case(
+            "ivp-failure-policy-fail",
+            1,
+            "IVP2 failurePolicy: Fail re-arms the brick (interim)",
+            ivp_failure_policy_fail_fixture,
+            ("must set spec.failurePolicy: Ignore",),
+        ),
+        run_case(
+            "ivp-admission-disabled",
+            1,
+            "IVP3 disabling the admission path bites (the migration's point)",
+            ivp_admission_disabled_fixture,
+            ("spec.evaluation.admission.enabled: true",),
+        ),
+        run_case(
+            "ivp-background-disabled",
+            1,
+            "IVP3 disabling background (PolicyReports) bites",
+            ivp_background_disabled_fixture,
+            ("spec.evaluation.background.enabled: true",),
+        ),
+        run_case(
+            "ivp-matchconstraints-narrowed",
+            1,
+            "IVP4 narrowing matchConstraints operations bites",
+            ivp_matchconstraints_narrowed_fixture,
+            ("matchConstraints must exactly equal",),
+        ),
+        run_case(
+            "ivp-no-matchconditions",
+            1,
+            "IVP5 empty matchConditions bite",
+            ivp_no_matchconditions_fixture,
+            ("must declare exactly one matchCondition",),
+        ),
+        run_case(
+            "ivp-matchconditions-missing-field",
+            1,
+            "IVP5 dropping initContainers from the CEL bites",
+            ivp_matchconditions_missing_field_fixture,
+            ("matchConditions expression does not exactly match the canonical",),
+        ),
+        run_case(
+            "ivp-matchconditions-wrong-org",
+            1,
+            "IVP5 wrong-org CEL prefix bites",
+            ivp_matchconditions_wrong_org_fixture,
+            ("matchConditions expression does not exactly match the canonical",),
+        ),
+        run_case(
+            "ivp-matchimagereferences-broadened",
+            1,
+            "IVP6 broadening matchImageReferences bites",
+            ivp_matchimagereferences_broadened_fixture,
+            ("matchImageReferences must be exactly",),
+        ),
+        run_case(
+            "ivp-attestor-roots-repointed",
+            1,
+            "IVP7 Fulcio roots repoint bites",
+            ivp_attestor_roots_repointed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-attestor-rekor-repointed",
+            1,
+            "IVP7 Rekor pubkey repoint bites",
+            ivp_attestor_rekor_repointed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-attestor-ctlog-repointed",
+            1,
+            "IVP7 CT-log pubkey repoint bites",
+            ivp_attestor_ctlog_repointed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-attestor-ignore-tlog-true",
+            1,
+            "IVP7 insecureIgnoreTlog:true (insecure keyless) bites",
+            ivp_attestor_ignore_tlog_true_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-attestor-ignore-sct-true",
+            1,
+            "IVP7 insecureIgnoreSCT:true bites",
+            ivp_attestor_ignore_sct_true_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-attestor-rekor-url-repointed",
+            1,
+            "IVP7 ctlog.url repoint bites",
+            ivp_attestor_rekor_url_repointed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-attestor-issuer-changed",
+            1,
+            "IVP7 issuer swap bites",
+            ivp_attestor_issuer_changed_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-attestor-subject-wildcard",
+            1,
+            "IVP7 subjectRegExp wildcard bites",
+            ivp_attestor_subject_wildcard_fixture,
+            ("attestors must exactly match",),
+        ),
+        run_case(
+            "ivp-validations-weakened",
+            1,
+            "IVP8 dropping a container type from validations bites",
+            ivp_validations_weakened_fixture,
+            ("validations must be exactly one verifyImageSignatures expression",),
+        ),
+        run_case(
+            "ivp-hwg-credentials-dropped",
+            1,
+            "IVP9 dropping the hwg ghcr-pull image-pull secret bites",
+            ivp_hwg_credentials_dropped_fixture,
+            ("spec.credentials.secrets must be exactly ['ghcr-pull']",),
+        ),
+        run_case(
+            "ivp-file-not-in-kustomization",
+            1,
+            "IVP10 an unlisted IVP file bites",
+            ivp_file_not_in_kustomization_fixture,
+            ("not listed in its directory kustomization.yaml resources",),
+        ),
+        run_case(
+            "ivp-fail-no-matchconditions",
+            1,
+            "IVP11 Fail IVP without matchConditions (shared fail webhook) bites",
+            ivp_fail_no_matchconditions_fixture,
+            (
+                "failurePolicy: Fail ImageValidatingPolicy must declare non-empty "
+                "matchConditions",
+            ),
         ),
     ]
     results.append(exit_code_invariant_case(results))
