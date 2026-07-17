@@ -2,7 +2,7 @@
 
 Layer 2 of the DR restore-validator boundary. This suite validates
 `clusters/talos-cluster/apps/kyverno/policies/protect-dr-validate-boundary.yaml` with the kyverno CLI
-**v1.18.1** (the cluster's app version) WITHOUT a cluster, so it can be re-run before flipping the policy
+**v1.18.2** (the cluster's app version) WITHOUT a cluster, so it can be re-run before flipping the policy
 from Audit to Enforce.
 
 ## Run

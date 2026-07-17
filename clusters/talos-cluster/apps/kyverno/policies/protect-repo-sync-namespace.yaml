@@ -15,7 +15,7 @@ metadata:
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Pod, Secret, ServiceAccount, RoleBinding
     policies.kyverno.io/minversion: 1.6.0
-    kyverno.io/kyverno-version: "1.18.1"
+    kyverno.io/kyverno-version: "1.18.2"
     policies.kyverno.io/description: >-
       Blocks non-platform actors from opening interactive pod subresource
       connections or mutating credential and RBAC boundary resources in the

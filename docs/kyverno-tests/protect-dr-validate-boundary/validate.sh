@@ -3,7 +3,7 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR/../../.." && pwd)"
 POL="clusters/talos-cluster/apps/kyverno/policies/protect-dr-validate-boundary.yaml"
-IMG="ghcr.io/kyverno/kyverno-cli:v1.18.1"
+IMG="ghcr.io/kyverno/kyverno-cli:v1.18.2"
 runner="$(command -v podman || command -v docker)"
 [ -z "$runner" ] && { echo "need podman or docker"; exit 2; }
 chmod -R a+rX "$REPO/$DIR" 2>/dev/null || true
