@@ -70,7 +70,6 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
             "^https://github\\.com/[Nn][Ww]arila/.+/\\.github/workflows/"
             ".+@refs/(heads/main|tags/v.*)$"
         ),
-        "rekor.url": "https://rekor.sigstore.dev",
     },
     "ghcr.io/nwarila-platform/*": {
         "issuer": "https://token.actions.githubusercontent.com",
@@ -78,7 +77,6 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
             "^https://github\\.com/nwarila-platform/.+/\\.github/workflows/"
             ".+@refs/(heads/main|tags/v.*)$"
         ),
-        "rekor.url": "https://rekor.sigstore.dev",
     },
     "ghcr.io/the-hero-wars-guys/*": {
         "issuer": "https://token.actions.githubusercontent.com",
@@ -86,18 +84,69 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
             "^https://github\\.com/the-hero-wars-guys/.+/\\.github/workflows/"
             ".+@refs/(heads/main|tags/v.*)$"
         ),
-        "rekor.url": "https://rekor.sigstore.dev",
     },
 }
-# INTERIM AUDIT (2026-07-15). Kyverno v1.18's keyless verification has no offline
-# bundle path and its online-Rekor dependency episodically BRICKED first-party pod
-# creation (Vault + the hwg tenant) on 2026-07-14. So first-party image-signature
-# rules are TEMPORARILY non-blocking: failureAction Audit + failurePolicy Ignore.
-# This guard still fully verifies the rule SHAPE (canonical attestors,
-# matchConditions, first-party scoping, background, exempt-ns, required, no
-# skip/exclude/preconditions) — it only relaxes the action + failurePolicy it
-# expects. RESTORE both constants below (Enforce / Fail) after the Kyverno
-# v1.18->v1.19+ upgrade lands offline verification. See vault_live_admin_lockout.
+# Offline keyless verification pins (Sigstore public-good keys) that REPLACE the
+# online rekor.url. The enforced policy verifies the embedded cosign bundle SET
+# against REKOR_PUBKEY_PEM (no online Rekor GET), the Fulcio leaf chain against
+# FULCIO_ROOTS_PEM (Sigstore root+intermediate), and the Fulcio SCT against
+# CTFE_PUBKEY_PEM; ignoreTlog/ignoreSCT stay false so both log proofs are checked
+# offline. These MUST stay byte-identical to the PEMs inlined in
+# verify-image-signatures-enforced.yaml (this guard exact-matches them). Rotated by
+# the sigstore-TUF-root drift-watcher. Sources: Sigstore TUF trusted_root targets
+# rekor.pub / ctfe_2022.pub / fulcio_v1.crt.pem + fulcio_intermediate_v1.crt.pem.
+FULCIO_ROOTS_PEM = "\n".join([
+    '-----BEGIN CERTIFICATE-----',
+    'MIIB9zCCAXygAwIBAgIUALZNAPFdxHPwjeDloDwyYChAO/4wCgYIKoZIzj0EAwMw',
+    'KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y',
+    'MTEwMDcxMzU2NTlaFw0zMTEwMDUxMzU2NThaMCoxFTATBgNVBAoTDHNpZ3N0b3Jl',
+    'LmRldjERMA8GA1UEAxMIc2lnc3RvcmUwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAAT7',
+    'XeFT4rb3PQGwS4IajtLk3/OlnpgangaBclYpsYBr5i+4ynB07ceb3LP0OIOZdxex',
+    'X69c5iVuyJRQ+Hz05yi+UF3uBWAlHpiS5sh0+H2GHE7SXrk1EC5m1Tr19L9gg92j',
+    'YzBhMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRY',
+    'wB5fkUWlZql6zJChkyLQKsXF+jAfBgNVHSMEGDAWgBRYwB5fkUWlZql6zJChkyLQ',
+    'KsXF+jAKBggqhkjOPQQDAwNpADBmAjEAj1nHeXZp+13NWBNa+EDsDP8G1WWg1tCM',
+    'WP/WHPqpaVo0jhsweNFZgSs0eE7wYI4qAjEA2WB9ot98sIkoF3vZYdd3/VtWB5b9',
+    'TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ',
+    '-----END CERTIFICATE-----',
+    '-----BEGIN CERTIFICATE-----',
+    'MIICGjCCAaGgAwIBAgIUALnViVfnU0brJasmRkHrn/UnfaQwCgYIKoZIzj0EAwMw',
+    'KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y',
+    'MjA0MTMyMDA2MTVaFw0zMTEwMDUxMzU2NThaMDcxFTATBgNVBAoTDHNpZ3N0b3Jl',
+    'LmRldjEeMBwGA1UEAxMVc2lnc3RvcmUtaW50ZXJtZWRpYXRlMHYwEAYHKoZIzj0C',
+    'AQYFK4EEACIDYgAE8RVS/ysH+NOvuDZyPIZtilgUF9NlarYpAd9HP1vBBH1U5CV7',
+    '7LSS7s0ZiH4nE7Hv7ptS6LvvR/STk798LVgMzLlJ4HeIfF3tHSaexLcYpSASr1kS',
+    '0N/RgBJz/9jWCiXno3sweTAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYB',
+    'BQUHAwMwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQU39Ppz1YkEZb5qNjp',
+    'KFWixi4YZD8wHwYDVR0jBBgwFoAUWMAeX5FFpWapesyQoZMi0CrFxfowCgYIKoZI',
+    'zj0EAwMDZwAwZAIwPCsQK4DYiZYDPIaDi5HFKnfxXx6ASSVmERfsynYBiX2X6SJR',
+    'nZU84/9DZdnFvvxmAjBOt6QpBlc4J/0DxvkTCqpclvziL6BCCPnjdlIB3Pu3BxsP',
+    'mygUY7Ii2zbdCdliiow=',
+    '-----END CERTIFICATE-----',
+])
+REKOR_PUBKEY_PEM = "\n".join([
+    '-----BEGIN PUBLIC KEY-----',
+    'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr',
+    'kBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==',
+    '-----END PUBLIC KEY-----',
+])
+CTFE_PUBKEY_PEM = "\n".join([
+    '-----BEGIN PUBLIC KEY-----',
+    'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiPSlFi0CmFTfEjCUqF9HuCEcYXNK',
+    'AaYalIJmBZ8yyezPjTqhxrKBpMnaocVtLJBI1eM3uXnQzQGAJdJ4gs9Fyw==',
+    '-----END PUBLIC KEY-----',
+])
+
+# OFFLINE-PINS re-arm (2026-07-17). The online-Rekor dependency that BRICKED first-party
+# pod creation (Vault + the hwg tenant) on 2026-07-14 is REMOVED: the canonical attestors
+# above verify keyless signatures OFFLINE against the pinned Sigstore keys (rekor.pubkey +
+# ctlog.pubkey + Fulcio roots), no admission-path online GET. The first-party rules are
+# STILL non-blocking in this change (failureAction Audit + failurePolicy Ignore) as a live
+# canary: the offline PolicyReports must PASS before the Enforce/Fail flip. This guard fully
+# verifies the rule SHAPE (canonical offline attestors, matchConditions, first-party scoping,
+# background, exempt-ns, required, no skip/exclude/preconditions) and pins the offline
+# material. FLIP both constants below (Enforce / Fail) in the next PR once the Audit canary
+# proves out. See vault_live_admin_lockout / cp1_offline_verify_decision.
 FIRST_PARTY_ENFORCEMENT_MODE = "Audit"  # restore-target: "Enforce"
 FIRST_PARTY_REQUIRED_FAILURE_POLICY = "Ignore"  # restore-target: "Fail"
 # The dedicated first-party signature policy. Scoping the first-party checks by
@@ -563,6 +612,7 @@ def canonical_first_party_match_expression_normalized() -> str:
 
 
 def canonical_attestors_for(org_glob: str) -> object:
+    # node_to_data returns raw scalar strings, so booleans are the strings "false".
     attestor = CANONICAL_FIRST_PARTY_ATTESTORS[org_glob]
     return [
         {
@@ -571,7 +621,9 @@ def canonical_attestors_for(org_glob: str) -> object:
                     "keyless": {
                         "issuer": attestor["issuer"],
                         "subjectRegExp": attestor["subjectRegExp"],
-                        "rekor": {"url": attestor["rekor.url"]},
+                        "roots": FULCIO_ROOTS_PEM,
+                        "rekor": {"ignoreTlog": "false", "pubkey": REKOR_PUBKEY_PEM},
+                        "ctlog": {"ignoreSCT": "false", "pubkey": CTFE_PUBKEY_PEM},
                     }
                 }
             ]
@@ -981,7 +1033,7 @@ def find_violations(
             if block.attestors != canonical_attestors_for(image_reference):
                 findings.append(
                     "Enforce verifyImages attestors must exactly match the "
-                    "guard canonical keyless issuer/subjectRegExp/rekor.url "
+                    "guard canonical offline keyless issuer/subjectRegExp/roots/rekor.pubkey/ctlog.pubkey "
                     f"triple for {image_reference}: {block_ref}"
                 )
 
