@@ -10,3 +10,6 @@ resources:
   - protect-dr-validate-boundary.yaml
   - verify-image-signatures.yaml
   - verify-image-signatures-enforced.yaml
+  - ivp-verify-first-party-nwarila.yaml
+  - ivp-verify-first-party-nwarila-platform.yaml
+  - ivp-verify-first-party-hwg.yaml

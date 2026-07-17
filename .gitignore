@@ -178,6 +178,9 @@
 !/clusters/talos-cluster/apps/kyverno/policies/protect-dr-validate-boundary.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures-enforced.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/ivp-verify-first-party-nwarila.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/ivp-verify-first-party-nwarila-platform.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/ivp-verify-first-party-hwg.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
 !/clusters/talos-cluster/apps/kyverno/release/helmrepository.yaml
