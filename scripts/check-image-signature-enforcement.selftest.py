@@ -89,7 +89,7 @@ def match_conditions_yaml(
 
 def verify_block(
     org_glob: str,
-    action: str | None = guard.FIRST_PARTY_ENFORCEMENT_MODE,
+    action: str | None = "Audit",
     skip_refs: tuple[str, ...] = (),
     rule_name: str | None = None,
     required: str | None = "true",
@@ -185,8 +185,8 @@ def policy_yaml(
     actions: dict[str, str | None] | None = None,
     missing: tuple[str, ...] = (),
     skips: dict[str, tuple[str, ...]] | None = None,
-    validation_action: str = guard.FIRST_PARTY_ENFORCEMENT_MODE,
-    failure_policy: str = guard.FIRST_PARTY_REQUIRED_FAILURE_POLICY,
+    validation_action: str = "Audit",
+    failure_policy: str = "Ignore",
     include_match_conditions: bool = True,
     match_expression: str | None = None,
     extra_blocks: tuple[str, ...] = (),
@@ -205,7 +205,7 @@ def policy_yaml(
         blocks.append(
             verify_block(
                 org_glob,
-                action=actions.get(org_glob, guard.FIRST_PARTY_ENFORCEMENT_MODE),
+                action=actions.get(org_glob, "Audit"),
                 skip_refs=skips.get(org_glob, ()),
                 **block_kwargs.get(org_glob, {}),
             )
@@ -371,13 +371,13 @@ def good_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
 
 
-def org_not_enforce_fixture(root: Path) -> None:
-    # Every first-party org must carry an Enforce rule. Dropping a single org to
-    # Audit (a partial fail-open regression) removes it from the Enforce-covered
-    # set and must bite.
+def org_not_audit_fixture(root: Path) -> None:
+    # During the interim every first-party org must carry an Audit rule. Re-arming
+    # a single org to Enforce (a partial brick re-arm before the Kyverno upgrade)
+    # drops it out of the Audit-covered set and must bite.
     write_real_shape_fixture(
         root,
-        policy_yaml(actions={"ghcr.io/nwarila/*": "Audit"}),
+        policy_yaml(actions={"ghcr.io/nwarila/*": "Enforce"}),
     )
 
 
@@ -447,11 +447,10 @@ def fail_closed_fixture(root: Path) -> None:
     write_base_fixture(root, policy=None)
 
 
-def failure_policy_ignore_fixture(root: Path) -> None:
-    # Enforce requires failurePolicy: Fail (fail-closed): an image Kyverno cannot
-    # verify must be denied, not admitted. Reverting to Ignore re-opens the
-    # fail-open hole and must bite.
-    write_real_shape_fixture(root, policy_yaml(failure_policy="Ignore"))
+def failure_policy_fail_fixture(root: Path) -> None:
+    # Interim requires failurePolicy: Ignore (fail-open) so a Kyverno/Rekor outage
+    # never bricks first-party admission. Reverting to Fail re-arms the brick.
+    write_real_shape_fixture(root, policy_yaml(failure_policy="Fail"))
 
 
 def no_match_conditions_fixture(root: Path) -> None:
@@ -991,11 +990,11 @@ def main() -> int:
             ("autogen-controllers]: none",),
         ),
         run_case(
-            "posture-org-not-enforce",
+            "posture-org-not-audit",
             1,
-            "single org dropped to Audit bites",
-            org_not_enforce_fixture,
-            ("first-party org ghcr.io/nwarila/* has no Enforce signature rule",),
+            "single org re-armed to Enforce bites (interim)",
+            org_not_audit_fixture,
+            ("first-party org ghcr.io/nwarila/* has no Audit signature rule",),
         ),
         run_case(
             "posture-removed-org",
@@ -1004,7 +1003,7 @@ def main() -> int:
             removed_org_fixture,
             (
                 "first-party org ghcr.io/the-hero-wars-guys/* "
-                "has no Enforce signature rule",
+                "has no Audit signature rule",
             ),
         ),
         run_case(
@@ -1012,7 +1011,7 @@ def main() -> int:
             1,
             "coverage skip bites",
             skipped_image_fixture,
-            ("first-party image not signature-covered (Enforce):",),
+            ("first-party image not signature-covered (Audit):",),
         ),
         run_case(
             "enforce-skip-not-yet-deployed-image",
@@ -1027,36 +1026,36 @@ def main() -> int:
         ),
         run_case(
             "inheritance-audit",
-            1,
-            "policy-level Audit inheritance no longer counts",
+            0,
+            "policy-level Audit inheritance counts (interim)",
             inheritance_audit_fixture,
-            (
-                "no first-party image-signature policy with failureAction: "
-                "Enforce found",
-            ),
         ),
         run_case(
             "inheritance-enforce",
-            0,
-            "policy-level Enforce inheritance counts",
+            1,
+            "policy-level Enforce does not count (interim)",
             inheritance_enforce_fixture,
+            (
+                "no first-party image-signature policy with failureAction: "
+                "Audit found",
+            ),
         ),
         run_case(
             "fail-closed-no-policy",
             1,
-            "zero Enforce blocks bite",
+            "zero Audit blocks bite",
             fail_closed_fixture,
             (
                 "no first-party image-signature policy with failureAction: "
-                "Enforce found",
+                "Audit found",
             ),
         ),
         run_case(
-            "enforce-failure-policy-ignore",
+            "interim-failure-policy-fail",
             1,
-            "failurePolicy: Ignore re-opens fail-open",
-            failure_policy_ignore_fixture,
-            ("webhookConfiguration.failurePolicy: Fail",),
+            "failurePolicy: Fail re-arms the brick (interim)",
+            failure_policy_fail_fixture,
+            ("webhookConfiguration.failurePolicy: Ignore",),
         ),
         run_case(
             "enforce-no-matchconditions",
@@ -1094,9 +1093,9 @@ def main() -> int:
             ("does not exactly match the canonical",),
         ),
         run_case(
-            "enforce-non-first-party-ref",
+            "interim-non-first-party-ref",
             1,
-            "I3 non-first-party ref in enforced policy bites",
+            "I3 non-first-party ref in interim policy bites",
             non_first_party_enforce_ref_fixture,
             ("outside FIRST_PARTY_ORG_GLOBS",),
         ),

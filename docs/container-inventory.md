@@ -12,7 +12,7 @@ are summarized in the appendix for context; the authority for converting unsigne
 third-party → signed first-party is `_handoff/SUPPLY-CHAIN-INTEGRITY-PLAN.md`
 (the fold-in program, **deferred to immediate-post-talos-cluster**).
 
-**Sign status legend:** ✍️ cosign-keyless first-party signature (admission-verified; fail-closed enforced) · 🧱 base/template
+**Sign status legend:** ✍️ cosign-keyless first-party signature (admission-verified; fail-closed enforcement currently interim-audit) · 🧱 base/template
 (not a runtime image) · ⏳ will be first-party-signed once built · 🪞 mirror-and-sign
 (copy of a signed upstream, not a rebuild).
 
