@@ -362,6 +362,8 @@
 !/scripts/check-vault-policy-no-escalation.selftest.py
 !/scripts/check-vault-config-reference-safety.py
 !/scripts/check-vault-config-reference-safety.selftest.py
+!/scripts/check-vault-config-terminating.py
+!/scripts/check-vault-config-terminating.selftest.py
 !/scripts/check-vault-config-operator-bootstrap-invariants.py
 !/scripts/check-vault-config-operator-bootstrap-invariants.selftest.py
 !/scripts/check-vault-restore-validator-boundaries.sh

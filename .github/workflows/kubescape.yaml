@@ -111,3 +111,33 @@ jobs:
         run: |
           echo "kubescape-scan.sh exited non-zero; SARIF (if any) was uploaded above."
           exit 1
+
+      # CP-4 S7 — the #133 stuck-Terminating detector (the real prune
+      # mitigation). Flux prune of a finalizer-bearing CR reports SUCCESS
+      # (source-verified at kustomize-controller v1.9.1: the apiserver accepts
+      # the DELETE, the object leaves status.Inventory, wait health-checks only
+      # the apply set), so a stranded operator finalizer is INVISIBLE at the
+      # Flux layer. This daily step is the detection: a stuck deletion turns
+      # THIS workflow red — the zero-red sweep's established signal surface.
+      # Rides this job deliberately: same scoped scanner role, same
+      # single-object kubeconfig, zero new credentials.
+      - name: Install kubectl (pinned + checksum-verified)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.36.2"
+          KUBECTL_SHA256="1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+          bin="${RUNNER_TEMP}/kubectl"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${bin}" \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  ${bin}" | sha256sum -c -
+          chmod +x "${bin}"
+          "${bin}" version --client
+
+      - name: "Detect stuck-Terminating vault-config CRs (#133)"
+        run: |
+          set -euo pipefail
+          source cluster/config.env
+          export KUBECONFIG="${LOCAL_S3_DIR}/configs/kubeconfig"
+          "${RUNNER_TEMP}/kubectl" get \
+            policies.redhatcop.redhat.io,kubernetesauthengineroles.redhatcop.redhat.io,pkisecretengineroles.redhatcop.redhat.io,secretenginemounts.redhatcop.redhat.io \
+            -A -o json | python3 scripts/check-vault-config-terminating.py
