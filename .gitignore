@@ -340,8 +340,6 @@
 !/scripts/check-sops-encrypted.selftest.py
 !/scripts/check-doc-links.py
 !/scripts/check-doc-links.selftest.py
-!/scripts/check-doc-schedule-claims.py
-!/scripts/check-doc-schedule-claims.selftest.py
 !/scripts/render-dr-schedule-values.py
 !/scripts/render-dr-schedule-values.selftest.py
 !/scripts/render-scripts-readme-counts.py
