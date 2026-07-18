@@ -174,6 +174,12 @@ jobs:
       - name: "Renderer self-test: DR schedule value renderer bites"
         run: python3 scripts/render-dr-schedule-values.selftest.py
 
+      - name: "Renderer check: scripts README line counts are current"
+        run: python3 scripts/render-scripts-readme-counts.py --check
+
+      - name: "Renderer self-test: scripts README line-count renderer bites"
+        run: python3 scripts/render-scripts-readme-counts.selftest.py
+
       - name: "Guard: first-party image digests are pinned and in sync"
         run: python3 scripts/check-image-digest-sync.py
 

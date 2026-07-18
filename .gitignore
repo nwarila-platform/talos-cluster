@@ -344,6 +344,8 @@
 !/scripts/check-doc-schedule-claims.selftest.py
 !/scripts/render-dr-schedule-values.py
 !/scripts/render-dr-schedule-values.selftest.py
+!/scripts/render-scripts-readme-counts.py
+!/scripts/render-scripts-readme-counts.selftest.py
 !/scripts/check-flux-crd-served-versions.py
 !/scripts/check-flux-crd-served-versions.selftest.py
 !/scripts/check-cilium-values-sync.py
