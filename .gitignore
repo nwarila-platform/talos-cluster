@@ -322,6 +322,7 @@
 
 # -- Scripts: automation invoked by the Makefile ------------------------------
 !/scripts/
+!/scripts/README.md
 !/scripts/apply.sh
 !/scripts/bootstrap.sh
 !/scripts/build-maintenance-iso.sh
