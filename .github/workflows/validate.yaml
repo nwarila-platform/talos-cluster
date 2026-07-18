@@ -168,6 +168,12 @@ jobs:
       - name: "Guard self-test: doc schedule claim guard bites"
         run: python3 scripts/check-doc-schedule-claims.selftest.py
 
+      - name: "Renderer check: DR schedule values are current"
+        run: python3 scripts/render-dr-schedule-values.py --check
+
+      - name: "Renderer self-test: DR schedule value renderer bites"
+        run: python3 scripts/render-dr-schedule-values.selftest.py
+
       - name: "Guard: first-party image digests are pinned and in sync"
         run: python3 scripts/check-image-digest-sync.py
 
