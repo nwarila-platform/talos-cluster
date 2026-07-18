@@ -91,8 +91,9 @@ single source) so the guards evaporate, or failing that collapse 3→1 parameter
 | `check-no-placeholder-leak.sh` (54) | No unresolved `placeholder` survives render (a tenant overlay missing a `replacements` block admits at Kyverno but breaks VSO at runtime) | kustomize renders unreplaced placeholders happily → **NO** | **KEEP** |
 | `check-text-encoding.py` (64) | No UTF-8 BOM / Windows-1252 mojibake in tracked text (Windows→Linux migration residue) | `.editorconfig`/pre-commit not CI-enforced here; mojibake bespoke → **PARTIAL** | **KEEP** — tiny, hermetic |
 | `render-readme-versions.py` (260) | README version pins derived from source of truth; `--check` fails if stale | Right pattern, but 10 brittle prose-anchored regexes | **SIMPLIFY** — move prose pins into a `README.md.tmpl` template |
+| `render-dr-schedule-values.py` (325) | DR schedule/retention numbers rendered from canonical manifests into 11 target doc lines; `--check` fails if stale | none; generation is the repo's preferred source-backed docs pattern | **KEEP** — additive precondition for cutting the curated schedule-claim guard |
 | `check-doc-links.py` (187) | No broken *relative* markdown links | `lychee --offline` / markdown-link-check do exactly this → **FULLY** | **CONSOLIDATE** — replace with `lychee --offline` (a pinned binary like actionlint) |
-| `check-doc-schedule-claims.py` (599) | Doc schedule *prose* ("daily", "retain 14") matches manifest cron/retain fields | none, but it guards documentation *adjectives* and needs manual claim-curation to fight manual drift | **CUT** — theater; fold the ~4 real DR-runbook numbers into the render-generation pattern, delete the rest |
+| `check-doc-schedule-claims.py` (599) | Doc schedule *prose* ("daily", "retain 14") matches manifest cron/retain fields | none, but it guards documentation *adjectives* and needs manual claim-curation to fight manual drift | **CUT** — theater; fold the old guard's 11 numeric anchors / 8 doc lines / 5 source fields, plus previously unguarded V6 local retention, into the 6-field render-generation pattern; delete the rest |
 
 ## Operational / lifecycle (thin `talosctl`/`aws`/Factory wrappers — zero-manual)
 
@@ -137,7 +138,7 @@ Tracked here so the "how do we keep this legible" answer lives in-repo, not in c
 Each item lands as its own small, audited, revertible PR.
 
 **Cut (delete outright):**
-- `check-doc-schedule-claims.py` (+ selftest) — guards doc adjectives; fold ~4 DR numbers into `render-*`, delete the rest.
+- `check-doc-schedule-claims.py` (+ selftest) — guards doc adjectives; fold the old guard's 11 numeric anchors / 8 doc lines / 5 source fields, plus previously unguarded V6 local retention, into the 6-field `render-*`; delete the rest.
 
 **Consolidate (remove duplication at the root):**
 - **values-sync trio** (`check-longhorn/cilium/kubelet-csr-approver-values-sync.py`) — `addons/*/values.yaml` are not consumed by Flux (it applies inline `spec.values`); fix via helm `valuesFrom` a kustomize-generated ConfigMap ⇒ all 3 guards evaporate, or collapse 3→1 parameterized guard. *(touches HelmReleases → owner-watched)*
