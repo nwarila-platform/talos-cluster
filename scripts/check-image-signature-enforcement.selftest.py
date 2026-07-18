@@ -253,8 +253,8 @@ def ivp_yaml(
     org_glob: str,
     *,
     policy_name: str | None = None,
-    validation_actions: tuple[str, ...] = ("Audit",),
-    failure_policy: str | None = "Ignore",
+    validation_actions: tuple[str, ...] = ("Deny",),
+    failure_policy: str | None = "Fail",
     admission_enabled: str | None = "true",
     background_enabled: str | None = "true",
     match_constraints_operations: tuple[str, ...] = ("CREATE", "UPDATE"),
@@ -984,9 +984,11 @@ def ivp_missing_org_fixture(root: Path) -> None:
     write_real_shape_fixture(root, ivp_omit=(HWG_ORG,))
 
 
-def ivp_validation_action_deny_fixture(root: Path) -> None:
+def ivp_validation_action_audit_fixture(root: Path) -> None:
+    # Enforcement is [Deny]; downgrading an org's IVP back to [Audit]
+    # (non-blocking) must bite.
     write_real_shape_fixture(
-        root, ivp_overrides=ivp_over(NWARILA_ORG, validation_actions=("Deny",))
+        root, ivp_overrides=ivp_over(NWARILA_ORG, validation_actions=("Audit",))
     )
 
 
@@ -996,9 +998,11 @@ def ivp_validation_action_warn_fixture(root: Path) -> None:
     )
 
 
-def ivp_failure_policy_fail_fixture(root: Path) -> None:
+def ivp_failure_policy_ignore_fixture(root: Path) -> None:
+    # Enforcement is failurePolicy: Fail (fail-closed); reverting an org's IVP to
+    # Ignore (fail-open) must bite.
     write_real_shape_fixture(
-        root, ivp_overrides=ivp_over(NWARILA_ORG, failure_policy="Fail")
+        root, ivp_overrides=ivp_over(NWARILA_ORG, failure_policy="Ignore")
     )
 
 
@@ -1585,25 +1589,25 @@ def main() -> int:
             ),
         ),
         run_case(
-            "ivp-validation-action-deny",
+            "ivp-validation-action-audit",
             1,
-            "IVP2 premature [Deny] flip bites (Audit interim)",
-            ivp_validation_action_deny_fixture,
-            ("validationActions must be [Audit]",),
+            "IVP2 downgrading an org to [Audit] (non-blocking) bites",
+            ivp_validation_action_audit_fixture,
+            ("validationActions must be [Deny]",),
         ),
         run_case(
             "ivp-validation-action-warn",
             1,
             "IVP2 [Warn] downgrade bites",
             ivp_validation_action_warn_fixture,
-            ("validationActions must be [Audit]",),
+            ("validationActions must be [Deny]",),
         ),
         run_case(
-            "ivp-failure-policy-fail",
+            "ivp-failure-policy-ignore",
             1,
-            "IVP2 failurePolicy: Fail re-arms the brick (interim)",
-            ivp_failure_policy_fail_fixture,
-            ("must set spec.failurePolicy: Ignore",),
+            "IVP2 reverting failurePolicy to Ignore (fail-open) bites",
+            ivp_failure_policy_ignore_fixture,
+            ("must set spec.failurePolicy: Fail",),
         ),
         run_case(
             "ivp-admission-disabled",

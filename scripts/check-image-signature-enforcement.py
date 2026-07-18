@@ -194,20 +194,23 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # first-party pod -> the 2026-07-14 brick class. First-party signature
 # enforcement therefore migrated to per-org ``ImageValidatingPolicy`` resources,
 # which verify INLINE in the validating webhook (no mutation->annotation handoff).
-# This guard pins the IVP shape so the eventual [Audit]->[Deny] /
-# Ignore->Fail flip (the two constants below + the YAML) is safe: offline pins
-# byte-identical to FULCIO_ROOTS_PEM/REKOR_PUBKEY_PEM/CTFE_PUBKEY_PEM, the
-# admission path enabled, first-party CEL scoping (=> a scoped fine-grained
-# webhook per policy, never the shared cluster-wide fail webhook that would brick
-# all pod creation), and full first-party image coverage. The legacy verifyImages
+# This guard pins the IVP shape so first-party signatures ENFORCE fail-closed
+# ([Deny] / failurePolicy Fail) safely: offline pins byte-identical to
+# FULCIO_ROOTS_PEM/REKOR_PUBKEY_PEM/CTFE_PUBKEY_PEM, the admission path enabled,
+# first-party CEL scoping (=> a scoped fine-grained webhook per policy, never the
+# shared cluster-wide fail webhook that would brick all pod creation), and full
+# first-party image coverage. The offline-Audit canary (#333) plus the live
+# admission-path canary (#337: a real signed first-party pod ADMITS via the IVP)
+# proved the flip out before it went blocking. The legacy verifyImages
 # ClusterPolicy stays non-blocking (Audit/Ignore) and guard-pinned until the
 # retire-legacy PR removes it. See cp1_offline_verify_decision.
 IVP_API_VERSION_PREFIX = "policies.kyverno.io/"
 IVP_KIND = "ImageValidatingPolicy"
-# FLIP these two (Deny / Fail) in the retire-legacy PR once the admission-path
-# canary proves signed first-party pods ADMIT and unsigned ones are DENIED.
-IVP_VALIDATION_ACTION = "Audit"  # restore-target: "Deny"
-IVP_REQUIRED_FAILURE_POLICY = "Ignore"  # restore-target: "Fail"
+# First-party signatures are ENFORCED: unsigned/mis-signed first-party pods are
+# DENIED at admission, fail-closed. Mode-parameterized so the posture stays a
+# single-constant source of truth the YAML must match (a half-flip fails CI).
+IVP_VALIDATION_ACTION = "Deny"  # blocking (was interim "Audit")
+IVP_REQUIRED_FAILURE_POLICY = "Fail"  # fail-closed (was interim "Ignore")
 # The unnarrowed Pod CREATE/UPDATE match (node_to_data yields raw scalar strings).
 IVP_MATCH_CONSTRAINTS = {
     "resourceRules": [
