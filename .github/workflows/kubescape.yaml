@@ -153,8 +153,10 @@ jobs:
       # first-party GHCR signatures OFFLINE against single-valued Sigstore key pins
       # (rekor.pubkey/ctlog.pubkey/roots). If Sigstore rotates a key our signing
       # switches to (e.g. Rekor v1->v2), a new first-party image's signature stops
-      # verifying against the stale pin — a PolicyReport `fail` here (at Enforce it
-      # would fail-closed a pod). This daily step turns that into a RED workflow (the
+      # verifying against the stale pin — a PolicyReport `fail` here. These same pins
+      # are byte-identical in the IVPs enforcing at [Deny]/Fail since #340, so a hit
+      # means first-party admission is fail-closing NOW, not hypothetically. This
+      # daily step turns that into a RED workflow (the
       # zero-red sweep signal) so the pins get bumped. Rides this job deliberately:
       # same scoped scanner role + single-object kubeconfig + kubectl, zero new creds.
       - name: "Detect sigstore-pin offline-verification drift (CP-1 first-party)"

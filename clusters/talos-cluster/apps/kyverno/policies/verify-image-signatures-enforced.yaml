@@ -1,8 +1,11 @@
 # ClusterPolicy: verify-image-signatures-enforced
 #
-# ⚠️ STILL INTERIM AUDIT in THIS change (offline verification now configured; the
-# Enforce/Fail flip is the next PR — this one lands the offline config as a live
-# canary and proves it via PolicyReports before anything blocks).
+# ⚠️ NON-BLOCKING (Audit) BY DESIGN — and it is NOT slated to return to Enforce.
+# First-party admission enforcement moved to the per-org ImageValidatingPolicy
+# resources (live at [Deny]/Fail since #340); this legacy ClusterPolicy stays
+# Audit and guard-pinned until the retire-legacy PR (PR-C2) removes it. Its
+# original blocker (online-Rekor on the admission path) was fixed by the offline
+# pins below, so "waiting on offline verification" no longer applies.
 # Root cause of the 2026-07-14 brick: keyless verification against `rekor.url` made
 # an ONLINE Rekor transparency-log query on the admission hot path, and a Rekor
 # outage window fail-closed first-party pod creation (Vault + the hwg tenant).
@@ -16,25 +19,34 @@
 # online Rekor GET on the admission path. (ctlog has no url field — pubkey only.)
 # The Fulcio leaf chain is checked against pinned `roots` (Sigstore root +
 # intermediate), and the Fulcio SCT against a pinned CTFE key (ctlog.pubkey).
-# The offline behavior is established by the Kyverno/cosign code path AND MUST be
-# confirmed by a live kyverno->rekor egress-blackhole canary before the Enforce flip.
+# The offline behavior is established by the Kyverno/cosign code path. NOTE: this header
+# once gated the flip on a live kyverno->rekor egress-blackhole canary. There is NO
+# RECORD in this repo of that canary having been run, and the flip proceeded via the
+# IVPs (#340) regardless. Treat that gate as UNMET rather than satisfied.
 # ignoreTlog / ignoreSCT stay FALSE, so the tlog + SCT security properties are fully
 # preserved; the pins remove the Sigstore/Rekor/Fulcio/CTFE/TUF online dependency
 # from the admission path entirely — the exact 2026-07-14 brick vector, eliminated.
-# The pins are Sigstore public-good keys that rotate on Sigstore's schedule; the
-# single-valued-pin residual (a stale pin fail-closing a NEW post-rotation signature)
-# WILL be engineered out by the sigstore-TUF-root drift-watcher — a follow-up PR that
-# lands BEFORE the Enforce flip and opens a bump PR when Sigstore rotates a key. It is
-# NOT built yet; until it lands the residual is bounded (this policy stays non-blocking
-# Audit, so a stale pin surfaces only as a PolicyReport fail, never a brick; Sigstore
-# rotations are rare — Rekor key stable since 2021, Fulcio root valid to 2031). The
-# pins are mirrored in scripts/check-image-signature-enforcement.py
-# (CANONICAL_FIRST_PARTY_ATTESTORS) which the guard exact-matches. RESTORE fail-closed
-# (failureAction: Enforce, failurePolicy: Fail, guard FIRST_PARTY_ENFORCEMENT_MODE) in
-# the next PR, once the Audit canary proves first-party PolicyReports PASS offline.
-# Tracked in vault_live_admin_lockout / cp1_offline_verify_decision.
+# The pins are Sigstore public-good keys that rotate on Sigstore's schedule. The
+# single-valued-pin residual is a stale pin fail-closing a NEW post-rotation signature.
+# ⚠️ CORRECTED 2026-07-18: this header previously bounded that residual with "this
+# policy stays non-blocking Audit, so a stale pin surfaces only as a PolicyReport
+# fail, never a brick". THAT NO LONGER HOLDS. All four pinned PEMs here are
+# content-identical to the pins in the three ImageValidatingPolicy resources, which
+# run at [Deny]/failurePolicy:Fail since #340 — so a stale pin WOULD deny first-party
+# pod admission, not merely report. This policy being Audit bounds nothing.
+# The sigstore-TUF-root drift-watcher IS built (scripts/check-sigstore-pin-verification.py,
+# #334) and wired into CI. Two caveats: it inspects the LEGACY ClusterPolicy only (a
+# sound proxy, since these four pins are byte-identical in the enforcing IVPs), and its
+# live daily detector runs in the kubescape workflow whose kubectl fetch has been failing
+# (runner->dl.k8s.io egress) — so treat RUNTIME drift detection as unproven until that is
+# confirmed restored. Sigstore rotations are rare (Rekor key stable since
+# 2021, Fulcio root valid to 2031). The pins are mirrored in
+# scripts/check-image-signature-enforcement.py (CANONICAL_FIRST_PARTY_ATTESTORS),
+# which the guard exact-matches. This policy is NOT restored to Enforce — it is
+# retired by PR-C2. Tracked in vault_live_admin_lockout / cp1_offline_verify_decision.
 #
-# Original CP-1 fail-closed rationale (restore target):
+# Original CP-1 fail-closed rationale (HISTORICAL — retained for the reasoning, not
+# a restore target; first-party enforcement now lives on the IVPs):
 # Fail-closed cosign keyless signature verification for first-party images.
 # Owner decision 2026-07-13: fail closed for first-party images everywhere the
 # Kyverno admission webhook applies, including deploy-vault. With the offline pins
@@ -69,10 +81,10 @@ metadata:
       API-server matchConditions so unrelated pods do not enter this
       availability boundary.
 spec:
-  validationFailureAction: Audit # INTERIM (restore: Enforce) — see header
+  validationFailureAction: Audit # PERMANENT (retired by PR-C2, NOT restored) — see header
   background: true
   webhookConfiguration:
-    failurePolicy: Ignore # INTERIM (restore: Fail) — see header
+    failurePolicy: Ignore # PERMANENT (retired by PR-C2, NOT restored) — see header
     timeoutSeconds: 30
     matchConditions:
       - name: first-party-image-present
@@ -101,7 +113,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nwarila-platform/*"
-          failureAction: Audit # INTERIM (restore: Enforce) — see header
+          failureAction: Audit # PERMANENT (retired by PR-C2, NOT restored) — see header
           mutateDigest: false
           required: true
           attestors:
@@ -161,7 +173,7 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nwarila/*"
-          failureAction: Audit # INTERIM (restore: Enforce) — see header
+          failureAction: Audit # PERMANENT (retired by PR-C2, NOT restored) — see header
           mutateDigest: false
           required: true
           attestors:
@@ -225,7 +237,7 @@ spec:
             allowInsecureRegistry: false
             secrets:
               - ghcr-pull
-          failureAction: Audit # INTERIM (restore: Enforce) — see header
+          failureAction: Audit # PERMANENT (retired by PR-C2, NOT restored) — see header
           mutateDigest: false
           required: true
           attestors:

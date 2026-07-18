@@ -1,15 +1,34 @@
 # ImageValidatingPolicy: verify-first-party-nwarila-platform
 #
-# NON-BLOCKING (Audit) canary — the migration off the legacy verifyImages
-# ClusterPolicy `verify-image-signatures-enforced`, which cannot verify first-party
-# images on the ADMISSION path (a Kyverno dispatch bug: legacy verifyImages +
+# LIVE first-party admission enforcement. The legacy verifyImages ClusterPolicy
+# `verify-image-signatures-enforced` cannot verify first-party images on the
+# ADMISSION path (a Kyverno dispatch bug: legacy verifyImages +
 # webhookConfiguration.matchConditions miscategorizes the policy so the mutating
-# image-verification never runs, leaving pods unannotated -> the 2026-07-14 brick
-# class at Enforce). ImageValidatingPolicy verifies INLINE in the validating webhook
-# (no mutation->annotation handoff), so it works at admission. Offline keyless pins
-# (Fulcio roots + Rekor pubkey + CT pubkey) with ctlog.url present as a runtime dead
-# fallback (cosign's opts builder requires a non-empty url even when rekorPubKey is
-# pinned) -> no online Rekor/Fulcio/CT/TUF call on the admission path.
+# image-verification never runs, leaving pods unannotated -> this is the #335 brick
+# of 2026-07-17, a DIFFERENT defect from the 2026-07-14 brick, which was an online
+# Rekor query on the admission hot path during a Rekor outage). IVP avoided that dispatch bug, but not the handoff bug class.
+# Kyverno v1.18.2 IVP uses a mutate->annotate->validate handoff: the mutating
+# webhook does the cosign signature-verification work and writes
+# `kyverno.io/image-verification-outcomes`; on Kyverno v1.18.2 the validating
+# webhook does not perform the cosign signature-verification work; it evaluates
+# the result read back from that annotation. At
+# pkg/cel/policies/ivpol/engine/engine.go:356, "policy not evaluated" means the
+# annotation has no entry keyed by this policy name, causing RuleFail. With
+# [Deny]/Fail, that failure denies admission.
+#
+# This is the same bug class as legacy verifyImages, with a different annotation
+# key suffix (`image-verification-outcomes` vs `verify-images`), so the migration
+# did not escape the class. On 2026-07-18, the hwg tenant intermittently
+# false-denied a genuinely signed image while the background PolicyReport showed
+# pass=1 fail=0. The IVP admission path reads .spec, not .status; the observed
+# status-controller conflict loop may be diagnostic, but it is not on the
+# admission data path. The drop path that loses or misses the annotation entry is
+# still unknown.
+#
+# Offline keyless pins (Fulcio roots + Rekor pubkey + CT pubkey) with ctlog.url
+# present as a runtime dead fallback (cosign's opts builder requires a non-empty
+# url even when rekorPubKey is pinned) -> no online Rekor/Fulcio/CT/TUF call on
+# the admission path.
 # validationActions [Deny] + failurePolicy Fail: first-party signatures ENFORCE
 # fail-closed -- unsigned/mis-signed first-party pods are DENIED at admission.
 # Pins mirror scripts/check-image-signature-enforcement.py. See cp1_offline_verify_decision.
