@@ -380,7 +380,6 @@
 !/scripts/open-sync-pr.sh
 !/scripts/dr/
 !/scripts/dr/apply-vault-snapshot-backup-live.sh
-!/scripts/dr/nfs-interim-setup.sh
 !/scripts/vault-config/
 !/scripts/vault-config/seed-operator-bootstrap.sh
 !/scripts/vault-config/verify-adoption-parity.py
