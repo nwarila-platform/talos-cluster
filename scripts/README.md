@@ -121,7 +121,6 @@ single source) so the guards evaporate, or failing that collapse 3→1 parameter
 |---|---|---|---|
 | `dr/apply-vault-snapshot-backup-live.sh` (520) | Break-glass: provision + *prove* the least-privilege Vault backup credential when the operator isn't running | Velero doesn't do Vault Raft; not a native op → **NO** | **KEEP** — thoroughness is the point of a break-glass proof |
 | `backup-handoff-ledger.sh` (146) | Encrypt + stage the gitignored `_handoff/` ledger to S3 (`tar`→`age`→`aws --sse kms`) | thin standard pipe; no native equivalent → **NO** | **KEEP** — unscheduled (operator-run) is the only nit |
-| `dr/nfs-interim-setup.sh` (185) | Stand up the *interim* WSL NFS DR target on the Windows workstation | **dead stopgap** — superseded by the Synology appliance (ADR-0021); the WSL/Windows host is decommissioned; referenced by nothing | **CUT** |
 
 ## Compliance / kubescape
 
@@ -139,7 +138,6 @@ Each item lands as its own small, audited, revertible PR.
 
 **Cut (delete outright):**
 - `check-doc-schedule-claims.py` (+ selftest) — guards doc adjectives; fold ~4 DR numbers into `render-*`, delete the rest.
-- `dr/nfs-interim-setup.sh` — dead WSL stopgap (superseded by Synology, ADR-0021).
 
 **Consolidate (remove duplication at the root):**
 - **values-sync trio** (`check-longhorn/cilium/kubelet-csr-approver-values-sync.py`) — `addons/*/values.yaml` are not consumed by Flux (it applies inline `spec.values`); fix via helm `valuesFrom` a kustomize-generated ConfigMap ⇒ all 3 guards evaporate, or collapse 3→1 parameterized guard. *(touches HelmReleases → owner-watched)*
