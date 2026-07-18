@@ -556,8 +556,9 @@ def good_fixture(root: Path) -> None:
 
 
 def org_not_audit_fixture(root: Path) -> None:
-    # During the interim every first-party org must carry an Audit rule. Re-arming
-    # a single org to Enforce (a partial brick re-arm before the Kyverno upgrade)
+    # Every first-party org must carry an Audit rule on this LEGACY policy (it stays
+    # Audit until PR-C2 retires it). Re-arming a single org to Enforce (a partial
+    # brick re-arm of the #335 defect)
     # drops it out of the Audit-covered set and must bite.
     write_real_shape_fixture(
         root,
@@ -640,8 +641,9 @@ def fail_closed_fixture(root: Path) -> None:
 
 
 def failure_policy_fail_fixture(root: Path) -> None:
-    # Interim requires failurePolicy: Ignore (fail-open) so a Kyverno/Rekor outage
-    # never bricks first-party admission. Reverting to Fail re-arms the brick.
+    # This LEGACY policy requires failurePolicy: Ignore (fail-open) — it is Audit
+    # until PR-C2 retires it, and re-arming it to Fail re-arms the #335 brick.
+    # (Live first-party admission is fail-closed on the IVPs, not here.)
     write_real_shape_fixture(root, policy_yaml(failure_policy="Fail"))
 
 
@@ -1415,7 +1417,7 @@ def main() -> int:
         run_case(
             "posture-org-not-audit",
             1,
-            "single org re-armed to Enforce bites (interim)",
+            "single org re-armed to Enforce bites (legacy policy stays Audit)",
             org_not_audit_fixture,
             ("first-party org ghcr.io/nwarila/* has no Audit signature rule",),
         ),
@@ -1450,13 +1452,13 @@ def main() -> int:
         run_case(
             "inheritance-audit",
             0,
-            "policy-level Audit inheritance counts (interim)",
+            "policy-level Audit inheritance counts",
             inheritance_audit_fixture,
         ),
         run_case(
             "inheritance-enforce",
             1,
-            "policy-level Enforce does not count (interim)",
+            "policy-level Enforce does not count",
             inheritance_enforce_fixture,
             (
                 "no first-party image-signature policy with failureAction: "
@@ -1476,7 +1478,7 @@ def main() -> int:
         run_case(
             "interim-failure-policy-fail",
             1,
-            "failurePolicy: Fail re-arms the brick (interim)",
+            "failurePolicy: Fail re-arms the brick",
             failure_policy_fail_fixture,
             ("webhookConfiguration.failurePolicy: Ignore",),
         ),

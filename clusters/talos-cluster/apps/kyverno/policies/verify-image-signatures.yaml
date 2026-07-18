@@ -2,7 +2,8 @@
 #
 # Audit-only cosign keyless signature verification for third-party image
 # families. First-party nwarila, nwarila-platform, and the-hero-wars-guys images
-# live in verify-image-signatures-enforced.yaml so their webhook can fail closed
+# live in verify-image-signatures-enforced.yaml (which is itself Audit and retired by
+# PR-C2; live first-party enforcement is on the per-org ImageValidatingPolicies)
 # without making Audit-only third-party image families part of the admission
 # availability boundary.
 #

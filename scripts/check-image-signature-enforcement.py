@@ -6,9 +6,15 @@ trees such as apps/vault/restore-drill/ that are intentionally not rendered by
 Flux validation.
 
 The required verifyImages action is parameterized by FIRST_PARTY_ENFORCEMENT_MODE
-(currently the interim ``Audit`` — see that constant). Restore it to ``Enforce``
-after the Kyverno upgrade lands offline bundle verification; every "Enforce" in
-the prose/messages below tracks that constant.
+(``Audit`` — see that constant). NOTE: several finding strings below say "Enforce
+verifyImages ..." literally; that is fixed shorthand for "the first-party
+signature rules", NOT a claim about the current mode. Only the checks that compare
+against FIRST_PARTY_ENFORCEMENT_MODE track the mode. That legacy ClusterPolicy is NOT waiting on a Kyverno upgrade: the
+offline keyless pins that were its original blocker landed in #333, and
+first-party enforcement now runs on the per-org ImageValidatingPolicy resources
+instead. The legacy policy therefore stays non-blocking and guard-pinned until
+the retire-legacy PR (PR-C2) removes it outright — it is not slated to return to
+``Enforce``.
 
 Deliberate scope:
 - Extract inline ``image:`` string scalars.
@@ -101,9 +107,11 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
 # FULCIO_ROOTS_PEM (Sigstore root+intermediate), and the Fulcio SCT against
 # CTFE_PUBKEY_PEM; ignoreTlog/ignoreSCT stay false so both log proofs are checked
 # offline. These MUST stay byte-identical to the PEMs inlined in
-# verify-image-signatures-enforced.yaml (this guard exact-matches them). To be rotated
-# by the sigstore-TUF-root drift-watcher (a follow-up PR, before the Enforce flip; not
-# built yet). Sources: Sigstore TUF trusted_root targets
+# verify-image-signatures-enforced.yaml (this guard exact-matches them). Rotation is
+# watched by scripts/check-sigstore-pin-verification.py (#334, BUILT and CI-wired). Note
+# it inspects the legacy ClusterPolicy only — a sound proxy, since these same four pins
+# are byte-identical in the three enforcing IVPs. There is NO pending Enforce flip: the
+# legacy policy is retired by PR-C2. Sources: Sigstore TUF trusted_root targets
 # rekor.pub / ctfe_2022.pub / fulcio_v1.crt.pem + fulcio_intermediate_v1.crt.pem.
 FULCIO_ROOTS_PEM = "\n".join([
     '-----BEGIN CERTIFICATE-----',
@@ -153,19 +161,23 @@ REKOR_URL = "https://rekor.sigstore.dev"
 # OFFLINE-PINS re-arm (2026-07-17). The online-Rekor dependency that BRICKED first-party
 # pod creation (Vault + the hwg tenant) on 2026-07-14 is REMOVED: the canonical attestors
 # above verify keyless signatures OFFLINE against the pinned Sigstore keys (rekor.pubkey +
-# ctlog.pubkey + Fulcio roots), no admission-path online GET. The first-party rules are
-# STILL non-blocking in this change (failureAction Audit + failurePolicy Ignore) as a live
-# canary: the offline PolicyReports must PASS before the Enforce/Fail flip. This guard fully
-# verifies the rule SHAPE (canonical offline attestors, matchConditions, first-party scoping,
-# background, exempt-ns, required, no skip/exclude/preconditions) and pins the offline
-# material. FLIP both constants below (Enforce / Fail) in the next PR once the Audit canary
-# proves out. See vault_live_admin_lockout / cp1_offline_verify_decision.
-FIRST_PARTY_ENFORCEMENT_MODE = "Audit"  # restore-target: "Enforce"
-FIRST_PARTY_REQUIRED_FAILURE_POLICY = "Ignore"  # restore-target: "Fail"
+# ctlog.pubkey + Fulcio roots), no admission-path online GET. This LEGACY ClusterPolicy's
+# rules stay non-blocking (failureAction Audit + failurePolicy Ignore) permanently: since
+# #340, live first-party enforcement runs on the per-org ImageValidatingPolicy resources at
+# [Deny]/failurePolicy:Fail, NOT here. This guard fully verifies the rule SHAPE (canonical
+# offline attestors, matchConditions, first-party scoping, background, exempt-ns, required,
+# no skip/exclude/preconditions) and pins the offline material.
+# ⚠️ DO NOT flip the two constants below to Enforce/Fail. This header previously instructed
+# exactly that; re-arming the legacy verifyImages path is what BRICKED the cluster in #335
+# (its mutating image-verification never runs under fine-grained webhooks, so every signed
+# first-party pod is denied). The legacy policy is RETIRED by PR-C2, not restored.
+# See vault_live_admin_lockout / cp1_offline_verify_decision.
+FIRST_PARTY_ENFORCEMENT_MODE = "Audit"  # legacy policy: retire via PR-C2, not restore
+FIRST_PARTY_REQUIRED_FAILURE_POLICY = "Ignore"  # legacy policy: retire via PR-C2, not restore
 # The dedicated first-party signature policy. Scoping the first-party checks by
 # this name (not just the action) keeps the third-party Audit policy
-# (verify-image-signatures) out of the first-party enforcement checks now that
-# first-party is also Audit during the interim.
+# (verify-image-signatures) out of the first-party checks, since this legacy
+# first-party policy is also Audit (permanently — see the header above).
 FIRST_PARTY_ENFORCED_POLICY_NAME = "verify-image-signatures-enforced"
 EXPECTED_ENFORCE_RULE_MATCH = {"any": [{"resources": {"kinds": ["Pod"]}}]}
 IMAGE_SIGNATURE_POLICY_NAMES = (
@@ -191,19 +203,38 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # (legacy verifyImages + webhookConfiguration.matchConditions miscategorizes the
 # policy so the mutating image-verification webhook never runs) leaves admitted
 # pods unannotated, so at Enforce the validating webhook DENIES every signed
-# first-party pod -> the 2026-07-14 brick class. First-party signature
+# first-party pod -> the #335 brick of 2026-07-17 (a DIFFERENT defect from the
+# 2026-07-14 brick, which was an online Rekor query on the admission hot path).
+# First-party signature
 # enforcement therefore migrated to per-org ``ImageValidatingPolicy`` resources,
-# which verify INLINE in the validating webhook (no mutation->annotation handoff).
-# This guard pins the IVP shape so first-party signatures ENFORCE fail-closed
-# ([Deny] / failurePolicy Fail) safely: offline pins byte-identical to
+# but Kyverno v1.18.2 IVP still uses a mutate->annotate->validate handoff. The
+# mutating webhook does the cosign signature-verification work and writes
+# ``kyverno.io/image-verification-outcomes``; on Kyverno v1.18.2 the validating
+# webhook does not perform the cosign signature-verification work; it evaluates
+# the result read back from that annotation. At
+# pkg/cel/policies/ivpol/engine/engine.go:356, "policy not evaluated" means the
+# annotation has no entry keyed by this policy name, causing RuleFail and a deny
+# at the IVP's fail-closed setting. That is the same bug class as legacy
+# verifyImages, with a different annotation key suffix
+# (``image-verification-outcomes`` vs ``verify-images``), so the migration did
+# not escape the class.
+#
+# This guard pins the IVP shape used for first-party fail-closed enforcement:
+# offline pins byte-identical to
 # FULCIO_ROOTS_PEM/REKOR_PUBKEY_PEM/CTFE_PUBKEY_PEM, the admission path enabled,
 # first-party CEL scoping (=> a scoped fine-grained webhook per policy, never the
 # shared cluster-wide fail webhook that would brick all pod creation), and full
-# first-party image coverage. The offline-Audit canary (#333) plus the live
-# admission-path canary (#337: a real signed first-party pod ADMITS via the IVP)
-# proved the flip out before it went blocking. The legacy verifyImages
-# ClusterPolicy stays non-blocking (Audit/Ignore) and guard-pinned until the
-# retire-legacy PR removes it. See cp1_offline_verify_decision.
+# first-party image coverage. The offline-Audit canary (#333) and the live
+# admission-path canary (#337: a real signed first-party pod ADMITTED via the
+# IVP) were necessary evidence, but not sufficient proof: they sampled a passing
+# moment and could not catch the intermittent handoff miss observed on
+# 2026-07-18 when the hwg tenant falsely denied a genuinely signed image while
+# background PolicyReport showed pass=1 fail=0. The IVP admission path reads
+# .spec, not .status; the status-controller conflict loop may be diagnostic, but
+# it is not on the admission data path. The drop path that loses or misses the
+# annotation entry is still unknown. The legacy verifyImages ClusterPolicy stays
+# non-blocking (Audit/Ignore) and guard-pinned until the retire-legacy PR removes
+# it. See cp1_offline_verify_decision.
 IVP_API_VERSION_PREFIX = "policies.kyverno.io/"
 IVP_KIND = "ImageValidatingPolicy"
 # First-party signatures are ENFORCED: unsigned/mis-signed first-party pods are
@@ -373,7 +404,8 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Scan raw YAML for first-party GHCR image refs that are not covered "
             "by Kyverno verifyImages rules with the effective "
-            "FIRST_PARTY_ENFORCEMENT_MODE action (interim: Audit)."
+            "FIRST_PARTY_ENFORCEMENT_MODE action (Audit; the legacy policy is retired "
+            "by PR-C2, not restored — live enforcement is on the IVPs)."
         )
     )
     parser.add_argument(

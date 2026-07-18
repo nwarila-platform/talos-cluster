@@ -7,8 +7,11 @@ scripts/check-image-signature-enforcement.py (rekor.pubkey / ctlog.pubkey /
 Fulcio roots). Those pins are SINGLE-VALUED (Kyverno's rekor.pubkey/ctlog.pubkey
 take one key each), so if Sigstore rotates a key AND our GitHub-Actions cosign
 signing switches to it, a newly-built first-party image's signature would no
-longer verify against the stale pin. At AUDIT that surfaces as a PolicyReport
-`fail`; at ENFORCE it would fail-closed a pod. The residual must be DETECTED.
+longer verify against the stale pin. ⚠️ These same four pins are byte-identical in
+the three ImageValidatingPolicies, which run at [Deny]/failurePolicy:Fail since #340
+— so a stale pin FAIL-CLOSES first-party pod admission today. (This script inspects
+the legacy ClusterPolicy, which is Audit; that is a proxy for the shared pins, NOT a
+bound on the blast radius.) The residual must be DETECTED.
 
 WHY SIGNATURE-BASED (not pure-TUF): the live Sigstore TUF root already carries
 MORE than one valid tlog/ctlog key at a time (e.g. the 2021 Rekor v1 key our
@@ -36,7 +39,9 @@ A healthy, Ready policy with simply no first-party workloads scanned is a
 legitimate PASS.
 
 SCOPE (honest): this is REACTIVE — it catches drift once a mismatched image is
-deployed and scanned. At Audit that is a non-destructive early warning. Truly
+deployed and scanned. It reads the Audit-mode legacy ClusterPolicy, but the pins it
+checks are the same ones enforcing at [Deny]/Fail on the IVPs — so treat a hit as
+fail-closed-imminent, not a non-destructive warning. Truly
 PROACTIVE (catch a rotation before a new-key image is ever deployed) belongs to
 the source repos' CI verify-at-ingest (supply-chain doctrine) — booked, not here.
 

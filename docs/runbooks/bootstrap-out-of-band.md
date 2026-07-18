@@ -339,16 +339,28 @@ Do not leave the cluster in a silent permissive state after the repair window.
 ## Rekor And Fulcio Availability
 
 Keyless verification requires the trust material needed to validate the
-certificate chain and Rekor inclusion proof. When Kyverno is in Enforce, a
-Rekor, Fulcio, CT log, TUF-root, or network failure that prevents verification
-must fail closed for normal workloads. It must not silently admit unverified
-images.
+certificate chain and Rekor inclusion proof. A verification failure must fail
+closed for normal workloads; it must not silently admit unverified images.
+
+> **Updated 2026-07-18.** The online Rekor/Fulcio/CT/TUF dependency this section
+> was written against is no longer on the admission path: the first-party
+> attestors verify OFFLINE against pinned Sigstore keys (#333), which is what
+> removed the 2026-07-14 brick vector. A Sigstore *outage* therefore no longer
+> blocks first-party admission — but a *stale pin* now does, because those pins
+> are enforced at `[Deny]`/`Fail` on the per-org ImageValidatingPolicies (#340).
+> Live enforcement is on the IVPs, not the legacy `verify-image-signatures-enforced`
+> ClusterPolicy, which is Audit and retired by PR-C2.
 
 That fail-closed posture is acceptable only because break-glass remains
-out-of-band and ARC/Zot stay excluded. If the public-good Sigstore services are
-unavailable and legitimate workloads cannot admit, use break-glass to restore
-Audit or temporarily disable the webhook, then return to Enforce after
-verification succeeds again.
+out-of-band and ARC/Zot stay excluded. **The outage scenario below is retired:**
+with offline pins (#333) a public-good Sigstore outage no longer prevents
+first-party admission, so there is no Sigstore-availability reason to reach for
+break-glass. The live failure modes that CAN block admission are (a) a STALE PIN
+after a Sigstore key rotation, and (b) the Kyverno v1.18.2 IVP handoff defect that
+intermittently yields `policy not evaluated` (see ADR-0027's 2026-07-18 amendment).
+For either, break-glass means suspending the `kyverno-policies` Kustomization or
+setting the IVPs to `[Audit]` — NOT restoring the legacy ClusterPolicy, which is
+Audit and retired by PR-C2.
 
 Reducing this availability exposure is a separate hardening task: pin the
 Sigstore TUF root, cache Rekor proofs where supported by the chosen verifier
@@ -362,7 +374,9 @@ The bootstrap path is complete only when all of these are true and recorded:
 - Talos control plane is Ready from the workstation.
 - ARC scale sets are online, ephemeral, and running rootless Podman.
 - Zot serves runtime manifests plus signature and attestation objects by digest.
-- Kyverno starts in Audit with `failurePolicy=Ignore`.
+- Kyverno starts in Audit with `failurePolicy=Ignore`. (Rebuild-order guidance:
+  this is the intended *bootstrap* sequence. It is not the steady state — on the
+  live cluster the first-party IVPs run at `[Deny]`/`Fail`.)
 - The ARC namespace and `zot-system` remain excluded from image verification.
 - Base and gate image digests exist in GHCR, mirror through Zot, and verify
   against exact signer workflow identities.

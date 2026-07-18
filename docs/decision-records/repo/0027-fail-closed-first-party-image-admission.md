@@ -305,3 +305,34 @@ None.
 | NIST SP 800-53 Rev. 5 | SI-7 (Software, Firmware, and Information Integrity)   | First-party workload images require valid keyless signatures and fail closed when verification is unavailable. |
 | NIST SP 800-53 Rev. 5 | CM-7 (Least Functionality)                             | The fail-closed webhook is scoped to pods carrying first-party image prefixes rather than all pod admission. |
 | NIST SP 800-53 Rev. 5 | SC-16 (Transmission of Security and Privacy Attributes) | Signature identity attributes from GitHub OIDC and Rekor are enforced for first-party image admission. |
+
+## Amendment — 2026-07-18 (mechanism changed; decision stands)
+
+**Status remains Accepted: the decision — fail closed for first-party image admission — still holds.**
+What changed is the MECHANISM this ADR describes.
+
+The `verify-image-signatures-enforced` ClusterPolicy this ADR decides on (documented in the sections
+ABOVE) is **no longer the enforcing mechanism**.
+
+⚠️ **Two DISTINCT incidents, not one** (an earlier draft of this amendment wrongly merged them):
+- **2026-07-14** — keyless verification against `rekor.url` made an ONLINE Rekor query on the admission hot
+  path; a Rekor outage window fail-closed first-party pod creation. Fixed by the offline pins (#333).
+- **#335 (2026-07-17)** — Kyverno v1.18.2 miscategorises a legacy `verifyImages` policy carrying
+  `spec.webhookConfiguration.matchConditions` (the brick-safety scoping this ADR chose), so its mutating
+  image-verification never runs and every signed first-party pod is denied at Enforce.
+
+The second defect is structural and unfixed upstream, so first-party enforcement moved to three per-org
+`ImageValidatingPolicy` resources, live at `validationActions: [Deny]` + `failurePolicy: Fail` since #340.
+The ClusterPolicy stays non-blocking (Audit) and is retired by PR-C2.
+
+**Known defect in the current mechanism (do not read this ADR as "solved"):** IVP on Kyverno v1.18.2 uses a
+mutate→annotate→validate handoff (the mutating webhook does the cosign work and writes
+`kyverno.io/image-verification-outcomes`; the validating webhook evaluates the result read back). A missing
+entry yields `"policy not evaluated"` ⇒ RuleFail ⇒ DENY. On 2026-07-18 this intermittently false-denied a
+genuinely signed image in the hwg tenant. The fail direction is CLOSED, so this ADR's security property is
+intact; the harm is availability. Root cause is under diagnosis. As of 2026-07-18 no
+Kyverno release carries even the related status-controller fix (PR #15754 is merged to
+main only — `git tag --contains 7b31196` returns zero tags, and release-1.18 branched
+before it), so an upgrade is not an available remedy today.
+
+See `cp1_offline_verify_decision`, PLAN §10 (2026-07-18 retraction entry), and PR #346.

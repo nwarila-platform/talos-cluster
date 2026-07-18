@@ -6,13 +6,13 @@ single source that replaces reconstructing the picture from the supply-chain pla
 ADRs, and the GHCR orgs each time.
 
 **Scope:** first-party images under `ghcr.io/nwarila/*` and `ghcr.io/nwarila-platform/*`
-(the namespaces we own the signing identity for — covered by the live
-`verify-*-images` fail-closed Enforce rules). Third-party images we consume directly
+(the namespaces we own the signing identity for, covered by the live fail-closed
+`verify-first-party-*` ImageValidatingPolicy rules). Third-party images we consume directly
 are summarized in the appendix for context; the authority for converting unsigned
 third-party → signed first-party is `_handoff/SUPPLY-CHAIN-INTEGRITY-PLAN.md`
 (the fold-in program, **deferred to immediate-post-talos-cluster**).
 
-**Sign status legend:** ✍️ cosign-keyless first-party signature (admission-verified; fail-closed enforcement currently interim-audit) · 🧱 base/template
+**Sign status legend:** ✍️ cosign-keyless first-party signature (admission-verified with live fail-closed enforcement; as of 2026-07-18, a known Kyverno v1.18.2 handoff defect can intermittently deny signed images while the remedy is under diagnosis) · 🧱 base/template
 (not a runtime image) · ⏳ will be first-party-signed once built · 🪞 mirror-and-sign
 (copy of a signed upstream, not a rebuild).
 
