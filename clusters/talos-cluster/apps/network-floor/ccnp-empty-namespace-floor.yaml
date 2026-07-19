@@ -1,0 +1,48 @@
+# SF-1 Stage 0 — cluster-wide default-deny floor for the EMPTY namespaces.
+#
+# WHY THIS IS THE SAFE FIRST STEP: every namespace selected below holds ZERO
+# pods and ZERO workload controllers (verified live 2026-07-19: cilium-secrets,
+# default, kube-node-lease and kube-public each have 0 pods / 0 deploy,sts,ds,
+# job,cronjob,rs). A CiliumClusterwideNetworkPolicy selects ENDPOINTS, and there
+# are none, so this cannot interrupt any running traffic. Its value is entirely
+# pre-emptive: it closes the "a new namespace is open by default" gap, so any
+# future workload landing in one of these namespaces is closed-by-default and
+# must have its flows declared explicitly.
+#
+# `default` deliberately included: it is the namespace an accidental or
+# unqualified `kubectl apply` lands in, which is exactly where an unconstrained
+# pod is least likely to be noticed.
+#
+# SCOPE IS DELIBERATELY EXPLICIT, NOT A WILDCARD. The selector lists the four
+# namespaces by name via the reserved namespace label. A broader selector (e.g.
+# "all namespaces except X") would put every platform namespace one selector
+# bug away from a cluster-wide outage. kube-system and longhorn-system are NOT
+# in scope here: they run genuinely privileged workloads whose real flows must
+# be captured from live traffic first, and per the network-floor design that
+# flip is an owner-present operation.
+#
+# NOT the whole of SF-1. The locked API promises a cluster-wide default-deny;
+# this is its first, provably inert increment. The remaining floor plus the
+# kube-system / longhorn-system carve-outs land with the owner present.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: empty-namespace-default-deny
+spec:
+  description: >-
+    Default-deny (ingress and egress) for namespaces that hold no workloads, so
+    any future pod scheduled there is closed-by-default. SF-1 Stage 0.
+  endpointSelector:
+    matchExpressions:
+      - key: k8s:io.kubernetes.pod.namespace
+        operator: In
+        values:
+          - cilium-secrets
+          - default
+          - kube-node-lease
+          - kube-public
+  # No ingress/egress stanzas => deny-all in both directions for selected
+  # endpoints. Allows are purely additive in Cilium, so a future workload here
+  # gets an explicit allowlist rather than silent reachability.
+  ingress: []
+  egress: []

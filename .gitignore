@@ -205,6 +205,9 @@
 !/clusters/talos-cluster/apps/metrics-server/helmrepository.yaml
 !/clusters/talos-cluster/apps/metrics-server/kustomization.yaml
 !/clusters/talos-cluster/apps/namespace-hardening/
+!/clusters/talos-cluster/apps/network-floor/
+!/clusters/talos-cluster/apps/network-floor/ccnp-empty-namespace-floor.yaml
+!/clusters/talos-cluster/apps/network-floor/kustomization.yaml
 !/clusters/talos-cluster/apps/namespace-hardening/cilium-secrets.yaml
 !/clusters/talos-cluster/apps/namespace-hardening/default.yaml
 !/clusters/talos-cluster/apps/namespace-hardening/kube-node-lease.yaml
