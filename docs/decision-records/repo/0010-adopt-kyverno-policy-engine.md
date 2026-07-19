@@ -22,11 +22,14 @@ This ADR intentionally lands the engine before landing image verification
 policies. Kyverno CRDs and webhooks must be healthy first; audit/enforce image
 policies are follow-up PRs.
 
-Current image verification posture is intentionally scoped and non-blocking:
-nwarila-platform first-party images are verified by the merged
-`verify-first-party` ImageValidatingPolicy at Audit/Ignore, while Flux, Cilium,
-and Kyverno remain in Audit. The split reflects the actual image references,
-signature formats, and verification paths Kyverno can consume safely today.
+Current image verification posture is intentionally scoped: all three first-party
+GHCR orgs are verified by the merged `verify-first-party` ImageValidatingPolicy,
+which ENFORCES fail-closed at `validationActions: [Deny]` +
+`failurePolicy: Fail` — an unsigned, mis-signed or unverifiable first-party image
+is DENIED at admission. Third-party families (Flux, Cilium, Kyverno, VSO) remain
+Audit-only by design, tracked as TD-0001/TD-0002. The split reflects the actual
+image references, signature formats, and verification paths Kyverno can consume
+safely today.
 
 ## Context and Problem Statement
 
