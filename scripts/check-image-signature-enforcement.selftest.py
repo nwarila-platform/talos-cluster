@@ -57,6 +57,41 @@ def write_yaml(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
 
 
+def policy_dir(root: Path) -> Path:
+    return root / guard.KYVERNO_POLICIES_REPO_PATH.removeprefix("./")
+
+
+def flux_policy_kustomization_path(root: Path) -> Path:
+    return policy_dir(root).parent / "kustomization-policies.yaml"
+
+
+def write_flux_policy_kustomization(
+    root: Path,
+    spec_path: str | None = None,
+    extra_spec_lines: tuple[str, ...] = (),
+) -> None:
+    spec_path = spec_path if spec_path is not None else guard.KYVERNO_POLICIES_REPO_PATH
+    lines = [
+        "apiVersion: kustomize.toolkit.fluxcd.io/v1",
+        "kind: Kustomization",
+        "metadata:",
+        "  name: kyverno-policies",
+        "  namespace: flux-system",
+        "spec:",
+        "  interval: 10m",
+        f"  path: {spec_path}",
+        "  prune: true",
+        "  sourceRef:",
+        "    kind: GitRepository",
+        "    name: flux-system",
+        *(f"  {line}" for line in extra_spec_lines),
+    ]
+    write_yaml(
+        flux_policy_kustomization_path(root),
+        "\n".join(lines),
+    )
+
+
 def cel_expression(
     prefixes: tuple[str, ...] = guard.FIRST_PARTY_IMAGE_PREFIXES,
     fields: tuple[str, ...] = (
@@ -452,7 +487,7 @@ def write_ivps(
         return ()
     filename = ivp_filename()
     write_yaml(
-        root / f"policies/{filename}",
+        policy_dir(root) / filename,
         ivp_yaml(**(overrides or {})),
     )
     return (filename,)
@@ -545,13 +580,14 @@ def write_policy_kustomization(
     resource_lines = "\n".join(f"  - {resource}" for resource in resources)
     suffix = "\n" + "\n".join(extra_lines) if extra_lines else ""
     write_yaml(
-        root / "policies/kustomization.yaml",
+        policy_dir(root) / "kustomization.yaml",
         "apiVersion: kustomize.config.k8s.io/v1beta1\n"
         "kind: Kustomization\n"
         "resources:\n"
         f"{resource_lines}"
         f"{suffix}",
     )
+    write_flux_policy_kustomization(root)
 
 
 def write_base_fixture(
@@ -562,7 +598,7 @@ def write_base_fixture(
     kustomize_namespace: str | None = None,
 ) -> None:
     if policy is not None:
-        write_yaml(root / "policies/verify-image-signatures-enforced.yaml", policy)
+        write_yaml(policy_dir(root) / "verify-image-signatures-enforced.yaml", policy)
     write_yaml(root / "apps/app/deployment.yaml", deployment_yaml(image, namespace))
     write_yaml(
         root / "apps/app/kustomization.yaml",
@@ -580,7 +616,7 @@ def write_real_shape_fixture(
     ivp_overrides: dict[str, object] | None = None,
     ivp_kustomization_omit: bool = False,
 ) -> None:
-    write_yaml(root / "policies/verify-image-signatures.yaml", audit_policy_yaml())
+    write_yaml(policy_dir(root) / "verify-image-signatures.yaml", audit_policy_yaml())
     write_ivps(root, omit=ivp_omit, overrides=ivp_overrides)
     listed_ivps = () if ivp_omit or ivp_kustomization_omit else (ivp_filename(),)
     write_policy_kustomization(
@@ -642,7 +678,7 @@ def enforce_skip_not_yet_deployed_fixture(root: Path) -> None:
 
 def audit_skip_image_references_fixture(root: Path) -> None:
     write_yaml(
-        root / "policies/verify-image-signatures.yaml",
+        policy_dir(root) / "verify-image-signatures.yaml",
         audit_policy_with_cilium_skips_yaml(),
     )
     ivp_filenames = write_ivps(root)
@@ -756,7 +792,7 @@ def non_first_party_enforce_ref_fixture(root: Path) -> None:
 def fail_mutate_no_matchconditions_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
     write_yaml(
-        root / "policies/fail-mutate-no-matchconditions.yaml",
+        policy_dir(root) / "fail-mutate-no-matchconditions.yaml",
         """
         apiVersion: kyverno.io/v1
         kind: ClusterPolicy
@@ -788,7 +824,7 @@ def fail_mutate_no_matchconditions_fixture(root: Path) -> None:
 def fail_mutate_no_webhook_configuration_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
     write_yaml(
-        root / "policies/fail-mutate-no-webhook-configuration.yaml",
+        policy_dir(root) / "fail-mutate-no-webhook-configuration.yaml",
         """
         apiVersion: kyverno.io/v1
         kind: ClusterPolicy
@@ -1400,7 +1436,7 @@ def ivp_kustomization_patches_weaken_render_fixture(root: Path) -> None:
 def ivp_kustomization_components_weaken_render_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
     write_yaml(
-        root / "policies/weaken-ivp-component/kustomization.yaml",
+        policy_dir(root) / "weaken-ivp-component/kustomization.yaml",
         f"""
         apiVersion: kustomize.config.k8s.io/v1alpha1
         kind: Component
@@ -1430,24 +1466,122 @@ def ivp_kustomization_components_weaken_render_fixture(root: Path) -> None:
 
 def flux_kustomization_spec_patches_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
+    write_flux_policy_kustomization(
+        root,
+        extra_spec_lines=(
+            "patches:",
+            "  - target:",
+            "      kind: ImageValidatingPolicy",
+            f"      name: {guard.FIRST_PARTY_IVP_POLICY_NAME}",
+            "    patch: |-",
+            "      - op: replace",
+            "        path: /spec/validations/0/expression",
+            '        value: "true"',
+        ),
+    )
+
+
+def flux_wrapper_patches_redirect_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    applied_dir = policy_dir(root).parent / "policies-applied"
     write_yaml(
-        root / "apps/kyverno/kustomization-policies.yaml",
+        applied_dir / "kustomization.yaml",
         f"""
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - ../policies
+        patches:
+          - target:
+              kind: ImageValidatingPolicy
+              name: {guard.FIRST_PARTY_IVP_POLICY_NAME}
+            patch: |-
+              - op: replace
+                path: /spec/validations/0/expression
+                value: "true"
+              - op: replace
+                path: /spec/attestors/0/cosign/keyless/identities/0/subjectRegExp
+                value: ".*"
+        """,
+    )
+    write_flux_policy_kustomization(
+        root,
+        "./clusters/talos-cluster/apps/kyverno/policies-applied",
+    )
+
+
+def flux_wrapper_components_redirect_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    applied_dir = policy_dir(root).parent / "policies-applied"
+    write_yaml(
+        applied_dir / "weaken-ivp-component/kustomization.yaml",
+        f"""
+        apiVersion: kustomize.config.k8s.io/v1alpha1
+        kind: Component
+        patches:
+          - target:
+              kind: ImageValidatingPolicy
+              name: {guard.FIRST_PARTY_IVP_POLICY_NAME}
+            patch: |-
+              - op: replace
+                path: /spec/validations/0/expression
+                value: "true"
+              - op: replace
+                path: /spec/attestors/0/cosign/keyless/identities/0/subjectRegExp
+                value: ".*"
+        """,
+    )
+    write_yaml(
+        applied_dir / "kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - ../policies
+        components:
+          - weaken-ivp-component
+        """,
+    )
+    write_flux_policy_kustomization(
+        root,
+        "./clusters/talos-cluster/apps/kyverno/policies-applied",
+    )
+
+
+def flux_kyverno_policies_path_drift_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    drift_dir = policy_dir(root).parent / "policies-drift"
+    write_yaml(
+        drift_dir / "kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources: []
+        """,
+    )
+    write_flux_policy_kustomization(
+        root,
+        "./clusters/talos-cluster/apps/kyverno/policies-drift",
+    )
+
+
+def flux_dangling_spec_path_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root / "clusters/talos-cluster/apps/dangling-kustomization.yaml",
+        """
         apiVersion: kustomize.toolkit.fluxcd.io/v1
         kind: Kustomization
         metadata:
-          name: kyverno-policies
+          name: dangling-local-path
           namespace: flux-system
         spec:
-          path: ./policies
-          patches:
-            - target:
-                kind: ImageValidatingPolicy
-                name: {guard.FIRST_PARTY_IVP_POLICY_NAME}
-              patch: |-
-                - op: replace
-                  path: /spec/validations/0/expression
-                  value: "true"
+          interval: 10m
+          path: ./clusters/talos-cluster/apps/does-not-exist
+          prune: true
+          sourceRef:
+            kind: GitRepository
+            name: flux-system
         """,
     )
 
@@ -1459,7 +1593,7 @@ def ivp_file_not_in_kustomization_fixture(root: Path) -> None:
 def ivp_second_policy_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
     write_yaml(
-        root / "policies/second-ivp.yaml",
+        policy_dir(root) / "second-ivp.yaml",
         f"""
         apiVersion: policies.kyverno.io/v1beta1
         kind: ImageValidatingPolicy
@@ -1511,7 +1645,7 @@ def ivp_remote_kustomization_resource_fixture(root: Path) -> None:
 def ivp_fail_no_matchconditions_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
     write_yaml(
-        root / "policies/extra-fail-ivp.yaml",
+        policy_dir(root) / "extra-fail-ivp.yaml",
         f"""
         apiVersion: policies.kyverno.io/v1beta1
         kind: ImageValidatingPolicy
@@ -2177,8 +2311,55 @@ def main() -> int:
             "Flux post-render policy patch bites",
             flux_kustomization_spec_patches_fixture,
             (
-                "Flux Kustomization targeting the Kyverno policies path",
+                "Flux Kustomization whose rendered output contains an "
+                "ImageValidatingPolicy",
                 "must not declare spec.patches",
+            ),
+        ),
+        run_case(
+            "flux-wrapper-patches-redirect",
+            1,
+            "Flux wrapper path with patches weakening bites",
+            flux_wrapper_patches_redirect_fixture,
+            (
+                "spec.path exactly to "
+                f"{guard.KYVERNO_POLICIES_REPO_PATH}",
+                "<kubectl kustomize>",
+                "validations must be exactly one verifyImageSignatures expression",
+                "attestors must exactly match",
+            ),
+        ),
+        run_case(
+            "flux-wrapper-components-redirect",
+            1,
+            "Flux wrapper path with component weakening bites",
+            flux_wrapper_components_redirect_fixture,
+            (
+                "spec.path exactly to "
+                f"{guard.KYVERNO_POLICIES_REPO_PATH}",
+                "<kubectl kustomize>",
+                "validations must be exactly one verifyImageSignatures expression",
+                "attestors must exactly match",
+            ),
+        ),
+        run_case(
+            "flux-kyverno-policies-path-drift",
+            1,
+            "kyverno-policies spec.path drift bites",
+            flux_kyverno_policies_path_drift_fixture,
+            (
+                "Flux Kustomization kyverno-policies must set spec.path exactly",
+                "policies-drift",
+            ),
+        ),
+        run_case(
+            "flux-dangling-spec-path",
+            1,
+            "dangling local Flux spec.path bites",
+            flux_dangling_spec_path_fixture,
+            (
+                "Flux Kustomization spec.path does not exist in this repo",
+                "dangling-local-path",
             ),
         ),
         run_case(
