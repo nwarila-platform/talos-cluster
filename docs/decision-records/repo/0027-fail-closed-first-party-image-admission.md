@@ -13,6 +13,16 @@
 
 ## TL;DR
 
+> **⚠️ READ THE 2026-07-18/19 AMENDMENTS AT THE END OF THIS FILE FIRST.** The
+> MECHANISM described below has moved twice since this ADR was accepted. The
+> DECISION (first-party images fail closed at admission) still holds, but
+> enforcement no longer runs on the `verify-image-signatures-enforced`
+> ClusterPolicy described here — it runs on a single merged
+> `ImageValidatingPolicy/verify-first-party`, which is TRANSIENTLY at
+> `[Audit]`/`Ignore` for the merge-cutover canary. The TL;DR and Consequences
+> sections below are written in the present tense and describe the ORIGINAL
+> mechanism; treat them as historical.
+
 First-party image verification is split out of the Audit-only Kyverno
 `verify-image-signatures` ClusterPolicy into
 `verify-image-signatures-enforced`: a dedicated first-party policy with
@@ -223,6 +233,15 @@ this decision, those cases admitted with only a warning.
 - Break-glass while Kyverno is healthy is to suspend the Flux Kustomization
   `kyverno-policies` in `flux-system`, then delete
   `ImageValidatingPolicy/verify-first-party` for a first-party IVP incident.
+  SUSPEND BEFORE DELETING: that Kustomization reconciles every 10m with
+  `prune: true`, so deleting the policy first just lets Flux re-apply it and the
+  incident resumes. The `flux` CLI is not installed on every operator
+  workstation; the kubectl equivalent is
+  `kubectl patch kustomizations.kustomize.toolkit.fluxcd.io kyverno-policies -n
+  flux-system --type=merge -p '{"spec":{"suspend":true}}'` (use the fully
+  qualified kind — `kustomization` alone is ambiguous on this cluster).
+  The full procedure with commands is in
+  `docs/runbooks/bootstrap-out-of-band.md`; keep the two in sync.
   If the incident is in the legacy `verifyImages` path, delete
   `ClusterPolicy/verify-image-signatures-enforced` instead. Flux would otherwise
   re-apply the policy. Deleting only the generated fine-grained
@@ -230,7 +249,11 @@ this decision, those cases admitted with only a warning.
   controller runs with `autoUpdateWebhooks=true`, because Kyverno recreates it.
   The chart-level kill switch `--forceFailurePolicyIgnore=true` can force
   policies back to fail-open behavior, but it is a broad emergency rollback
-  switch rather than routine operations.
+  switch rather than routine operations. ⚠️ That flag was documented for
+  `ClusterPolicy`; whether it reaches `policies.kyverno.io/v1beta1`
+  ImageValidatingPolicies is UNVERIFIED. Do not rely on it as the kill switch
+  for the merged IVP until it has been proven — suspend-and-delete above is the
+  path that is known to work.
 - During the reconcile that moves rules between the two policies, there is a
   brief window that fails open rather than closed. This is acceptable for the
   single-PR migration.

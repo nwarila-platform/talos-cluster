@@ -256,14 +256,28 @@ The Enforce change must preserve:
 - digest-based image references;
 - the documented Rekor and Fulcio availability posture.
 
+> **PRECONDITION (2026-07-19).** First-party enforcement now lives on the single
+> merged `ImageValidatingPolicy/verify-first-party`, NOT on a ClusterPolicy, and
+> it is currently at `[Audit]`/`Ignore` for the merge-cutover canary. Step 4
+> below ("must fail admission") is only meaningful once that policy is actually
+> at `[Deny]`/`Fail` — at `[Audit]` the bad pod is ADMITTED with a PolicyReport
+> `fail`, so the step would PASS-OPEN and an operator could wrongly conclude the
+> boundary is enforced. Confirm the posture before trusting steps 3-5:
+>
+> ```bash
+> kubectl get imagevalidatingpolicy verify-first-party \
+>   -o jsonpath='{.spec.validationActions}{" "}{.spec.failurePolicy}{"\n"}'
+> ```
+
 1. Capture the pre-change policy and webhook posture:
 
    ```bash
-   kubectl get clusterpolicy <image-policy-name> -o yaml > .s3/kyverno-policy-before.yaml
-   kubectl get validatingwebhookconfiguration <kyverno-webhook-name> -o yaml > .s3/kyverno-webhook-before.yaml
+   kubectl get imagevalidatingpolicy verify-first-party -o yaml > .s3/kyverno-policy-before.yaml
+   kubectl get validatingwebhookconfiguration -o yaml > .s3/kyverno-webhook-before.yaml
    ```
 
-2. Apply the reviewed Enforce manifest:
+2. Apply the reviewed manifest. Note this applies whatever posture is committed
+   in git — it does not by itself make the policy enforce:
 
    ```bash
    kubectl apply -k clusters/talos-cluster/apps/kyverno
