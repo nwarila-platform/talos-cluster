@@ -15,6 +15,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0007 | NAS administrative and appliance isolation trust boundary accepted residuals | Open | Low |
 | TD-0008 | Selector-bound Vault auth roles cannot be operator-reconciled (vault-config-operator CRD gap) | Open | Medium |
 | TD-0009 | First-party image admission enforcement was temporarily non-blocking | Resolved | **High** |
+| TD-0010 | kube-system remains outside the declared PSA floor | Open | **High** |
 
 ---
 
@@ -457,6 +458,41 @@ CI red instead of remaining non-blocking silently.
 
 ### References
 [ADR-0027]; `scripts/check-image-signature-enforcement.py`.
+
+---
+
+## TD-0010 — kube-system remains outside the declared PSA floor
+
+**Opened:** 2026-07-19 · **Status:** Open · **Priority:** High
+
+### Gap
+`kube-system` carries no Pod Security Admission labels live, is Talos-managed,
+and is not declared as a Namespace manifest in this repository. That leaves a
+real hole in the PSA floor: anything that can create pods there is not constrained
+by namespace-level PSA.
+
+### Why deferred
+The namespace holds genuinely privileged Talos/Kubernetes system workloads, and
+the running-pod PSA audit found restricted violations there. This repository
+therefore cannot safely adopt `kube-system` as restricted based on the current
+evidence, and Talos owns the namespace lifecycle rather than this GitOps tree.
+
+### Current state and impact
+This is not treated as a non-issue. The rest of the declared namespace surface is
+guarded in source, and `longhorn-system` is an explicit privileged exemption, but
+`kube-system` remains an unlabelled live namespace outside that declared control.
+The blast radius is bounded to actors that can create or mutate workloads in
+`kube-system`, but that is still a high-value system namespace.
+
+### Closure criteria
+- A reviewed Talos-compatible mechanism declares PSA labels for `kube-system`
+  reproducibly, without Flux fighting Talos-managed lifecycle.
+- Either the system workloads are proven restricted-compliant and the namespace
+  can be labelled restricted, or `kube-system` is recorded as an explicit
+  privileged PSA exemption with the full six-label set and a written
+  justification.
+- CI or an operational drift check proves the live `kube-system` label state does
+  not silently regress after upgrades or recovery operations.
 
 ---
 

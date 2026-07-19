@@ -18,3 +18,4 @@ resources:
   - default.yaml
   - kube-public.yaml
   - kube-node-lease.yaml
+  - cilium-secrets.yaml
