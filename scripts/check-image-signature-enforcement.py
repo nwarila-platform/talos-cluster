@@ -53,8 +53,10 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -354,12 +356,18 @@ FLUX_KUSTOMIZATION_FORBIDDEN_POLICY_FIELDS = (
     "patchesJson6902",
     "components",
     "postBuild",
+    "suspend",
 )
 FLUX_LOCAL_REPO_SOURCE_KIND = "GitRepository"
 FLUX_LOCAL_REPO_SOURCE_NAME = "flux-system"
+FLUX_LOCAL_REPO_SOURCE_NAMESPACE = "flux-system"
+ROOT_FLUX_KUSTOMIZATION_NAME = "flux-system"
+ROOT_FLUX_KUSTOMIZATION_NAMESPACE = "flux-system"
 KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME = "kyverno-policies"
+KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAMESPACE = "flux-system"
 KYVERNO_POLICIES_REPO_PATH = "./clusters/talos-cluster/apps/kyverno/policies"
 KYVERNO_POLICIES_REPO_DIRECTORY = Path(KYVERNO_POLICIES_REPO_PATH)
+KYVERNO_POLICIES_REQUIRED_PRUNE = "true"
 KUBECTL_KUSTOMIZE_TIMEOUT_SECONDS = 120
 KYVERNO_IVP_FREE_REMOTE_BASES = {
     "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml": (
@@ -477,9 +485,15 @@ class FluxKustomizationDocument:
     line: int
     spec_path: str | None
     spec_path_line: int | None
+    spec_prune: str | None
+    spec_prune_line: int | None
+    spec_suspend: str | None
+    spec_suspend_line: int | None
     source_kind: str | None
     source_name: str | None
+    source_namespace: str | None
     forbidden_field_lines: tuple[tuple[str, int], ...]
+    image_rewrites: tuple[FluxImageRewrite, ...]
 
 
 @dataclass(frozen=True)
@@ -487,6 +501,7 @@ class FluxRenderedImageValidatingPolicies:
     flux: FluxKustomizationDocument
     directory: Path
     ivps: list[ImageValidatingPolicyDocument]
+    flux_kustomizations: list[FluxKustomizationDocument]
 
 
 @dataclass(frozen=True)
@@ -494,6 +509,14 @@ class KyvernoDefaultRegistrySetting:
     path: Path
     line: int
     value: str
+
+
+@dataclass(frozen=True)
+class FluxImageRewrite:
+    name: str
+    name_line: int
+    new_name: str | None
+    new_name_line: int | None
 
 
 @dataclass(frozen=True)
@@ -1468,20 +1491,51 @@ def extract_flux_kustomization_from_document(
     spec_path_pair = spec_fields.get("path")
     spec_path = scalar_field(spec_fields, "path")
     spec_path_line = spec_path_pair[1] if spec_path_pair is not None else None
+    spec_prune_pair = spec_fields.get("prune")
+    spec_prune = scalar_field(spec_fields, "prune")
+    spec_prune_line = spec_prune_pair[1] if spec_prune_pair is not None else None
+    spec_suspend_pair = spec_fields.get("suspend")
+    spec_suspend = scalar_field(spec_fields, "suspend")
+    spec_suspend_line = spec_suspend_pair[1] if spec_suspend_pair is not None else None
 
     source_kind = None
     source_name = None
+    source_namespace = None
     source_ref_pair = mapping_field(spec_fields, "sourceRef")
     if source_ref_pair is not None:
         source_ref_fields = mapping_fields(source_ref_pair[0])
         source_kind = scalar_field(source_ref_fields, "kind")
         source_name = scalar_field(source_ref_fields, "name")
+        source_namespace = scalar_field(source_ref_fields, "namespace")
 
     forbidden_field_lines = tuple(
         (field, spec_fields[field][1])
         for field in FLUX_KUSTOMIZATION_FORBIDDEN_POLICY_FIELDS
         if field in spec_fields
     )
+
+    image_rewrites: list[FluxImageRewrite] = []
+    images_pair = sequence_field(spec_fields, "images")
+    if images_pair is not None:
+        for entry in images_pair[0].value:
+            if not isinstance(entry, MappingNode):
+                continue
+            image_fields = mapping_fields(entry)
+            name_pair = image_fields.get("name")
+            image_name = scalar_field(image_fields, "name")
+            if name_pair is None or image_name is None:
+                continue
+            new_name_pair = image_fields.get("newName")
+            image_rewrites.append(
+                FluxImageRewrite(
+                    name=image_name,
+                    name_line=name_pair[1],
+                    new_name=scalar_field(image_fields, "newName"),
+                    new_name_line=(
+                        new_name_pair[1] if new_name_pair is not None else None
+                    ),
+                )
+            )
 
     return FluxKustomizationDocument(
         name=name,
@@ -1490,9 +1544,15 @@ def extract_flux_kustomization_from_document(
         line=node_line(document),
         spec_path=spec_path,
         spec_path_line=spec_path_line,
+        spec_prune=spec_prune,
+        spec_prune_line=spec_prune_line,
+        spec_suspend=spec_suspend,
+        spec_suspend_line=spec_suspend_line,
         source_kind=source_kind,
         source_name=source_name,
+        source_namespace=source_namespace,
         forbidden_field_lines=forbidden_field_lines,
+        image_rewrites=tuple(image_rewrites),
     )
 
 
@@ -1609,6 +1669,18 @@ def is_first_party_image_reference(image_reference: str) -> bool:
     return any(
         image_reference.startswith(prefix) for prefix in FIRST_PARTY_IMAGE_PREFIXES
     )
+
+
+def matches_first_party_org_glob(name: str) -> bool:
+    normalized = normalize_image_name(name)
+    return any(
+        fnmatch.fnmatchcase(normalized, org_glob)
+        for org_glob in FIRST_PARTY_ORG_GLOBS
+    )
+
+
+def yaml_scalar_true(value: str | None) -> bool:
+    return value is not None and value.strip().lower() == "true"
 
 
 def org_probe(org_glob: str) -> str:
@@ -2304,6 +2376,12 @@ def kyverno_policy_directories_with_static_hints(
 
 RenderResult = tuple[list[ImageValidatingPolicyDocument], list[str]]
 RenderCache = dict[Path, RenderResult]
+PolicySurfaceRenderResult = tuple[
+    list[ImageValidatingPolicyDocument],
+    list[FluxKustomizationDocument],
+    list[str],
+]
+PolicySurfaceRenderCache = dict[Path, PolicySurfaceRenderResult]
 
 
 def kustomization_entry_is_remote(entry: str) -> bool:
@@ -2500,15 +2578,18 @@ def local_enumerable_document_paths(
     return sorted(set(paths), key=display_path), findings
 
 
-def local_enumerated_ivps_from_directory(directory: Path) -> RenderResult:
+def local_enumerated_policy_surface_from_directory(
+    directory: Path,
+) -> PolicySurfaceRenderResult:
     paths, findings = local_enumerable_document_paths(directory)
     if findings:
-        return [], findings
+        return [], [], findings
 
     ivps: list[ImageValidatingPolicyDocument] = []
+    flux_kustomizations: list[FluxKustomizationDocument] = []
     for path in paths:
         try:
-            _refs, _policies, path_ivps, _flux_kustomizations, _settings = parse_yaml_file(
+            _refs, _policies, path_ivps, path_flux_kustomizations, _settings = parse_yaml_file(
                 path
             )
         except GuardUsageError as exc:
@@ -2518,7 +2599,15 @@ def local_enumerated_ivps_from_directory(directory: Path) -> RenderResult:
             )
             continue
         ivps.extend(path_ivps)
+        flux_kustomizations.extend(path_flux_kustomizations)
 
+    return ivps, flux_kustomizations, findings
+
+
+def local_enumerated_ivps_from_directory(directory: Path) -> RenderResult:
+    ivps, _flux_kustomizations, findings = local_enumerated_policy_surface_from_directory(
+        directory
+    )
     return ivps, findings
 
 
@@ -2570,6 +2659,130 @@ def kubectl_kustomize(
     return completed, []
 
 
+def rewrite_allowlisted_remotes_in_localized_tree(directory: Path) -> list[str]:
+    findings: list[str] = []
+    stub_counter = 0
+    for kustomization_path in sorted(
+        (
+            path
+            for filename in KUSTOMIZATION_FILENAMES
+            for path in directory.rglob(filename)
+        ),
+        key=display_path,
+    ):
+        try:
+            with kustomization_path.open(encoding="utf-8") as handle:
+                documents = list(yaml.safe_load_all(handle))
+        except (OSError, yaml.YAMLError) as exc:
+            findings.append(
+                "rendered policy surface cannot be checked because localized "
+                f"kustomization parsing failed for {display_path(kustomization_path)}: "
+                f"{exc}"
+            )
+            continue
+
+        changed = False
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            if document.get("kind") not in KUSTOMIZATION_KINDS:
+                continue
+            for field in KUSTOMIZATION_WALKED_ENTRY_FIELDS:
+                entries = document.get(field)
+                if not isinstance(entries, list):
+                    continue
+                for index, entry in enumerate(entries):
+                    if not isinstance(entry, str):
+                        continue
+                    if not kustomization_entry_is_remote(entry):
+                        continue
+                    if entry not in KYVERNO_IVP_FREE_REMOTE_BASES:
+                        continue
+                    stub_counter += 1
+                    stub_name = f".guard-allowlisted-remote-{stub_counter}.yaml"
+                    stub_path = kustomization_path.parent / stub_name
+                    try:
+                        stub_path.write_text(
+                            "apiVersion: v1\nkind: List\nitems: []\n",
+                            encoding="utf-8",
+                        )
+                    except OSError as exc:
+                        findings.append(
+                            "rendered policy surface cannot be checked because "
+                            "allowlisted remote stub creation failed for "
+                            f"{display_path(stub_path)}: {exc}"
+                        )
+                        continue
+                    entries[index] = stub_name
+                    changed = True
+
+        if not changed:
+            continue
+        try:
+            with kustomization_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump_all(
+                    documents,
+                    handle,
+                    explicit_start=False,
+                    sort_keys=False,
+                )
+        except OSError as exc:
+            findings.append(
+                "rendered policy surface cannot be checked because localized "
+                f"kustomization writing failed for {display_path(kustomization_path)}: "
+                f"{exc}"
+            )
+
+    return findings
+
+
+def kubectl_kustomize_with_allowlisted_remote_stubs(
+    directory: Path,
+    *,
+    enable_helm: bool = False,
+) -> tuple[subprocess.CompletedProcess[str] | None, list[str]]:
+    remote_entries = kustomization_remote_resource_entries(directory)
+    if not any(resource in KYVERNO_IVP_FREE_REMOTE_BASES for _path, resource in remote_entries):
+        return kubectl_kustomize(directory, enable_helm=enable_helm)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="ivp-policy-surface-") as tmpdir:
+            localized_directory = Path(tmpdir) / directory.name
+            try:
+                shutil.copytree(directory, localized_directory)
+            except OSError as exc:
+                return None, [
+                    "rendered policy surface cannot be checked because "
+                    "temporary local kustomize tree creation failed for "
+                    f"{display_path(directory)}: {exc}"
+                ]
+
+            findings = rewrite_allowlisted_remotes_in_localized_tree(
+                localized_directory
+            )
+            if findings:
+                return None, findings
+
+            completed, run_findings = kubectl_kustomize(
+                localized_directory,
+                enable_helm=enable_helm,
+            )
+            if run_findings:
+                return None, [
+                    finding.replace(
+                        display_path(localized_directory),
+                        display_path(directory),
+                    )
+                    for finding in run_findings
+                ]
+            return completed, []
+    except OSError as exc:
+        return None, [
+            "rendered policy surface cannot be checked because temporary "
+            f"directory setup failed for {display_path(directory)}: {exc}"
+        ]
+
+
 def ivps_from_kustomize_output(
     directory: Path,
     output: str,
@@ -2591,6 +2804,33 @@ def ivps_from_kustomize_output(
         documents, rendered_path
     )
     return rendered_ivps, []
+
+
+def policy_surface_from_kustomize_output(
+    directory: Path,
+    output: str,
+    *,
+    rendered_path: Path,
+) -> PolicySurfaceRenderResult:
+    try:
+        documents = list(
+            yaml.compose_all(output, Loader=yaml.SafeLoader)
+        )
+    except yaml.YAMLError as exc:
+        return [], [], [
+            "rendered policy surface cannot be checked because kubectl "
+            f"kustomize output is not valid YAML for {display_path(directory)}: "
+            f"{exc}"
+        ]
+
+    (
+        _refs,
+        _policies,
+        rendered_ivps,
+        rendered_flux_kustomizations,
+        _settings,
+    ) = parse_yaml_documents(documents, rendered_path)
+    return rendered_ivps, rendered_flux_kustomizations, []
 
 
 def rendered_ivps_from_kustomization_directory(
@@ -2672,6 +2912,61 @@ def rendered_ivps_from_kustomization_directory_uncached(directory: Path) -> Rend
     return local_enumerated_ivps_from_directory(directory)
 
 
+def rendered_policy_surface_from_kustomization_directory(
+    directory: Path,
+    render_cache: PolicySurfaceRenderCache | None = None,
+) -> PolicySurfaceRenderResult:
+    directory = directory.resolve()
+    if render_cache is not None and directory in render_cache:
+        return render_cache[directory]
+
+    result = rendered_policy_surface_from_kustomization_directory_uncached(directory)
+    if render_cache is not None:
+        render_cache[directory] = result
+    return result
+
+
+def rendered_policy_surface_from_kustomization_directory_uncached(
+    directory: Path,
+) -> PolicySurfaceRenderResult:
+    remote_findings = kustomization_remote_resource_findings(directory)
+    if remote_findings:
+        return [], [], remote_findings
+
+    kustomization_path = kustomization_path_for_directory(directory)
+    if kustomization_path is None:
+        return local_enumerated_policy_surface_from_directory(directory)
+
+    completed, run_findings = kubectl_kustomize_with_allowlisted_remote_stubs(directory)
+    if run_findings:
+        return [], [], run_findings
+
+    assert completed is not None
+    if completed.returncode == 0:
+        return policy_surface_from_kustomize_output(
+            directory,
+            completed.stdout,
+            rendered_path=directory / "<kubectl kustomize>",
+        )
+
+    if kustomization_graph_has_helm_charts(directory):
+        helm_completed, helm_findings = kubectl_kustomize_with_allowlisted_remote_stubs(
+            directory,
+            enable_helm=True,
+        )
+        if helm_findings:
+            return [], [], helm_findings
+        assert helm_completed is not None
+        if helm_completed.returncode == 0:
+            return policy_surface_from_kustomize_output(
+                directory,
+                helm_completed.stdout,
+                rendered_path=directory / "<kubectl kustomize --enable-helm>",
+            )
+
+    return local_enumerated_policy_surface_from_directory(directory)
+
+
 def rendered_ivp_findings(
     first_party_refs: list[ImageRef],
     policies: list[PolicyDocument],
@@ -2733,6 +3028,30 @@ def flux_kustomization_uses_local_repo(
     )
 
 
+def flux_kustomization_source_ref_names_local_repo(
+    flux: FluxKustomizationDocument,
+) -> bool:
+    return (
+        flux.source_kind == FLUX_LOCAL_REPO_SOURCE_KIND
+        and flux.source_name == FLUX_LOCAL_REPO_SOURCE_NAME
+        and flux.source_namespace in (None, FLUX_LOCAL_REPO_SOURCE_NAMESPACE)
+    )
+
+
+def flux_kustomization_is_root(flux: FluxKustomizationDocument) -> bool:
+    return (
+        flux.name == ROOT_FLUX_KUSTOMIZATION_NAME
+        and flux.namespace == ROOT_FLUX_KUSTOMIZATION_NAMESPACE
+        and flux_kustomization_uses_local_repo(flux)
+    )
+
+
+def flux_kustomization_is_kyverno_policies(
+    flux: FluxKustomizationDocument,
+) -> bool:
+    return flux.name == KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME
+
+
 def kyverno_policies_flux_path_findings(
     flux_kustomizations: list[FluxKustomizationDocument],
 ) -> list[str]:
@@ -2771,6 +3090,240 @@ def kyverno_policies_flux_path_findings(
                 f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} must set "
                 f"spec.path exactly to {KYVERNO_POLICIES_REPO_PATH}: "
                 f"{display_path(flux.path)}:{line} (found {found})"
+            )
+    return findings
+
+
+def effective_kyverno_policies_flux_findings(
+    render_results: list[FluxRenderedImageValidatingPolicies],
+) -> list[str]:
+    findings: list[str] = []
+    effective_matches: list[
+        tuple[FluxRenderedImageValidatingPolicies, FluxKustomizationDocument]
+    ] = []
+    for result in render_results:
+        for rendered_flux in result.flux_kustomizations:
+            if flux_kustomization_is_kyverno_policies(rendered_flux):
+                effective_matches.append((result, rendered_flux))
+
+    if not effective_matches:
+        findings.append(
+            "rendered root applied graph must contain the effective Flux "
+            f"Kustomization {KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAMESPACE}/"
+            f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME}; guard cannot prove "
+            "Kyverno policies reach the API server"
+        )
+        return findings
+
+    for result, flux in effective_matches:
+        rendered_from = f"{result.flux.namespace or '<unset>'}/{result.flux.name}"
+        effective_ref = (
+            "effective rendered Flux Kustomization "
+            f"{flux.namespace or '<unset>'}/{flux.name} from {rendered_from}: "
+            f"{display_path(flux.path)}:{flux.line}"
+        )
+
+        if flux.namespace != KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAMESPACE:
+            found = flux.namespace if flux.namespace is not None else "<unset>"
+            findings.append(
+                "effective rendered Flux Kustomization "
+                f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} must remain in "
+                f"namespace {KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAMESPACE}: "
+                f"{effective_ref} (found {found})"
+            )
+
+        if flux.spec_path != KYVERNO_POLICIES_REPO_PATH:
+            found = flux.spec_path if flux.spec_path is not None else "<unset>"
+            line = flux.spec_path_line or flux.line
+            findings.append(
+                "effective rendered Flux Kustomization "
+                f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} must set "
+                f"spec.path exactly to {KYVERNO_POLICIES_REPO_PATH}: "
+                f"{display_path(flux.path)}:{line} (found {found}; rendered by "
+                f"{rendered_from})"
+            )
+
+        if yaml_scalar_true(flux.spec_suspend):
+            line = flux.spec_suspend_line or flux.line
+            findings.append(
+                "effective rendered Flux Kustomization "
+                f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} must not set "
+                "spec.suspend: true because that stops policy reconciliation: "
+                f"{display_path(flux.path)}:{line} (rendered by {rendered_from})"
+            )
+
+        if flux.spec_prune != KYVERNO_POLICIES_REQUIRED_PRUNE:
+            found = flux.spec_prune if flux.spec_prune is not None else "<unset>"
+            line = flux.spec_prune_line or flux.line
+            findings.append(
+                "effective rendered Flux Kustomization "
+                f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} must preserve "
+                f"spec.prune: {KYVERNO_POLICIES_REQUIRED_PRUNE}: "
+                f"{display_path(flux.path)}:{line} (found {found}; rendered by "
+                f"{rendered_from})"
+            )
+
+        if not flux_kustomization_source_ref_names_local_repo(flux):
+            found_namespace = (
+                flux.source_namespace if flux.source_namespace is not None else "<unset>"
+            )
+            findings.append(
+                "effective rendered Flux Kustomization "
+                f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} must source the "
+                f"local {FLUX_LOCAL_REPO_SOURCE_KIND}/"
+                f"{FLUX_LOCAL_REPO_SOURCE_NAME} GitRepository: {effective_ref} "
+                f"(found kind={flux.source_kind or '<unset>'}, "
+                f"name={flux.source_name or '<unset>'}, "
+                f"namespace={found_namespace})"
+            )
+
+    return findings
+
+
+def kustomization_applied_file_targets(
+    directory: Path,
+    seen: set[Path] | None = None,
+) -> tuple[set[Path], list[str]]:
+    directory = directory.resolve()
+    seen = seen or set()
+    if directory in seen:
+        return set(), []
+    seen.add(directory)
+
+    kustomization_path = kustomization_path_for_directory(directory)
+    if kustomization_path is None:
+        return (
+            {
+                path.resolve()
+                for path in directory.rglob("*")
+                if path.is_file() and path.suffix in YAML_SUFFIXES
+            },
+            [],
+        )
+
+    try:
+        entries = kustomization_entry_values(
+            kustomization_path,
+            ("resources", "bases"),
+        )
+    except GuardUsageError as exc:
+        return set(), [str(exc)]
+
+    targets: set[Path] = set()
+    findings: list[str] = []
+    for entry in entries:
+        if kustomization_entry_is_remote(entry):
+            continue
+        target = (directory / entry).resolve()
+        targets.add(target)
+        if target.is_dir():
+            child_targets, child_findings = kustomization_applied_file_targets(
+                target,
+                seen,
+            )
+            targets.update(child_targets)
+            findings.extend(child_findings)
+
+    return targets, findings
+
+
+def kyverno_policies_flux_membership_findings(
+    flux_kustomizations: list[FluxKustomizationDocument],
+    roots: Iterable[Path],
+) -> list[str]:
+    findings: list[str] = []
+    kyverno_matches = [
+        flux
+        for flux in flux_kustomizations
+        if flux_kustomization_is_kyverno_policies(flux)
+    ]
+    if not kyverno_matches:
+        return findings
+
+    root_matches = [
+        flux for flux in flux_kustomizations if flux_kustomization_is_root(flux)
+    ]
+    if not root_matches:
+        findings.append(
+            "root Flux Kustomization "
+            f"{ROOT_FLUX_KUSTOMIZATION_NAMESPACE}/{ROOT_FLUX_KUSTOMIZATION_NAME} "
+            "using the local flux-system GitRepository was not found; guard "
+            "cannot prove kyverno-policies is reachable from the applied graph"
+        )
+        return findings
+
+    for flux in kyverno_matches:
+        parent_kustomization = kustomization_path_for_directory(flux.path.parent)
+        if parent_kustomization is None:
+            findings.append(
+                "Flux Kustomization "
+                f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} file is in a "
+                "directory without a kustomization.yaml resources list: "
+                f"{display_path(flux.path)}:{flux.line}"
+            )
+        else:
+            parent_targets = kustomization_resource_targets(
+                flux.path.parent,
+                kustomization_resource_entries(parent_kustomization),
+            )
+            if flux.path.resolve() not in parent_targets:
+                findings.append(
+                    "Flux Kustomization "
+                    f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} file is not "
+                    "listed in the kustomization that should apply it: "
+                    f"{display_path(flux.path)}:{flux.line} "
+                    f"(kustomization: {display_path(parent_kustomization)})"
+                )
+
+        for root_flux in root_matches:
+            root_directory, root_path_findings = flux_spec_path_directory(
+                root_flux,
+                roots,
+            )
+            findings.extend(root_path_findings)
+            if root_directory is None:
+                continue
+            applied_targets, graph_findings = kustomization_applied_file_targets(
+                root_directory
+            )
+            for graph_finding in graph_findings:
+                findings.append(
+                    "root applied graph membership could not be fully checked "
+                    f"for {display_path(root_directory)} because {graph_finding}"
+                )
+            if flux.path.resolve() in applied_targets:
+                continue
+            findings.append(
+                "Flux Kustomization "
+                f"{KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} file is not "
+                "reachable from the root applied kustomization graph: "
+                f"{display_path(flux.path)}:{flux.line} "
+                f"(root Flux Kustomization: "
+                f"{root_flux.namespace or '<unset>'}/{root_flux.name}, "
+                f"spec.path={root_flux.spec_path}; expected a transitive "
+                "resources entry to include the file)"
+            )
+
+    return findings
+
+
+def flux_kustomization_first_party_image_rewrite_findings(
+    flux_kustomizations: Iterable[FluxKustomizationDocument],
+) -> list[str]:
+    findings: list[str] = []
+    for flux in flux_kustomizations:
+        for rewrite in flux.image_rewrites:
+            if not matches_first_party_org_glob(rewrite.name):
+                continue
+            new_name = rewrite.new_name if rewrite.new_name is not None else "<unset>"
+            findings.append(
+                "Flux Kustomization spec.images must not rewrite first-party "
+                "image names because Flux applies the rewrite after kustomize "
+                "rendering and can move workloads outside the IVP "
+                "matchImageReferences globs: "
+                f"{display_path(flux.path)}:{rewrite.name_line} "
+                f"({flux.namespace or '<unset>'}/{flux.name}, "
+                f"name={rewrite.name}, newName={new_name})"
             )
     return findings
 
@@ -2893,11 +3446,90 @@ def kustomization_graph_contains_ivp(
     return False
 
 
+def file_contains_policy_surface(path: Path) -> bool:
+    try:
+        _refs, _policies, ivps, flux_kustomizations, _settings = parse_yaml_file(path)
+    except GuardUsageError:
+        return True
+    if ivps:
+        return True
+    return any(
+        flux.name == KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME
+        for flux in flux_kustomizations
+    )
+
+
+def kustomization_graph_contains_policy_surface(
+    directory: Path,
+    seen: set[Path] | None = None,
+) -> bool:
+    directory = directory.resolve()
+    seen = seen or set()
+    if directory in seen:
+        return False
+    seen.add(directory)
+
+    kustomization_path = kustomization_path_for_directory(directory)
+    if kustomization_path is None:
+        return True
+
+    try:
+        with kustomization_path.open(encoding="utf-8") as handle:
+            documents = list(yaml.safe_load_all(handle))
+    except (OSError, yaml.YAMLError):
+        return True
+
+    if not documents:
+        return True
+
+    entries: list[str] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            return True
+        if document.get("kind") not in KUSTOMIZATION_KINDS:
+            return True
+        if any(field in document for field in KUSTOMIZATION_UNKNOWN_GRAPH_FIELDS):
+            return True
+        if any(
+            field in document for field in KUSTOMIZATION_DIRECT_UNKNOWN_GRAPH_FIELDS
+        ):
+            return True
+        for field in KUSTOMIZATION_WALKED_ENTRY_FIELDS:
+            field_entries = document.get(field)
+            if field_entries is None:
+                continue
+            if not isinstance(field_entries, list):
+                return True
+            for entry in field_entries:
+                if not isinstance(entry, str) or not entry.strip():
+                    return True
+                entries.append(entry.strip())
+
+    for entry in entries:
+        if kustomization_entry_is_remote(entry):
+            if entry not in KYVERNO_IVP_FREE_REMOTE_BASES:
+                return True
+            continue
+        target = (directory / entry).resolve()
+        if target.is_dir():
+            if kustomization_graph_contains_policy_surface(target, seen):
+                return True
+            continue
+        if not target.exists():
+            return True
+        if not target.is_file():
+            return True
+        if file_contains_policy_surface(target):
+            return True
+
+    return False
+
+
 def flux_applied_ivp_findings(
     first_party_refs: list[ImageRef],
     flux_kustomizations: list[FluxKustomizationDocument],
     roots: Iterable[Path],
-    render_cache: RenderCache | None = None,
+    render_cache: PolicySurfaceRenderCache | None = None,
 ) -> tuple[list[str], list[FluxRenderedImageValidatingPolicies]]:
     findings: list[str] = []
     render_results: list[FluxRenderedImageValidatingPolicies] = []
@@ -2917,10 +3549,14 @@ def flux_applied_ivp_findings(
         # Follow the local kustomize resource graph, not the whole subtree, so
         # Flux aggregators that only apply child Flux CRs do not force unrelated
         # remote-resource renders.
-        if not kustomization_graph_contains_ivp(directory):
+        if not kustomization_graph_contains_policy_surface(directory):
             continue
 
-        rendered_ivps, render_findings = rendered_ivps_from_kustomization_directory(
+        (
+            rendered_ivps,
+            rendered_flux_kustomizations,
+            render_findings,
+        ) = rendered_policy_surface_from_kustomization_directory(
             directory, render_cache
         )
         findings.extend(render_findings)
@@ -2929,6 +3565,7 @@ def flux_applied_ivp_findings(
                 flux=flux,
                 directory=directory,
                 ivps=rendered_ivps,
+                flux_kustomizations=rendered_flux_kustomizations,
             )
         )
         if render_findings or not rendered_ivps:
@@ -2954,13 +3591,23 @@ def flux_kustomization_policy_rewrite_findings(
 ) -> list[str]:
     findings: list[str] = []
     for result in render_results:
-        if not result.ivps:
+        contains_kyverno_policies = any(
+            flux_kustomization_is_kyverno_policies(rendered_flux)
+            for rendered_flux in result.flux_kustomizations
+        )
+        if not result.ivps and not contains_kyverno_policies:
             continue
         for field, line in result.flux.forbidden_field_lines:
+            rendered_subject = (
+                f"the {KYVERNO_POLICIES_FLUX_KUSTOMIZATION_NAME} "
+                "Flux Kustomization"
+                if contains_kyverno_policies and not result.ivps
+                else "an ImageValidatingPolicy"
+            )
             findings.append(
-                "Flux Kustomization whose rendered output contains an "
-                f"ImageValidatingPolicy must not declare spec.{field} because "
-                "Flux can rewrite the policy after source inspection: "
+                "Flux Kustomization whose rendered output contains "
+                f"{rendered_subject} must not declare spec.{field} because "
+                "Flux can rewrite or stop the policy after source inspection: "
                 f"{display_path(result.flux.path)}:{line} "
                 f"({result.flux.namespace or '<unset>'}/{result.flux.name}, "
                 f"spec.path={result.flux.spec_path})"
@@ -3031,6 +3678,7 @@ def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
 
     roots = tuple(roots)
     render_cache: RenderCache = {}
+    policy_surface_render_cache: PolicySurfaceRenderCache = {}
     paths = iter_yaml_paths(roots)
     refs: list[ImageRef] = []
     policies: list[PolicyDocument] = []
@@ -3070,11 +3718,28 @@ def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
     findings.extend(ivp_canary_expiry_findings())
     findings.extend(find_ivp_violations(first_party_refs, ivps))
     findings.extend(kyverno_policies_flux_path_findings(flux_kustomizations))
+    findings.extend(
+        kyverno_policies_flux_membership_findings(flux_kustomizations, roots)
+    )
     flux_ivp_findings, flux_render_results = flux_applied_ivp_findings(
-        first_party_refs, flux_kustomizations, roots, render_cache
+        first_party_refs,
+        flux_kustomizations,
+        roots,
+        policy_surface_render_cache,
     )
     findings.extend(flux_ivp_findings)
+    findings.extend(effective_kyverno_policies_flux_findings(flux_render_results))
     findings.extend(flux_kustomization_policy_rewrite_findings(flux_render_results))
+    rendered_flux_kustomizations = [
+        rendered_flux
+        for result in flux_render_results
+        for rendered_flux in result.flux_kustomizations
+    ]
+    findings.extend(
+        flux_kustomization_first_party_image_rewrite_findings(
+            [*flux_kustomizations, *rendered_flux_kustomizations]
+        )
+    )
     flux_rendered_directories = {result.directory.resolve() for result in flux_render_results}
     findings.extend(
         rendered_ivp_findings(

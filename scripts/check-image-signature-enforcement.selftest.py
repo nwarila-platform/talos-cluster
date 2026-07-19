@@ -151,6 +151,116 @@ def flux_policy_kustomization_path(root: Path) -> Path:
     return policy_dir(root).parent / "kustomization-policies.yaml"
 
 
+def root_cluster_dir(root: Path) -> Path:
+    return root / "clusters/talos-cluster"
+
+
+def root_flux_kustomization_path(root: Path) -> Path:
+    return root_cluster_dir(root) / "flux-system/gotk-sync.yaml"
+
+
+def write_root_flux_kustomization(
+    root: Path,
+    extra_spec_lines: tuple[str, ...] = (),
+) -> None:
+    write_yaml(
+        root_flux_kustomization_path(root),
+        "\n".join(
+            [
+                "apiVersion: source.toolkit.fluxcd.io/v1",
+                "kind: GitRepository",
+                "metadata:",
+                "  name: flux-system",
+                "  namespace: flux-system",
+                "spec:",
+                "  interval: 1m",
+                "  url: ssh://git@github.com/nwarila-platform/talos-cluster.git",
+                "---",
+                "apiVersion: kustomize.toolkit.fluxcd.io/v1",
+                "kind: Kustomization",
+                "metadata:",
+                "  name: flux-system",
+                "  namespace: flux-system",
+                "spec:",
+                "  interval: 10m",
+                "  path: ./clusters/talos-cluster",
+                "  prune: true",
+                "  sourceRef:",
+                "    kind: GitRepository",
+                "    name: flux-system",
+                *(f"  {line}" for line in extra_spec_lines),
+            ]
+        ),
+    )
+
+
+def write_root_applied_chain(
+    root: Path,
+    *,
+    kyverno_resources: tuple[str, ...] = ("kustomization-policies.yaml",),
+    app_resources: tuple[str, ...] = ("kyverno",),
+    root_extra_lines: tuple[str, ...] = (),
+    root_flux_extra_spec_lines: tuple[str, ...] = (),
+) -> None:
+    write_root_flux_kustomization(root, root_flux_extra_spec_lines)
+    write_yaml(
+        root_cluster_dir(root) / "flux-system/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - gotk-sync.yaml
+        """,
+    )
+    write_yaml(
+        root_cluster_dir(root) / "tenants/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources: []
+        """,
+    )
+
+    app_resources_block = (
+        "resources:\n"
+        + "\n".join(f"  - {resource}" for resource in app_resources)
+        if app_resources
+        else "resources: []"
+    )
+    write_yaml(
+        root_cluster_dir(root) / "apps/kustomization.yaml",
+        "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+        "kind: Kustomization\n"
+        f"{app_resources_block}",
+    )
+
+    kyverno_resources_block = (
+        "resources:\n"
+        + "\n".join(f"  - {resource}" for resource in kyverno_resources)
+        if kyverno_resources
+        else "resources: []"
+    )
+    write_yaml(
+        policy_dir(root).parent / "kustomization.yaml",
+        "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+        "kind: Kustomization\n"
+        f"{kyverno_resources_block}",
+    )
+
+    root_resource_lines = "\n".join(
+        f"  - {resource}" for resource in ("flux-system", "apps", "tenants")
+    )
+    root_suffix = "\n" + "\n".join(root_extra_lines) if root_extra_lines else ""
+    write_yaml(
+        root_cluster_dir(root) / "kustomization.yaml",
+        "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+        "kind: Kustomization\n"
+        "resources:\n"
+        f"{root_resource_lines}"
+        f"{root_suffix}",
+    )
+
+
 def write_flux_policy_kustomization(
     root: Path,
     spec_path: str | None = None,
@@ -175,6 +285,36 @@ def write_flux_policy_kustomization(
     write_yaml(
         flux_policy_kustomization_path(root),
         "\n".join(lines),
+    )
+    write_root_applied_chain(root)
+
+
+def write_local_flux_kustomization(
+    path: Path,
+    *,
+    name: str,
+    spec_path: str,
+    extra_spec_lines: tuple[str, ...] = (),
+) -> None:
+    write_yaml(
+        path,
+        "\n".join(
+            [
+                "apiVersion: kustomize.toolkit.fluxcd.io/v1",
+                "kind: Kustomization",
+                "metadata:",
+                f"  name: {name}",
+                "  namespace: flux-system",
+                "spec:",
+                "  interval: 10m",
+                f"  path: {spec_path}",
+                "  prune: true",
+                "  sourceRef:",
+                "    kind: GitRepository",
+                "    name: flux-system",
+                *(f"  {line}" for line in extra_spec_lines),
+            ]
+        ),
     )
 
 
@@ -1214,6 +1354,18 @@ def ivp_metadata_autogen_annotation_fixture(root: Path) -> None:
     )
 
 
+def ivp_metadata_unknown_key_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides={
+            "metadata_extra_lines": (
+                "labels:",
+                "  example.com/extra: rejected",
+            )
+        },
+    )
+
+
 def ivp_validation_action_audit_fixture(root: Path) -> None:
     # Name kept for continuity; the assertion is posture-agnostic.
     write_real_shape_fixture(
@@ -1672,6 +1824,298 @@ def flux_dangling_spec_path_fixture(root: Path) -> None:
     )
 
 
+def b1_kyverno_policies_suspend_true_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_flux_policy_kustomization(root, extra_spec_lines=("suspend: true",))
+
+
+def b2_kyverno_policies_removed_from_parent_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_root_applied_chain(root, kyverno_resources=())
+
+
+def b3_root_patch_suspend_true_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_root_applied_chain(
+        root,
+        root_extra_lines=(
+            "patches:",
+            "  - target:",
+            "      group: kustomize.toolkit.fluxcd.io",
+            "      version: v1",
+            "      kind: Kustomization",
+            "      name: kyverno-policies",
+            "      namespace: flux-system",
+            "    patch: |-",
+            "      - op: add",
+            "        path: /spec/suspend",
+            "        value: true",
+        ),
+    )
+
+
+def b4_root_patch_effective_path_decoy_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    decoy_dir = root_cluster_dir(root) / "apps/kyverno/empty-decoy"
+    write_yaml(
+        decoy_dir / "kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources: []
+        """,
+    )
+    write_root_applied_chain(
+        root,
+        root_extra_lines=(
+            "patches:",
+            "  - target:",
+            "      group: kustomize.toolkit.fluxcd.io",
+            "      version: v1",
+            "      kind: Kustomization",
+            "      name: kyverno-policies",
+            "      namespace: flux-system",
+            "    patch: |-",
+            "      - op: replace",
+            "        path: /spec/path",
+            "        value: ./clusters/talos-cluster/apps/kyverno/empty-decoy",
+        ),
+    )
+
+
+def b5_root_flux_postrender_patch_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_root_applied_chain(
+        root,
+        root_flux_extra_spec_lines=(
+            "patches:",
+            "  - target:",
+            "      kind: Kustomization",
+            "      name: kyverno-policies",
+            "    patch: |-",
+            "      - op: add",
+            "        path: /spec/suspend",
+            "        value: true",
+        ),
+    )
+
+
+def b6_flux_images_first_party_rewrite_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root_cluster_dir(root) / "apps/vault/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources: []
+        """,
+    )
+    write_local_flux_kustomization(
+        root_cluster_dir(root) / "apps/kustomization-vault.yaml",
+        name="vault",
+        spec_path="./clusters/talos-cluster/apps/vault",
+        extra_spec_lines=(
+            "images:",
+            "  - name: ghcr.io/nwarila-platform/ubi9-hashicorp-vault",
+            "    newName: docker.io/attacker/vault",
+        ),
+    )
+    write_root_applied_chain(
+        root,
+        app_resources=("kyverno", "kustomization-vault.yaml"),
+    )
+
+
+def benign_plain_yaml_flux_path_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root_cluster_dir(root) / "apps/plain-yaml/deployment.yaml",
+        deployment_yaml("registry.k8s.io/pause:3.10"),
+    )
+    write_local_flux_kustomization(
+        root_cluster_dir(root) / "apps/kustomization-plain-yaml.yaml",
+        name="plain-yaml",
+        spec_path="./clusters/talos-cluster/apps/plain-yaml",
+    )
+    write_root_applied_chain(
+        root,
+        app_resources=("kyverno", "kustomization-plain-yaml.yaml"),
+    )
+
+
+def benign_helmcharts_app_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root_cluster_dir(root) / "apps/helm-app/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        helmCharts:
+          - name: example
+            repo: https://charts.example.invalid
+            version: 1.2.3
+            releaseName: example
+        """,
+    )
+    write_local_flux_kustomization(
+        root_cluster_dir(root) / "apps/kustomization-helm-app.yaml",
+        name="helm-app",
+        spec_path="./clusters/talos-cluster/apps/helm-app",
+    )
+    write_root_applied_chain(
+        root,
+        app_resources=("kyverno", "kustomization-helm-app.yaml"),
+    )
+
+
+def benign_gateway_api_allowlisted_remote_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root_cluster_dir(root) / "apps/gateway-api/gatewayclass.yaml",
+        """
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: GatewayClass
+        metadata:
+          name: cilium
+        spec:
+          controllerName: io.cilium/gateway-controller
+        """,
+    )
+    write_yaml(
+        root_cluster_dir(root) / "apps/gateway-api/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
+          - gatewayclass.yaml
+        """,
+    )
+    write_local_flux_kustomization(
+        root_cluster_dir(root) / "apps/kustomization-gateway-api.yaml",
+        name="gateway-api",
+        spec_path="./clusters/talos-cluster/apps/gateway-api",
+    )
+    write_root_applied_chain(
+        root,
+        app_resources=("kyverno", "kustomization-gateway-api.yaml"),
+    )
+
+
+def benign_ordinary_clusterpolicy_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        policy_dir(root) / "ordinary-clusterpolicy.yaml",
+        """
+        apiVersion: kyverno.io/v1
+        kind: ClusterPolicy
+        metadata:
+          name: ordinary-policy
+        spec:
+          validationFailureAction: Audit
+          background: true
+          rules:
+            - name: ordinary-configmap-check
+              match:
+                any:
+                  - resources:
+                      kinds:
+                        - ConfigMap
+              validate:
+                message: ordinary
+                pattern:
+                  metadata:
+                    name: "?*"
+        """,
+    )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            ivp_filename(),
+            "ordinary-clusterpolicy.yaml",
+        ),
+    )
+
+
+def benign_tenant_overlay_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root_cluster_dir(root) / "tenants/example/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - namespace.yaml
+        """,
+    )
+    write_yaml(
+        root_cluster_dir(root) / "tenants/example/namespace.yaml",
+        """
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: example
+        """,
+    )
+    write_yaml(
+        root_cluster_dir(root) / "tenants/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - example
+        """,
+    )
+
+
+def benign_configmapgenerator_existing_flux_path_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            ivp_filename(),
+        ),
+        extra_lines=(
+            "configMapGenerator:",
+            "  - name: ordinary-data",
+            "    literals:",
+            "      - key=value",
+            "generatorOptions:",
+            "  disableNameSuffixHash: true",
+        ),
+    )
+
+
+def benign_third_party_flux_images_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root_cluster_dir(root) / "apps/third-party/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources: []
+        """,
+    )
+    write_local_flux_kustomization(
+        root_cluster_dir(root) / "apps/kustomization-third-party.yaml",
+        name="third-party",
+        spec_path="./clusters/talos-cluster/apps/third-party",
+        extra_spec_lines=(
+            "images:",
+            "  - name: docker.io/library/nginx",
+            "    newName: registry.example.invalid/mirror/nginx",
+        ),
+    )
+    write_root_applied_chain(
+        root,
+        app_resources=("kyverno", "kustomization-third-party.yaml"),
+    )
+
+
 def write_shadow_flux_kustomization(
     root: Path,
     *,
@@ -2092,6 +2536,31 @@ def ivp_canary_expiry_case(
     )
 
 
+def kubectl_unavailable_case() -> CaseResult:
+    original_kubectl_kustomize = guard.kubectl_kustomize
+
+    def missing_kubectl(*_args: object, **_kwargs: object):
+        return None, [
+            "rendered Kyverno policy set cannot be checked because kubectl "
+            "is not available on PATH: simulated selftest"
+        ]
+
+    try:
+        guard.kubectl_kustomize = missing_kubectl
+        return run_case(
+            "kubectl-unavailable-render-required",
+            1,
+            "kubectl unavailable fails closed when render is required",
+            good_fixture,
+            (
+                "kubectl is not available on PATH",
+                "simulated selftest",
+            ),
+        )
+    finally:
+        guard.kubectl_kustomize = original_kubectl_kustomize
+
+
 def missing_canonical_attestor_case() -> CaseResult:
     missing_org = "ghcr.io/example-missing/*"
     original_org_globs = guard.FIRST_PARTY_ORG_GLOBS
@@ -2280,6 +2749,7 @@ def main() -> int:
             validation_action="Audit",
             failure_policy="Ignore",
         ),
+        kubectl_unavailable_case(),
         missing_canonical_attestor_case(),
         dropped_ivp_match_prefix_case(),
         extra_ivp_match_prefix_case(),
@@ -2555,6 +3025,16 @@ def main() -> int:
             ),
         ),
         run_case(
+            "ivp-metadata-unknown-key",
+            1,
+            "IVP1 metadata key allowlist bites",
+            ivp_metadata_unknown_key_fixture,
+            (
+                "metadata key is not guard-allowlisted",
+                "metadata.labels",
+            ),
+        ),
+        run_case(
             "ivp-second-policy",
             1,
             "IVP1 a second IVP resurrects Kyverno IVP defects",
@@ -2660,6 +3140,111 @@ def main() -> int:
                 "Flux Kustomization spec.path does not exist in this repo",
                 "dangling-local-path",
             ),
+        ),
+        run_case(
+            "b1-kyverno-policies-suspend-true",
+            1,
+            "B1 spec.suspend:true on kyverno-policies bites",
+            b1_kyverno_policies_suspend_true_fixture,
+            (
+                "must not declare spec.suspend",
+                "kyverno-policies",
+            ),
+        ),
+        run_case(
+            "b2-kyverno-policies-membership-removed",
+            1,
+            "B2 kyverno-policies removed from parent kustomization bites",
+            b2_kyverno_policies_removed_from_parent_fixture,
+            (
+                "not listed in the kustomization that should apply it",
+                "kustomization-policies.yaml",
+            ),
+        ),
+        run_case(
+            "b3-root-patch-suspend-true",
+            1,
+            "B3 root kustomize patch to suspend bites via effective CR",
+            b3_root_patch_suspend_true_fixture,
+            (
+                "effective rendered Flux Kustomization kyverno-policies "
+                "must not set spec.suspend: true",
+            ),
+        ),
+        run_case(
+            "b4-root-patch-effective-path-decoy",
+            1,
+            "B4 root kustomize path redirect bites via effective CR",
+            b4_root_patch_effective_path_decoy_fixture,
+            (
+                "effective rendered Flux Kustomization kyverno-policies "
+                "must set spec.path exactly",
+                "empty-decoy",
+            ),
+        ),
+        run_case(
+            "b5-root-flux-postrender-patch",
+            1,
+            "B5 root Flux spec.patches post-render bypass bites",
+            b5_root_flux_postrender_patch_fixture,
+            (
+                "whose rendered output contains the kyverno-policies "
+                "Flux Kustomization",
+                "must not declare spec.patches",
+            ),
+        ),
+        run_case(
+            "b6-flux-images-first-party-rewrite",
+            1,
+            "B6 first-party Flux spec.images rewrite bites",
+            b6_flux_images_first_party_rewrite_fixture,
+            (
+                "Flux Kustomization spec.images must not rewrite "
+                "first-party image names",
+                "docker.io/attacker/vault",
+            ),
+        ),
+        run_case(
+            "benign-plain-yaml-flux-path",
+            0,
+            "bare plain-YAML Flux path remains green",
+            benign_plain_yaml_flux_path_fixture,
+        ),
+        run_case(
+            "benign-helmcharts-app",
+            0,
+            "kustomize helmCharts app remains green",
+            benign_helmcharts_app_fixture,
+        ),
+        run_case(
+            "benign-gateway-api-allowlisted-remote",
+            0,
+            "allowlisted Gateway API remote remains green",
+            benign_gateway_api_allowlisted_remote_fixture,
+        ),
+        run_case(
+            "benign-ordinary-clusterpolicy",
+            0,
+            "ordinary new Kyverno ClusterPolicy remains green",
+            benign_ordinary_clusterpolicy_fixture,
+        ),
+        run_case(
+            "benign-tenant-overlay",
+            0,
+            "new tenant overlay remains green",
+            benign_tenant_overlay_fixture,
+        ),
+        run_case(
+            "benign-configmapgenerator-existing-flux-path",
+            0,
+            "configMapGenerator in existing Flux path remains green",
+            benign_configmapgenerator_existing_flux_path_fixture,
+        ),
+        run_case(
+            "benign-third-party-flux-images",
+            0,
+            "third-party Flux spec.images rewrite remains green",
+            benign_third_party_flux_images_fixture,
         ),
         run_case(
             "flux-shadow-non-yaml-ivp",
