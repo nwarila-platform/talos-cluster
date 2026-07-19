@@ -276,6 +276,7 @@ jobs:
 
           cluster_scoped_kinds = {
               "APIService",
+              "CiliumClusterwideNetworkPolicy",
               "ClusterPolicy",
               "ClusterRole",
               "ClusterRoleBinding",

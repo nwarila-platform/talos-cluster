@@ -41,8 +41,14 @@ spec:
           - default
           - kube-node-lease
           - kube-public
-  # No ingress/egress stanzas => deny-all in both directions for selected
-  # endpoints. Allows are purely additive in Cilium, so a future workload here
-  # gets an explicit allowlist rather than silent reachability.
-  ingress: []
-  egress: []
+  # CORRECTED: `ingress: []` / `egress: []` does NOT mean deny-all in Cilium -
+  # empty rule lists count as NO rules, and the agent rejects such a policy with
+  # "rule must have at least one of Ingress, IngressDeny, Egress, EgressDeny".
+  # The first version of this file shipped that way and was live-INVALID, i.e.
+  # enforcing nothing. `enableDefaultDeny` (Cilium >= 1.14; cluster runs v1.19.5)
+  # is the correct idiom: it puts selected endpoints into default-deny in both
+  # directions without requiring a rule stanza. Allows stay purely additive, so a
+  # future workload here gets an explicit allowlist rather than silent reachability.
+  enableDefaultDeny:
+    ingress: true
+    egress: true
