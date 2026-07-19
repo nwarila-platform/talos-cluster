@@ -49,10 +49,11 @@ The image will be created from the `ubi9-application-template` and based on the
 hardened `ubi9-base-micro` base image. The build pipeline must publish an SBOM,
 produce SLSA-L3 provenance through the template, and sign the image with cosign
 keyless signing through GitHub Actions OIDC. The cluster-side trust anchor is the
-`verify-nwarila-images` Kyverno rule, which enforces signatures for
-`ghcr.io/nwarila/*` with issuer `https://token.actions.githubusercontent.com`,
-Rekor at `https://rekor.sigstore.dev`, and a case-tolerant NWarila GitHub subject
-regular expression.
+first-party Kyverno image verification policy, which currently audits signature
+coverage for `ghcr.io/nwarila/*` with issuer
+`https://token.actions.githubusercontent.com`, Rekor at
+`https://rekor.sigstore.dev`, and a case-tolerant NWarila GitHub subject regular
+expression.
 
 The current scaffold intentionally does not change the CronJob image. Until the
 owner performs the digest swap, the suspended CronJob remains pinned to the
@@ -209,7 +210,7 @@ None (current).
 ## Related ADRs
 
 - [ADR-0010](0010-adopt-kyverno-policy-engine.md) establishes Kyverno as the
-  image-signature policy engine and records the existing scoped Enforce posture.
+  image-signature policy engine and records the existing scoped Audit posture.
 - [ADR-0020](0020-automate-vault-restore-validation.md) defines the restore
   validator and the suspended restore-driver CronJob.
 - [Vault ADR-0010](vault/0010-rebase-vault-image-onto-ubi9.md) records the

@@ -253,7 +253,10 @@ def ivp_filename() -> str:
 
 def ivp_yaml(
     *,
+    api_version: str = "policies.kyverno.io/v1beta1",
     policy_name: str | None = None,
+    metadata_extra_lines: tuple[str, ...] = (),
+    annotation_extra_lines: tuple[str, ...] = (),
     validation_actions: tuple[str, ...] | None = None,
     failure_policy: str | None | object = _UNSET,
     evaluation_mode: str | None = None,
@@ -319,10 +322,16 @@ def ivp_yaml(
     operations = ", ".join(f'"{op}"' for op in match_constraints_operations)
     actions = ", ".join(validation_actions)
     lines = [
-        "apiVersion: policies.kyverno.io/v1beta1",
+        f"apiVersion: {api_version}",
         "kind: ImageValidatingPolicy",
         "metadata:",
         f"  name: {policy_name}",
+        "  annotations:",
+        "    policies.kyverno.io/title: Verify First-Party Image Signatures",
+        "    policies.kyverno.io/category: Supply Chain Security",
+        "    policies.kyverno.io/severity: high",
+        *[f"    {line}" for line in annotation_extra_lines],
+        *[f"  {line}" for line in metadata_extra_lines],
         "spec:",
         f"  validationActions: [{actions}]",
     ]
@@ -531,14 +540,17 @@ def write_policy_kustomization(
         "verify-image-signatures.yaml",
         "verify-image-signatures-enforced.yaml",
     ),
+    extra_lines: tuple[str, ...] = (),
 ) -> None:
     resource_lines = "\n".join(f"  - {resource}" for resource in resources)
+    suffix = "\n" + "\n".join(extra_lines) if extra_lines else ""
     write_yaml(
         root / "policies/kustomization.yaml",
         "apiVersion: kustomize.config.k8s.io/v1beta1\n"
         "kind: Kustomization\n"
         "resources:\n"
-        f"{resource_lines}",
+        f"{resource_lines}"
+        f"{suffix}",
     )
 
 
@@ -1062,6 +1074,24 @@ def ivp_missing_org_fixture(root: Path) -> None:
     )
 
 
+def ivp_api_version_alpha_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides={"api_version": "policies.kyverno.io/v1alpha1"},
+    )
+
+
+def ivp_metadata_autogen_annotation_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides={
+            "annotation_extra_lines": (
+                "pod-policies.kyverno.io/autogen-controllers: none",
+            )
+        },
+    )
+
+
 def ivp_validation_action_audit_fixture(root: Path) -> None:
     # Name kept for continuity; the assertion is posture-agnostic.
     write_real_shape_fixture(
@@ -1339,6 +1369,86 @@ def ivp_validations_extra_field_fixture(root: Path) -> None:
             HWG_ORG,
             validation_extra_lines=("reason: Forbidden",),
         ),
+    )
+
+
+def ivp_kustomization_patches_weaken_render_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            ivp_filename(),
+        ),
+        extra_lines=(
+            "patches:",
+            "  - target:",
+            "      kind: ImageValidatingPolicy",
+            f"      name: {guard.FIRST_PARTY_IVP_POLICY_NAME}",
+            "    patch: |-",
+            "      - op: replace",
+            "        path: /spec/validations/0/expression",
+            '        value: "true"',
+            "      - op: replace",
+            "        path: /spec/attestors/0/cosign/keyless/identities/0/subjectRegExp",
+            '        value: ".*"',
+        ),
+    )
+
+
+def ivp_kustomization_components_weaken_render_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root / "policies/weaken-ivp-component/kustomization.yaml",
+        f"""
+        apiVersion: kustomize.config.k8s.io/v1alpha1
+        kind: Component
+        patches:
+          - target:
+              kind: ImageValidatingPolicy
+              name: {guard.FIRST_PARTY_IVP_POLICY_NAME}
+            patch: |-
+              - op: replace
+                path: /spec/validations/0/expression
+                value: "true"
+        """,
+    )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            ivp_filename(),
+        ),
+        extra_lines=(
+            "components:",
+            "  - weaken-ivp-component",
+        ),
+    )
+
+
+def flux_kustomization_spec_patches_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root / "apps/kyverno/kustomization-policies.yaml",
+        f"""
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: kyverno-policies
+          namespace: flux-system
+        spec:
+          path: ./policies
+          patches:
+            - target:
+                kind: ImageValidatingPolicy
+                name: {guard.FIRST_PARTY_IVP_POLICY_NAME}
+              patch: |-
+                - op: replace
+                  path: /spec/validations/0/expression
+                  value: "true"
+        """,
     )
 
 
@@ -2006,6 +2116,23 @@ def main() -> int:
             ),
         ),
         run_case(
+            "ivp-api-version-alpha",
+            1,
+            "IVP1 exact apiVersion pin bites",
+            ivp_api_version_alpha_fixture,
+            ("apiVersion must be exactly policies.kyverno.io/v1beta1",),
+        ),
+        run_case(
+            "ivp-metadata-autogen-annotation",
+            1,
+            "IVP1 metadata annotation allowlist bites",
+            ivp_metadata_autogen_annotation_fixture,
+            (
+                "metadata.annotations key is not guard-allowlisted",
+                "pod-policies.kyverno.io/autogen-controllers",
+            ),
+        ),
+        run_case(
             "ivp-second-policy",
             1,
             "IVP1 a second IVP resurrects Kyverno IVP defects",
@@ -2021,6 +2148,37 @@ def main() -> int:
                 "kustomization references remote resource",
                 "policies/kustomization.yaml -> "
                 "https://example.invalid/kyverno/remote-ivp.yaml",
+            ),
+        ),
+        run_case(
+            "ivp-kustomization-patches-weaken-render",
+            1,
+            "rendered kustomize patches weakening bites",
+            ivp_kustomization_patches_weaken_render_fixture,
+            (
+                "<kubectl kustomize>",
+                "validations must be exactly one verifyImageSignatures expression",
+                "attestors must exactly match",
+            ),
+        ),
+        run_case(
+            "ivp-kustomization-components-weaken-render",
+            1,
+            "rendered kustomize components weakening bites",
+            ivp_kustomization_components_weaken_render_fixture,
+            (
+                "<kubectl kustomize>",
+                "validations must be exactly one verifyImageSignatures expression",
+            ),
+        ),
+        run_case(
+            "flux-kustomization-spec-patches",
+            1,
+            "Flux post-render policy patch bites",
+            flux_kustomization_spec_patches_fixture,
+            (
+                "Flux Kustomization targeting the Kyverno policies path",
+                "must not declare spec.patches",
             ),
         ),
         run_case(

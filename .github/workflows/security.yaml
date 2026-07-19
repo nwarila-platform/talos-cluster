@@ -48,6 +48,36 @@ jobs:
         with:
           persist-credentials: false
 
+      # The image-signature guard shells out to `kubectl kustomize` to check the
+      # RENDERED policy set (a kustomize patch can otherwise rewrite the policy
+      # after the source-file checks pass), so this scheduled run needs kubectl.
+      # Version + sha256 are pinned as literals rather than fetched: pulling the
+      # checksum from the same host as the binary would add no integrity.
+      # Egress-resilience flags mirror #339 - the runner began timing out (5 min)
+      # fetching from dl.k8s.io (Fastly) on 2026-07-17 while github.com/AWS
+      # downloads kept working, so force IPv4 (defeats an IPv6 blackhole to the
+      # CDN), retry, and fail a bad connect in 20s instead of hanging.
+      - name: Install kubectl (pinned + checksum-verified)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.36.2"
+          KUBECTL_SHA256="1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+          bin="${RUNNER_TEMP}/kubectl"
+          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${bin}" \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  ${bin}" | sha256sum -c -
+          chmod +x "${bin}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+          "${bin}" version --client
+
+      - name: Install YAML parser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml
+
+      - name: "Guard: first-party images are signature-policy-covered"
+        run: python3 scripts/check-image-signature-enforcement.py
+
       - name: Check Talos firewall management ports
         run: python3 scripts/check-firewall-management-ports.py
 

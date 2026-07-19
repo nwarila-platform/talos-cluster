@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import date
@@ -245,7 +246,7 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # collision it rotates which controller-level policy is live. The legacy
 # verifyImages ClusterPolicy stays non-blocking (Audit/Ignore) and guard-pinned
 # until the retire-legacy PR removes it. See cp1_offline_verify_decision.
-IVP_API_VERSION_PREFIX = "policies.kyverno.io/"
+IVP_API_VERSION = "policies.kyverno.io/v1beta1"
 IVP_KIND = "ImageValidatingPolicy"
 # The IVP posture stays a constant-pair source of truth the YAML must match
 # exactly, so a half-flip fails CI. The steady-state target is [Deny]/Fail; the
@@ -327,6 +328,21 @@ FIRST_PARTY_IVP_ALLOWED_SPEC_KEYS = (
     "attestors",
     "validations",
 )
+FIRST_PARTY_IVP_ALLOWED_METADATA_KEYS = ("name", "annotations")
+FIRST_PARTY_IVP_ALLOWED_ANNOTATION_KEYS = (
+    "policies.kyverno.io/title",
+    "policies.kyverno.io/category",
+    "policies.kyverno.io/severity",
+)
+FLUX_KUSTOMIZATION_API_VERSION_PREFIX = "kustomize.toolkit.fluxcd.io/"
+FLUX_KUSTOMIZATION_FORBIDDEN_POLICY_FIELDS = (
+    "patches",
+    "patchesStrategicMerge",
+    "patchesJson6902",
+    "components",
+    "postBuild",
+)
+KYVERNO_POLICIES_REPO_PATH = Path("clusters/talos-cluster/apps/kyverno/policies")
 
 
 @dataclass(frozen=True)
@@ -384,6 +400,9 @@ class ImageValidatingPolicyDocument:
     name: str
     path: Path
     line: int
+    api_version: str | None
+    metadata_key_lines: tuple[tuple[str, int], ...]
+    annotation_key_lines: tuple[tuple[str, int], ...]
     spec_key_lines: tuple[tuple[str, int], ...]
     validation_actions: tuple[str, ...]
     failure_policy: str | None
@@ -1161,16 +1180,18 @@ def extract_ivp_from_document(
     document_fields = mapping_fields(document)
     api_version = scalar_field(document_fields, "apiVersion")
     kind = scalar_field(document_fields, "kind")
-    if (
-        api_version is None
-        or not api_version.startswith(IVP_API_VERSION_PREFIX)
-        or kind != IVP_KIND
-    ):
+    if kind != IVP_KIND:
         return None
 
     metadata_pair = mapping_field(document_fields, "metadata")
     metadata_fields = mapping_fields(metadata_pair[0]) if metadata_pair is not None else {}
+    metadata_key_lines = mapping_key_lines(metadata_fields)
     name = scalar_field(metadata_fields, "name", "<unnamed>") or "<unnamed>"
+    annotations_pair = mapping_field(metadata_fields, "annotations")
+    annotation_fields = (
+        mapping_fields(annotations_pair[0]) if annotations_pair is not None else {}
+    )
+    annotation_key_lines = mapping_key_lines(annotation_fields)
 
     spec_pair = mapping_field(document_fields, "spec")
     spec_fields = mapping_fields(spec_pair[0]) if spec_pair is not None else {}
@@ -1304,6 +1325,9 @@ def extract_ivp_from_document(
         name=name,
         path=path,
         line=node_line(document),
+        api_version=api_version,
+        metadata_key_lines=metadata_key_lines,
+        annotation_key_lines=annotation_key_lines,
         spec_key_lines=spec_key_lines,
         validation_actions=validation_actions,
         failure_policy=failure_policy,
@@ -1382,7 +1406,8 @@ def extract_kyverno_default_registry(
     )
 
 
-def parse_yaml_file(
+def parse_yaml_documents(
+    documents: Iterable[Node | None],
     path: Path,
 ) -> tuple[
     list[ImageRef],
@@ -1390,12 +1415,6 @@ def parse_yaml_file(
     list[ImageValidatingPolicyDocument],
     list[KyvernoDefaultRegistrySetting],
 ]:
-    try:
-        with path.open(encoding="utf-8") as handle:
-            documents = list(yaml.compose_all(handle, Loader=yaml.SafeLoader))
-    except (OSError, yaml.YAMLError) as exc:
-        raise GuardUsageError(f"failed to parse {path}: {exc}") from exc
-
     refs: list[ImageRef] = []
     policies: list[PolicyDocument] = []
     ivps: list[ImageValidatingPolicyDocument] = []
@@ -1416,6 +1435,23 @@ def parse_yaml_file(
         if default_registry is not None:
             kyverno_default_registry_settings.append(default_registry)
     return refs, policies, ivps, kyverno_default_registry_settings
+
+
+def parse_yaml_file(
+    path: Path,
+) -> tuple[
+    list[ImageRef],
+    list[PolicyDocument],
+    list[ImageValidatingPolicyDocument],
+    list[KyvernoDefaultRegistrySetting],
+]:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            documents = list(yaml.compose_all(handle, Loader=yaml.SafeLoader))
+    except (OSError, yaml.YAMLError) as exc:
+        raise GuardUsageError(f"failed to parse {path}: {exc}") from exc
+
+    return parse_yaml_documents(documents, path)
 
 
 def is_first_party(name: str) -> bool:
@@ -1710,6 +1746,8 @@ def append_unexpected_nested_key_findings(
 def find_ivp_violations(
     first_party_refs: list[ImageRef],
     ivps: list[ImageValidatingPolicyDocument],
+    *,
+    scope: str = "source policy files",
 ) -> list[str]:
     findings: list[str] = []
 
@@ -1719,7 +1757,7 @@ def find_ivp_violations(
             for ivp in sorted(ivps, key=lambda item: (display_path(item.path), item.line))
         ) or "<none>"
         findings.append(
-            "source policy files must contain exactly one ImageValidatingPolicy "
+            f"{scope} must contain exactly one ImageValidatingPolicy "
             f"for first-party admission enforcement, named "
             f"{FIRST_PARTY_IVP_POLICY_NAME}: found {len(ivps)}: {found}"
         )
@@ -1747,6 +1785,50 @@ def find_ivp_violations(
         return findings
 
     ivp_ref = f"{display_path(ivp.path)}:{ivp.line} ({ivp.name})"
+
+    if ivp.api_version != IVP_API_VERSION:
+        found = ivp.api_version if ivp.api_version is not None else "<unset>"
+        findings.append(
+            "ImageValidatingPolicy apiVersion must be exactly "
+            f"{IVP_API_VERSION}: {ivp_ref} (found {found})"
+        )
+
+    allowed_metadata_keys = set(FIRST_PARTY_IVP_ALLOWED_METADATA_KEYS)
+    actual_metadata_keys = {key for key, _line in ivp.metadata_key_lines}
+    if actual_metadata_keys != allowed_metadata_keys:
+        findings.append(
+            "ImageValidatingPolicy metadata keys must be exactly "
+            f"{list(FIRST_PARTY_IVP_ALLOWED_METADATA_KEYS)} so metadata cannot "
+            f"silently alter identity or Kyverno behavior: {ivp_ref} "
+            f"(found {sorted(actual_metadata_keys)})"
+        )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.metadata_key_lines,
+        allowed_metadata_keys,
+        "metadata",
+        "unpinned metadata fields may silently alter policy identity or "
+        "Kyverno behavior",
+    )
+
+    allowed_annotation_keys = set(FIRST_PARTY_IVP_ALLOWED_ANNOTATION_KEYS)
+    actual_annotation_keys = {key for key, _line in ivp.annotation_key_lines}
+    if actual_annotation_keys != allowed_annotation_keys:
+        findings.append(
+            "ImageValidatingPolicy metadata.annotations keys must be exactly "
+            f"{list(FIRST_PARTY_IVP_ALLOWED_ANNOTATION_KEYS)} so annotations "
+            f"cannot silently alter Kyverno policy behavior: {ivp_ref} "
+            f"(found {sorted(actual_annotation_keys)})"
+        )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.annotation_key_lines,
+        allowed_annotation_keys,
+        "metadata.annotations",
+        "unpinned annotations may silently alter Kyverno policy behavior",
+    )
 
     allowed_spec_keys = set(FIRST_PARTY_IVP_ALLOWED_SPEC_KEYS)
     for key, line in ivp.spec_key_lines:
@@ -2032,63 +2114,15 @@ def find_ivp_violations(
     return findings
 
 
-def rendered_ivps_from_kustomization_directory(
-    directory: Path, seen: set[Path] | None = None
-) -> tuple[list[ImageValidatingPolicyDocument], list[str]]:
-    seen = seen or set()
-    directory = directory.resolve()
-    if directory in seen:
-        return [], []
-    seen.add(directory)
-
-    kustomization_path = kustomization_path_for_directory(directory)
-    if kustomization_path is None:
-        return [], [
-            "rendered Kyverno policy set cannot be checked because "
-            f"{display_path(directory)} has no kustomization.yaml"
-        ]
-
-    rendered_ivps: list[ImageValidatingPolicyDocument] = []
-    findings: list[str] = []
-    for resource in kustomization_resource_entries(kustomization_path):
-        if "://" in resource:
-            findings.append(
-                "rendered Kyverno policy set cannot be verified because "
-                "kustomization references remote resource: "
-                f"{display_path(kustomization_path)} -> {resource}"
-            )
-            continue
-        target = (directory / resource).resolve()
-        if target.is_dir():
-            child_ivps, child_findings = rendered_ivps_from_kustomization_directory(
-                target, seen
-            )
-            rendered_ivps.extend(child_ivps)
-            findings.extend(child_findings)
-            continue
-        if not target.is_file():
-            findings.append(
-                "rendered Kyverno policy kustomization resource does not exist: "
-                f"{display_path(kustomization_path)} -> {resource}"
-            )
-            continue
-        if target.suffix not in YAML_SUFFIXES:
-            continue
-        _refs, _policies, target_ivps, _settings = parse_yaml_file(target)
-        rendered_ivps.extend(target_ivps)
-
-    return rendered_ivps, findings
-
-
-def rendered_ivp_count_findings(
+def kyverno_policy_directories(
     policies: list[PolicyDocument],
     ivps: list[ImageValidatingPolicyDocument],
-) -> list[str]:
-    findings: list[str] = []
+) -> list[Path]:
     policy_dirs: dict[Path, list[PolicyDocument | ImageValidatingPolicyDocument]] = {}
     for policy in [*policies, *ivps]:
         policy_dirs.setdefault(policy.path.parent, []).append(policy)
 
+    directories: list[Path] = []
     for directory, directory_policies in sorted(
         policy_dirs.items(), key=lambda item: display_path(item[0])
     ):
@@ -2101,27 +2135,224 @@ def rendered_ivp_count_findings(
             isinstance(policy, ImageValidatingPolicyDocument)
             for policy in directory_policies
         )
-        if not has_first_party_policy and not has_source_ivp:
-            continue
+        if has_first_party_policy or has_source_ivp:
+            directories.append(directory)
+    return directories
 
+
+def kyverno_policy_directories_with_static_hints(
+    policies: list[PolicyDocument],
+    ivps: list[ImageValidatingPolicyDocument],
+) -> list[Path]:
+    directories = kyverno_policy_directories(policies, ivps)
+    seen = {directory.resolve() for directory in directories}
+    for directory in (KYVERNO_POLICIES_REPO_PATH,):
+        resolved = directory.resolve()
+        if resolved in seen:
+            continue
+        directories.append(directory)
+        seen.add(resolved)
+    return directories
+
+
+def kustomization_remote_resource_findings(
+    directory: Path, seen: set[Path] | None = None
+) -> list[str]:
+    seen = seen or set()
+    directory = directory.resolve()
+    if directory in seen:
+        return []
+    seen.add(directory)
+
+    kustomization_path = kustomization_path_for_directory(directory)
+    if kustomization_path is None:
+        return [
+            "rendered Kyverno policy set cannot be checked because "
+            f"{display_path(directory)} has no kustomization.yaml"
+        ]
+
+    findings: list[str] = []
+    for resource in kustomization_resource_entries(kustomization_path):
+        if "://" in resource:
+            findings.append(
+                "rendered Kyverno policy set cannot be verified because "
+                "kustomization references remote resource: "
+                f"{display_path(kustomization_path)} -> {resource}"
+            )
+            continue
+        target = (directory / resource).resolve()
+        if target.is_dir():
+            findings.extend(
+                kustomization_remote_resource_findings(target, seen)
+            )
+
+    return findings
+
+
+def output_excerpt(value: str, limit: int = 700) -> str:
+    normalized = " ".join(value.split())
+    if not normalized:
+        return "<empty>"
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3] + "..."
+
+
+def rendered_ivps_from_kustomization_directory(
+    directory: Path,
+) -> tuple[list[ImageValidatingPolicyDocument], list[str]]:
+    directory = directory.resolve()
+    findings = kustomization_remote_resource_findings(directory)
+    if findings:
+        return [], findings
+
+    try:
+        completed = subprocess.run(
+            ("kubectl", "kustomize", str(directory)),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return [], [
+            "rendered Kyverno policy set cannot be checked because kubectl "
+            f"is not available on PATH: {display_path(directory)}"
+        ]
+    except OSError as exc:
+        return [], [
+            "rendered Kyverno policy set cannot be checked because kubectl "
+            f"kustomize could not be started for {display_path(directory)}: {exc}"
+        ]
+
+    if completed.returncode != 0:
+        return [], [
+            "rendered Kyverno policy set cannot be checked because kubectl "
+            f"kustomize failed for {display_path(directory)} "
+            f"(rc {completed.returncode}): {output_excerpt(completed.stderr)}"
+        ]
+
+    try:
+        documents = list(
+            yaml.compose_all(completed.stdout, Loader=yaml.SafeLoader)
+        )
+    except yaml.YAMLError as exc:
+        return [], [
+            "rendered Kyverno policy set cannot be checked because kubectl "
+            f"kustomize output is not valid YAML for {display_path(directory)}: "
+            f"{exc}"
+        ]
+
+    _refs, _policies, rendered_ivps, _settings = parse_yaml_documents(
+        documents, directory / "<kubectl kustomize>"
+    )
+    return rendered_ivps, []
+
+
+def rendered_ivp_findings(
+    first_party_refs: list[ImageRef],
+    policies: list[PolicyDocument],
+    ivps: list[ImageValidatingPolicyDocument],
+) -> list[str]:
+    findings: list[str] = []
+    for directory in kyverno_policy_directories(policies, ivps):
         rendered_ivps, render_findings = rendered_ivps_from_kustomization_directory(
             directory
         )
         findings.extend(render_findings)
-        if len(rendered_ivps) == 1 and rendered_ivps[0].name == FIRST_PARTY_IVP_POLICY_NAME:
-            continue
-
-        found = ", ".join(
-            f"{display_path(ivp.path)}:{ivp.line} ({ivp.name})"
-            for ivp in sorted(
-                rendered_ivps, key=lambda item: (display_path(item.path), item.line)
+        findings.extend(
+            find_ivp_violations(
+                first_party_refs,
+                rendered_ivps,
+                scope="rendered Kyverno policy set",
             )
-        ) or "<none>"
-        findings.append(
-            "rendered Kyverno policy set must contain exactly one "
-            f"ImageValidatingPolicy, named {FIRST_PARTY_IVP_POLICY_NAME}: "
-            f"{display_path(directory)} found {len(rendered_ivps)}: {found}"
         )
+
+    return findings
+
+
+def path_candidates_for_flux_spec_path(
+    spec_path: str,
+    roots: Iterable[Path],
+) -> set[Path]:
+    raw = spec_path.strip()
+    if not raw or "://" in raw:
+        return set()
+
+    path = Path(raw)
+    if path.is_absolute():
+        return {path.resolve()}
+
+    candidates = {(Path.cwd() / path).resolve()}
+    for root in roots:
+        candidates.add((root.resolve() / path).resolve())
+    return candidates
+
+
+def flux_spec_path_targets_policy_directory(
+    spec_path: str,
+    policy_dirs: Iterable[Path],
+    roots: Iterable[Path],
+) -> bool:
+    candidates = path_candidates_for_flux_spec_path(spec_path, roots)
+    if not candidates:
+        return False
+    return any(policy_dir.resolve() in candidates for policy_dir in policy_dirs)
+
+
+def flux_kustomization_policy_rewrite_findings(
+    paths: list[Path],
+    policy_dirs: list[Path],
+    roots: Iterable[Path],
+) -> list[str]:
+    findings: list[str] = []
+    for path in paths:
+        try:
+            with path.open(encoding="utf-8") as handle:
+                documents = list(yaml.compose_all(handle, Loader=yaml.SafeLoader))
+        except (OSError, yaml.YAMLError) as exc:
+            raise GuardUsageError(f"failed to parse {path}: {exc}") from exc
+
+        for document in documents:
+            if not isinstance(document, MappingNode):
+                continue
+            document_fields = mapping_fields(document)
+            api_version = scalar_field(document_fields, "apiVersion")
+            kind = scalar_field(document_fields, "kind")
+            if (
+                api_version is None
+                or not api_version.startswith(FLUX_KUSTOMIZATION_API_VERSION_PREFIX)
+                or kind != "Kustomization"
+            ):
+                continue
+
+            metadata_pair = mapping_field(document_fields, "metadata")
+            metadata_fields = (
+                mapping_fields(metadata_pair[0]) if metadata_pair is not None else {}
+            )
+            name = scalar_field(metadata_fields, "name", "<unnamed>") or "<unnamed>"
+            spec_pair = mapping_field(document_fields, "spec")
+            if spec_pair is None:
+                continue
+            spec_fields = mapping_fields(spec_pair[0])
+            flux_path = scalar_field(spec_fields, "path")
+            if flux_path is None:
+                continue
+            if not flux_spec_path_targets_policy_directory(
+                flux_path, policy_dirs, roots
+            ):
+                continue
+
+            for field in FLUX_KUSTOMIZATION_FORBIDDEN_POLICY_FIELDS:
+                field_pair = spec_fields.get(field)
+                if field_pair is None:
+                    continue
+                findings.append(
+                    "Flux Kustomization targeting the Kyverno policies path "
+                    f"must not declare spec.{field} because Flux can rewrite "
+                    "the policy after the guard-rendered source inspection: "
+                    f"{display_path(path)}:{field_pair[1]} ({name}, "
+                    f"spec.path={flux_path})"
+                )
 
     return findings
 
@@ -2175,6 +2406,7 @@ def policy_resource_membership_findings(
 def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
     assert_first_party_attestor_constants_consistent()
 
+    roots = tuple(roots)
     paths = iter_yaml_paths(roots)
     refs: list[ImageRef] = []
     policies: list[PolicyDocument] = []
@@ -2210,7 +2442,12 @@ def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
     )
     findings.extend(ivp_canary_expiry_findings())
     findings.extend(find_ivp_violations(first_party_refs, ivps))
-    findings.extend(rendered_ivp_count_findings(policies, ivps))
+    findings.extend(rendered_ivp_findings(first_party_refs, policies, ivps))
+    findings.extend(
+        flux_kustomization_policy_rewrite_findings(
+            paths, kyverno_policy_directories_with_static_hints(policies, ivps), roots
+        )
+    )
     findings.extend(policy_resource_membership_findings([*policies, *ivps]))
     return GuardResult(
         paths=paths,
