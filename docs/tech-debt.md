@@ -16,6 +16,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0008 | Selector-bound Vault auth roles cannot be operator-reconciled (vault-config-operator CRD gap) | Open | Medium |
 | TD-0009 | First-party image admission enforcement was temporarily non-blocking | Resolved | **High** |
 | TD-0010 | kube-system remains outside the declared PSA floor | Open | **High** |
+| TD-0011 | Tenant image pulls use an org-wide classic PAT that cannot be repo-scoped | Open | **High** |
 
 ---
 
@@ -493,6 +494,55 @@ The blast radius is bounded to actors that can create or mutate workloads in
   justification.
 - CI or an operational drift check proves the live `kube-system` label state does
   not silently regress after upgrades or recovery operations.
+
+---
+
+## TD-0011 — Tenant image pulls use an org-wide classic PAT that cannot be repo-scoped
+
+**Opened:** 2026-07-19 · **Status:** Open · **Priority:** High · **Descoped from the MVP gate by the owner on 2026-07-19 (was CP-3).**
+
+### Gap
+Tenant workloads pull private first-party images using `ghcr-pull`, delivered by VSO from
+`secret/data/platform/org-pull/<org>/ghcr-pull`. That credential is a **classic** GitHub
+Personal Access Token carrying `read:packages`.
+
+Classic PAT scopes are **account-wide**: `read:packages` grants read on *every* package the
+owning account can read. **There is no mechanism to narrow a classic PAT to a single
+repository.** The credential is therefore structurally org-wide, and it is mounted into a
+tenant pod.
+
+**Blast radius:** a compromised tenant pod can read every private package in the org, not
+merely the one image that tenant runs.
+
+**Confirmed not at risk:** both PATs are `read:packages` only (owner-verified), so a
+compromised tenant cannot *push* images. Both carry **no expiration date**, so a leaked
+token remains valid indefinitely.
+
+**Trajectory:** the owner intends to publish private containers under the `nwarila` org as
+well (the `nwarila-talos-ghcr-pull` PAT is pre-provisioned for exactly that and is
+intentionally retained). The exposure therefore grows as private images spread across both
+orgs — this does not stay a single-tenant concern.
+
+### Why deferred
+It is a blast-radius reduction, not a missing control: image pulls are authenticated today,
+signatures are enforced fail-closed at admission (ADR-0027), and no unauthorised pull path
+exists. It does not gate the MVP contract, and the owner descoped it accordingly.
+
+### What closes it
+Per-tenant scoped, automatically-rotating pull credentials. Two viable routes:
+
+1. **Preferred — GitHub App with `packages: read`.** `scripts`/the source-rotator minter
+   already issues installation tokens scoped to specific repositories
+   (`{"repositories":[repo]}`); it currently requests only `{"contents":"read"}` because no
+   App in the org holds `packages`. Granting one App `packages: read` lets the existing
+   machinery mint a per-tenant, per-repo, short-lived credential — removing both the
+   org-wide scope and the never-expiring property in one change, with no new manual artefact.
+2. **Fallback — a fine-grained PAT per tenant**, scoped to that repository with
+   Packages: read. Works with no App change, but is a hand-made artefact per tenant with no
+   auto-rotation, which re-creates the toil the source-rotator exists to remove and scales
+   poorly as private images spread.
+
+Route 1 is consistent with the zero-manual doctrine; route 2 is a stopgap.
 
 ---
 
