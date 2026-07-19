@@ -154,8 +154,9 @@ jobs:
       # (rekor.pubkey/ctlog.pubkey/roots). If Sigstore rotates a key our signing
       # switches to (e.g. Rekor v1->v2), a new first-party image's signature stops
       # verifying against the stale pin — a PolicyReport `fail` here. These same pins
-      # are byte-identical in the IVPs enforcing at [Deny]/Fail since #340, so a hit
-      # means first-party admission is fail-closing NOW, not hypothetically. This
+      # are byte-identical in the current non-blocking verify-first-party IVP canary
+      # and its planned [Deny]/Fail follow-up, so a hit blocks the flip and needs
+      # investigation before steady-state enforcement. This
       # daily step turns that into a RED workflow (the
       # zero-red sweep signal) so the pins get bumped. Rides this job deliberately:
       # same scoped scanner role + single-object kubeconfig + kubectl, zero new creds.

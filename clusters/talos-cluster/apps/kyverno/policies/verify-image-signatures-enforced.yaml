@@ -1,9 +1,11 @@
 # ClusterPolicy: verify-image-signatures-enforced
 #
 # ⚠️ NON-BLOCKING (Audit) BY DESIGN — and it is NOT slated to return to Enforce.
-# First-party admission enforcement moved to the per-org ImageValidatingPolicy
-# resources (live at [Deny]/Fail since #340); this legacy ClusterPolicy stays
-# Audit and guard-pinned until the retire-legacy PR (PR-C2) removes it. Its
+# First-party admission verification moved to the merged ImageValidatingPolicy
+# resource, currently canaried at [Audit]/Ignore and targeted for [Deny]/Fail in
+# the follow-up PR; this
+# legacy ClusterPolicy stays Audit and guard-pinned until the retire-legacy PR
+# (PR-C2) removes it. Its
 # original blocker (online-Rekor on the admission path) was fixed by the offline
 # pins below, so "waiting on offline verification" no longer applies.
 # Root cause of the 2026-07-14 brick: keyless verification against `rekor.url` made
@@ -27,16 +29,18 @@
 # preserved; the pins remove the Sigstore/Rekor/Fulcio/CTFE/TUF online dependency
 # from the admission path entirely — the exact 2026-07-14 brick vector, eliminated.
 # The pins are Sigstore public-good keys that rotate on Sigstore's schedule. The
-# single-valued-pin residual is a stale pin fail-closing a NEW post-rotation signature.
-# ⚠️ CORRECTED 2026-07-18: this header previously bounded that residual with "this
-# policy stays non-blocking Audit, so a stale pin surfaces only as a PolicyReport
-# fail, never a brick". THAT NO LONGER HOLDS. All four pinned PEMs here are
-# content-identical to the pins in the three ImageValidatingPolicy resources, which
-# run at [Deny]/failurePolicy:Fail since #340 — so a stale pin WOULD deny first-party
-# pod admission, not merely report. This policy being Audit bounds nothing.
+# single-valued-pin residual is a stale pin that would fail-close a NEW
+# post-rotation signature after the follow-up IVP flip.
+# CORRECTED 2026-07-19: this header previously claimed the merged IVP was already
+# [Deny]/Fail. All four pinned PEMs here are content-identical to the pins in the
+# merged ImageValidatingPolicy resource, which is currently [Audit]/Ignore during
+# the merge-cutover canary and targeted for [Deny]/failurePolicy:Fail in the
+# follow-up PR. A stale pin is therefore a canary/follow-up blocker today, not
+# current blocking admission. This policy being Audit bounds nothing after the
+# follow-up flip.
 # The sigstore-TUF-root drift-watcher IS built (scripts/check-sigstore-pin-verification.py,
 # #334) and wired into CI. Two caveats: it inspects the LEGACY ClusterPolicy only (a
-# sound proxy, since these four pins are byte-identical in the enforcing IVPs), and its
+# sound proxy, since these four pins are byte-identical in the merged IVP), and its
 # live daily detector runs in the kubescape workflow whose kubectl fetch has been failing
 # (runner->dl.k8s.io egress) — so treat RUNTIME drift detection as unproven until that is
 # confirmed restored. Sigstore rotations are rare (Rekor key stable since

@@ -14,6 +14,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0006 | Backup-target transport and share-at-rest crypto remain accepted residuals | Open | Low |
 | TD-0007 | NAS administrative and appliance isolation trust boundary accepted residuals | Open | Low |
 | TD-0008 | Selector-bound Vault auth roles cannot be operator-reconciled (vault-config-operator CRD gap) | Open | Medium |
+| TD-0009 | First-party image admission enforcement is temporarily non-blocking | Open | **High** |
 
 ---
 
@@ -23,10 +24,11 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 **See:** [ADR-0010](decision-records/repo/0010-adopt-kyverno-policy-engine.md)
 
 ### Gap
-Cosign image-signature verification is **enforced** for `ghcr.io/nwarila-platform/*`
-(org images). **Cilium** (`quay.io/cilium/*`) and **Kyverno** (`ghcr.io/kyverno/*`)
-are **Audit-only** — an unsigned/tampered Cilium or Kyverno image is *reported*
-but not *blocked* at admission. (Flux is a separate item — see TD-0002.)
+Cosign image-signature verification for first-party images is temporarily
+non-blocking under TD-0009. Separately, **Cilium** (`quay.io/cilium/*`) and
+**Kyverno** (`ghcr.io/kyverno/*`) are **Audit-only** — an unsigned/tampered
+Cilium or Kyverno image is *reported* but not *blocked* at admission. (Flux is a
+separate item — see TD-0002.)
 
 ### Root cause (precise)
 The **tested Kyverno admission paths do not provide a working Enforce-mode
@@ -74,8 +76,9 @@ Two distinct failure classes (do not conflate):
   images; rolled back.
 
 ### Current state
-`verify-nwarila-platform-images` = **Enforce**; `verify-flux-images`,
-`verify-cilium-images`, `verify-kyverno-images` = **Audit**. All `mutateDigest: false`.
+`verify-first-party` = **[Audit]/Ignore** canary (TD-0009);
+`verify-flux-images`, `verify-cilium-images`, `verify-kyverno-images` =
+**Audit**. All legacy `verifyImages` rules use `mutateDigest: false`.
 
 ### Impact + why High
 Cilium is privileged networking/security infrastructure; Kyverno is the
@@ -409,9 +412,51 @@ CP-4 design §S4b; [[vault_config_reconciler_oss_root_equiv]]; PR #311;
 
 ---
 
+## TD-0009 — First-party image admission enforcement is temporarily non-blocking
+
+**Opened:** 2026-07-19 · **Status:** Open · **Priority:** High ·
+**See:** [ADR-0027].
+
+### Gap
+First-party image signatures are currently verified by one merged
+`ImageValidatingPolicy/verify-first-party` at `validationActions: [Audit]` and
+`failurePolicy: Ignore`. This is deliberate canary telemetry, not blocking
+admission: an unsigned, wrong-identity, or stale-pin first-party image would be
+reported rather than denied until the follow-up flip lands.
+
+### Why deferred
+Kyverno v1.18.2 exposed two defects in the previous three-IVP shape: IVP
+annotation clobber between policy outcome entries, and autogen slot collision
+under the global generated-policy names. The merge to one IVP removes that
+multi-policy collision class, but it still needs a live non-blocking canary
+because Kyverno's policy-validation webhook can accept CEL that later fails at
+runtime. The canary proves the merged CEL, offline Sigstore pins, and shared
+`ghcr-pull` credential path against real first-party images before restoring
+fail-closed admission.
+
+### Current state + mitigation
+CI pins the single-IVP shape, nested IVP spec fields, Sigstore offline pins,
+first-party CEL, credentials, and the `[Audit]`/`Ignore` canary posture. The guard
+also carries `IVP_CANARY_EXPIRES = "2026-08-01"` so a forgotten canary turns CI
+red instead of remaining non-blocking silently.
+
+### Closure criteria
+- A follow-up PR flips `ImageValidatingPolicy/verify-first-party` and the guard
+  constants to `validationActions: [Deny]` plus `failurePolicy: Fail`.
+- A known-good signed first-party workload admits.
+- A known-bad or wrong-identity first-party workload is denied.
+- The canary expiry remains inert after the steady-state `[Deny]`/`Fail` posture
+  is reached.
+
+### References
+[ADR-0027]; `scripts/check-image-signature-enforcement.py`.
+
+---
+
 [ADR-0010]: decision-records/repo/0010-adopt-kyverno-policy-engine.md
 [ADR-0002]: decision-records/org/0002-adopt-diataxis-documentation-framework.md
 [ADR-0021]: decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md
+[ADR-0027]: decision-records/repo/0027-fail-closed-first-party-image-admission.md
 [DR Stage 1 limitations]: runbooks/dr-stage1-backup.md#limitations-and-intent
 [Docs index](README.md): README.md
 [Org ADR Sync workflow]: ../.github/workflows/org-adr-sync.yaml

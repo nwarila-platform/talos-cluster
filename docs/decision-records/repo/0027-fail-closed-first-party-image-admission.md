@@ -13,6 +13,16 @@
 
 ## TL;DR
 
+> **⚠️ READ THE 2026-07-18/19 AMENDMENTS AT THE END OF THIS FILE FIRST.** The
+> MECHANISM described below has moved twice since this ADR was accepted. The
+> DECISION (first-party images fail closed at admission) still holds, but
+> enforcement no longer runs on the `verify-image-signatures-enforced`
+> ClusterPolicy described here — it runs on a single merged
+> `ImageValidatingPolicy/verify-first-party`, which is TRANSIENTLY at
+> `[Audit]`/`Ignore` for the merge-cutover canary. The TL;DR and Consequences
+> sections below are written in the present tense and describe the ORIGINAL
+> mechanism; treat them as historical.
+
 First-party image verification is split out of the Audit-only Kyverno
 `verify-image-signatures` ClusterPolicy into
 `verify-image-signatures-enforced`: a dedicated first-party policy with
@@ -222,13 +232,28 @@ this decision, those cases admitted with only a warning.
   has that digest cached.
 - Break-glass while Kyverno is healthy is to suspend the Flux Kustomization
   `kyverno-policies` in `flux-system`, then delete
-  `ClusterPolicy/verify-image-signatures-enforced`. Flux would otherwise
+  `ImageValidatingPolicy/verify-first-party` for a first-party IVP incident.
+  SUSPEND BEFORE DELETING: that Kustomization reconciles every 10m with
+  `prune: true`, so deleting the policy first just lets Flux re-apply it and the
+  incident resumes. The `flux` CLI is not installed on every operator
+  workstation; the kubectl equivalent is
+  `kubectl patch kustomizations.kustomize.toolkit.fluxcd.io kyverno-policies -n
+  flux-system --type=merge -p '{"spec":{"suspend":true}}'` (use the fully
+  qualified kind — `kustomization` alone is ambiguous on this cluster).
+  The full procedure with commands is in
+  `docs/runbooks/bootstrap-out-of-band.md`; keep the two in sync.
+  If the incident is in the legacy `verifyImages` path, delete
+  `ClusterPolicy/verify-image-signatures-enforced` instead. Flux would otherwise
   re-apply the policy. Deleting only the generated fine-grained
   `MutatingWebhookConfiguration` does not work while Kyverno's webhook
   controller runs with `autoUpdateWebhooks=true`, because Kyverno recreates it.
   The chart-level kill switch `--forceFailurePolicyIgnore=true` can force
   policies back to fail-open behavior, but it is a broad emergency rollback
-  switch rather than routine operations.
+  switch rather than routine operations. ⚠️ That flag was documented for
+  `ClusterPolicy`; whether it reaches `policies.kyverno.io/v1beta1`
+  ImageValidatingPolicies is UNVERIFIED. Do not rely on it as the kill switch
+  for the merged IVP until it has been proven — suspend-and-delete above is the
+  path that is known to work.
 - During the reconcile that moves rules between the two policies, there is a
   brief window that fails open rather than closed. This is acceptable for the
   single-PR migration.
@@ -321,16 +346,22 @@ ABOVE) is **no longer the enforcing mechanism**.
   `spec.webhookConfiguration.matchConditions` (the brick-safety scoping this ADR chose), so its mutating
   image-verification never runs and every signed first-party pod is denied at Enforce.
 
-The second defect is structural and unfixed upstream, so first-party enforcement moved to three per-org
-`ImageValidatingPolicy` resources, live at `validationActions: [Deny]` + `failurePolicy: Fail` since #340.
-The ClusterPolicy stays non-blocking (Audit) and is retired by PR-C2.
+The second defect is structural and unfixed upstream, so first-party enforcement moved to one merged
+`ImageValidatingPolicy`, `verify-first-party`. The merge was forced by two Kyverno v1.18.2 IVP defects:
+annotation clobber between per-org outcome entries and autogen slot collision under the shared
+`defaults`/`cronjobs` slots. The merged IVP is currently live as a non-blocking merge-cutover canary at
+`validationActions: [Audit]` + `failurePolicy: Ignore`; the steady-state target remains
+`validationActions: [Deny]` + `failurePolicy: Fail` in the follow-up PR. The ClusterPolicy stays
+non-blocking (Audit) and is retired by PR-C2.
 
-**Known defect in the current mechanism (do not read this ADR as "solved"):** IVP on Kyverno v1.18.2 uses a
+**Known defect in the IVP mechanism (do not read this ADR as "solved"):** IVP on Kyverno v1.18.2 uses a
 mutate→annotate→validate handoff (the mutating webhook does the cosign work and writes
 `kyverno.io/image-verification-outcomes`; the validating webhook evaluates the result read back). A missing
-entry yields `"policy not evaluated"` ⇒ RuleFail ⇒ DENY. On 2026-07-18 this intermittently false-denied a
-genuinely signed image in the hwg tenant. The fail direction is CLOSED, so this ADR's security property is
-intact; the harm is availability. Root cause is under diagnosis. As of 2026-07-18 no
+entry yields `"policy not evaluated"` ⇒ RuleFail. At the steady-state [Deny]/Fail posture this denies; during
+the current [Audit]/Ignore canary it is non-blocking telemetry. On 2026-07-18 this intermittently
+false-denied a genuinely signed image in the hwg tenant. The fail direction is CLOSED once the steady-state
+posture is restored, so this ADR's security property still depends on that follow-up; the canary harm is
+limited to availability telemetry. Root cause is under diagnosis. As of 2026-07-18 no
 Kyverno release carries even the related status-controller fix (PR #15754 is merged to
 main only — `git tag --contains 7b31196` returns zero tags, and release-1.18 branched
 before it), so an upgrade is not an available remedy today.
