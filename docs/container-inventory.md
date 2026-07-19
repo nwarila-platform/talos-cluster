@@ -7,13 +7,12 @@ ADRs, and the GHCR orgs each time.
 
 **Scope:** first-party images under `ghcr.io/nwarila/*` and `ghcr.io/nwarila-platform/*`
 (the namespaces we own the signing identity for, covered by the single
-`verify-first-party` ImageValidatingPolicy currently canaried at non-blocking
-`[Audit]`/`Ignore`; the follow-up target is `[Deny]`/`Fail`). Third-party images we consume directly
+`verify-first-party` ImageValidatingPolicy at fail-closed `[Deny]`/`Fail`). Third-party images we consume directly
 are summarized in the appendix for context; the authority for converting unsigned
 third-party → signed first-party is `_handoff/SUPPLY-CHAIN-INTEGRITY-PLAN.md`
 (the fold-in program, **deferred to immediate-post-talos-cluster**).
 
-**Sign status legend:** ✍️ cosign-keyless first-party signature (admission-verified by the current non-blocking `verify-first-party` `[Audit]`/`Ignore` canary; follow-up target `[Deny]`/`Fail`) · 🧱 base/template
+**Sign status legend:** ✍️ cosign-keyless first-party signature (admission-enforced by the current `verify-first-party` `[Deny]`/`Fail` IVP) · 🧱 base/template
 (not a runtime image) · ⏳ will be first-party-signed once built · 🪞 mirror-and-sign
 (copy of a signed upstream, not a rebuild).
 
@@ -83,8 +82,7 @@ completeness. **None are MVP-blocking.** Split by method:
 **static-key**: cert-manager (sha512, no-tlog — Kyverno v1.18 can't verify it → digest-pinned
 interim, booked TD); **Google-OIDC**: `registry.k8s.io/*` (metrics-server, coredns, core k8s —
 Talos-delivered). These stay Audit-at-admission by design (TD-0001 / TD-0002); the *first-party*
-supply chain is temporarily canaried at `[Audit]`/`Ignore` before the follow-up
-`[Deny]`/`Fail` flip.
+supply chain is enforced at `[Deny]`/`Fail`.
 
 **Genuinely unsigned** (the fold-in candidates in §3): `vault-secrets-operator`,
 `quay.io/brancz/kube-rbac-proxy`, `kubelet-csr-approver`, all `longhornio/*`, all

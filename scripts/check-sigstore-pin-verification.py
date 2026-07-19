@@ -8,11 +8,11 @@ Fulcio roots). Those pins are SINGLE-VALUED (Kyverno's rekor.pubkey/ctlog.pubkey
 take one key each), so if Sigstore rotates a key AND our GitHub-Actions cosign
 signing switches to it, a newly-built first-party image's signature would no
 longer verify against the stale pin. These same four pins are byte-identical in
-the single merged ImageValidatingPolicy `verify-first-party`, which is deliberately
-non-blocking at [Audit]/failurePolicy:Ignore during the canary; the follow-up
-steady-state target is [Deny]/failurePolicy:Fail. (This script inspects the legacy
-ClusterPolicy, which is Audit; that is a proxy for the shared pins, not a claim
-that first-party admission currently denies.) The residual must be DETECTED.
+the single merged ImageValidatingPolicy `verify-first-party`, which now enforces
+[Deny]/failurePolicy:Fail. (This script inspects the legacy ClusterPolicy, which
+is Audit; that is a proxy for the shared pins, not a claim that this legacy
+ClusterPolicy currently denies.) The residual must be DETECTED because stale
+pins now fail-close first-party admission for new signatures.
 
 WHY SIGNATURE-BASED (not pure-TUF): the live Sigstore TUF root already carries
 MORE than one valid tlog/ctlog key at a time (e.g. the 2021 Rekor v1 key our
@@ -41,9 +41,8 @@ legitimate PASS.
 
 SCOPE (honest): this is REACTIVE — it catches drift once a mismatched image is
 deployed and scanned. It reads the Audit-mode legacy ClusterPolicy, but the pins it
-checks are the same ones in the current non-blocking `verify-first-party` IVP canary
-and the planned [Deny]/Fail follow-up — so treat a hit as a canary/follow-up blocker,
-not a non-destructive warning. Truly
+checks are the same ones in the current [Deny]/Fail `verify-first-party` IVP — so
+treat a hit as current fail-closed admission risk, not a non-destructive warning. Truly
 PROACTIVE (catch a rotation before a new-key image is ever deployed) belongs to
 the source repos' CI verify-at-ingest (supply-chain doctrine) — booked, not here.
 

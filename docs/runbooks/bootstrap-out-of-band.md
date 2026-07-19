@@ -14,12 +14,13 @@ Keep admission policy from becoming a circular dependency:
 
 1. A workstation with `talosctl` and `kubectl` controls Talos directly.
 2. The Talos control plane reaches `Ready`.
-3. ARC and Zot are applied out of band while Kyverno image verification is
-   non-blocking.
+3. ARC and Zot are applied out of band before any in-cluster repair path depends
+   on first-party image admission.
 4. Base and gate images are published, signed, mirrored, and verified by
    digest.
-5. Kyverno image verification moves to blocking enforcement only after the
-   signed image chain exists and ARC plus Zot are excluded from that policy.
+5. Kyverno first-party image verification is trusted in blocking enforcement
+   only after the signed image chain exists and ARC plus Zot are excluded from
+   that policy.
 
 The order is not optional. Enforcing image admission before ARC, Zot, base
 images, and gate images are known-good can deny the components needed to repair
@@ -30,7 +31,8 @@ the denial.
 - Run every bootstrap command from the workstation or another trusted
   out-of-cluster runner until ARC is online and proven.
 - Do not run bootstrap from ARC while installing or repairing ARC itself.
-- Do not make Kyverno image verification blocking during initial bootstrap.
+- Do not depend on in-cluster components to repair Kyverno image verification
+  during initial bootstrap.
 - Keep the ARC namespace and Zot namespace outside image verification
   enforcement so the runner control plane and cache can restart during policy
   incidents. The ARC namespace in this repo is currently `arc-systems`; use the
@@ -54,7 +56,8 @@ the denial.
   - Zot authenticated GHCR pull token;
   - any SOPS or sealed-secrets keys needed to decrypt those bootstrap secrets.
 - Repository revision containing the Talos machine configs, Flux bootstrap
-  manifests, ARC manifests, Zot manifests, and Kyverno Audit/Ignore manifests.
+  manifests, ARC manifests, Zot manifests, and reviewed Kyverno policy
+  manifests.
 - The exact signed base and gate image digests that must exist before
   enforcement.
 
@@ -131,13 +134,15 @@ Do not apply ARC, Zot, or Kyverno until the API server is Ready from the
 workstation. Do not depend on GitOps or ARC to repair an API server that is not
 Ready yet.
 
-## Phase 3: Install ARC And Zot With Non-Blocking Kyverno
+## Phase 3: Install ARC And Zot Before In-Cluster Gates
 
 Apply ARC, Zot, and Kyverno from the workstation or a trusted hosted runner.
-During this phase, image verification must be observable but non-blocking:
+During this phase, keep bootstrap repair paths outside image-verification
+enforcement:
 
-- policy action is Audit;
-- the image-verification webhook `failurePolicy` is `Ignore`;
+- first-party image verification is not trusted until Phase 6 confirms the
+  current `[Deny]`/`Fail` posture;
+- third-party image verification remains Audit-only;
 - the ARC namespace and `zot-system` are excluded from image verification;
 - ARC runner pods use rootless Podman or an equivalent non-privileged runtime;
 - Zot pulls GHCR through authenticated credentials and is configured to mirror
@@ -162,7 +167,8 @@ During this phase, image verification must be observable but non-blocking:
    kubectl apply -k <zot-kustomize-path>
    ```
 
-4. Apply Kyverno engine and policy manifests only in the bootstrap-safe posture:
+4. Apply Kyverno engine and policy manifests from the reviewed repository
+   posture:
 
    ```bash
    kubectl apply -k clusters/talos-cluster/apps/kyverno
@@ -178,8 +184,8 @@ During this phase, image verification must be observable but non-blocking:
    kubectl get validatingwebhookconfigurations | grep kyverno
    ```
 
-Stop if image verification is already enforcing, if the webhook is not
-`failurePolicy=Ignore`, or if the ARC/Zot namespaces are not excluded.
+Stop if first-party image verification is enforcing before the signed image
+chain exists, or if the ARC/Zot namespaces are not excluded.
 
 ## Phase 4: Prove ARC And Zot
 
@@ -215,7 +221,7 @@ to the verifier path that Kyverno actually uses.
 
 Kyverno enforcement waits for the signed image supply chain to exist.
 
-Before flipping any policy to Enforce, prove all required base and gate images:
+Before relying on enforcing policy, prove all required base and gate images:
 
 1. Each image is published by immutable digest in the public
    `ghcr.io/nwarila-platform/*` source namespace.
@@ -242,11 +248,11 @@ gh attestation verify \
 Do not replace these identity checks with organization-wide regular expressions
 or tag checks. The runtime policy depends on digest plus exact signer identity.
 
-## Phase 6: Flip Kyverno To Enforce
+## Phase 6: Verify Kyverno Enforcement
 
 Only after Talos is Ready, ARC is proven, Zot is proven, and the base plus gate
-image set exists by digest, move image verification to blocking enforcement for
-the intended workload scope.
+image set exists by digest, verify that image verification is blocking for the
+intended workload scope.
 
 The Enforce change must preserve:
 
@@ -256,13 +262,11 @@ The Enforce change must preserve:
 - digest-based image references;
 - the documented Rekor and Fulcio availability posture.
 
-> **PRECONDITION (2026-07-19).** First-party enforcement now lives on the single
+> **POSTURE CHECK (2026-07-19).** First-party enforcement now lives on the single
 > merged `ImageValidatingPolicy/verify-first-party`, NOT on a ClusterPolicy, and
-> it is currently at `[Audit]`/`Ignore` for the merge-cutover canary. Step 4
-> below ("must fail admission") is only meaningful once that policy is actually
-> at `[Deny]`/`Fail` — at `[Audit]` the bad pod is ADMITTED with a PolicyReport
-> `fail`, so the step would PASS-OPEN and an operator could wrongly conclude the
-> boundary is enforced. Confirm the posture before trusting steps 3-5:
+> it is now at `[Deny]`/`Fail`. Step 4 below ("must fail admission") is
+> meaningful when this command returns `[Deny] Fail`; if it does not, stop before
+> trusting steps 3-5:
 >
 > ```bash
 > kubectl get imagevalidatingpolicy verify-first-party \
@@ -277,7 +281,7 @@ The Enforce change must preserve:
    ```
 
 2. Apply the reviewed manifest. Note this applies whatever posture is committed
-   in git — it does not by itself make the policy enforce:
+   in git; verify the result before the admission tests:
 
    ```bash
    kubectl apply -k clusters/talos-cluster/apps/kyverno
@@ -318,8 +322,8 @@ availability failures that block legitimate cluster work.
 Prefer the narrowest reversible action that restores admission:
 
 1. For a first-party IVP incident, suspend the policy reconciler and delete the
-   merged IVP. The current canary is already `[Audit]`/`Ignore`, so setting the
-   IVP to Audit is a no-op rather than a mitigation.
+   merged IVP. The current IVP is `[Deny]`/`Fail`; suspend plus delete is the
+   narrow immediate mitigation for a bad policy or stale-pin incident.
 
    ```bash
    flux suspend kustomization kyverno-policies -n flux-system
@@ -372,27 +376,25 @@ Do not leave the cluster in a silent permissive state after the repair window.
 ## Rekor And Fulcio Availability
 
 Keyless verification requires the trust material needed to validate the
-certificate chain and Rekor inclusion proof. In the steady-state follow-up
-posture, a verification failure must fail closed for normal workloads; it must
-not silently admit unverified images.
+certificate chain and Rekor inclusion proof. In the current posture, a
+verification failure must fail closed for normal workloads; it must not silently
+admit unverified images.
 
 > **Updated 2026-07-18.** The online Rekor/Fulcio/CT/TUF dependency this section
 > was written against is no longer on the admission path: the first-party
 > attestors verify OFFLINE against pinned Sigstore keys (#333), which is what
 > removed the 2026-07-14 brick vector. A Sigstore *outage* therefore no longer
-> blocks first-party admission. A *stale pin* is visible in the current
-> `verify-first-party` canary, which is deliberately non-blocking at
-> `[Audit]`/`Ignore`; it becomes fail-closed only after the follow-up PR flips the
-> single merged IVP to `[Deny]`/`Fail`.
+> blocks first-party admission. A *stale pin* now fails closed under the current
+> `verify-first-party` `[Deny]`/`Fail` IVP posture.
 
-That steady-state fail-closed posture is acceptable only because break-glass remains
+That fail-closed posture is acceptable only because break-glass remains
 out-of-band and ARC/Zot stay excluded. **The outage scenario below is retired:**
 with offline pins (#333) a public-good Sigstore outage no longer prevents
 first-party admission, so there is no Sigstore-availability reason to reach for
-break-glass. The failure modes that can block admission after the follow-up flip
-are (a) a STALE PIN after a Sigstore key rotation, and (b) the Kyverno v1.18.2 IVP
-handoff defect that intermittently yields `policy not evaluated` (see ADR-0027's
-2026-07-18 amendment). For either, break-glass means suspending the
+break-glass. The failure modes that can block admission now are (a) a STALE PIN
+after a Sigstore key rotation, and (b) the Kyverno v1.18.2 IVP handoff defect
+that intermittently yields `policy not evaluated` (see ADR-0027's 2026-07-18
+amendment). For either, break-glass means suspending the
 `kyverno-policies` Kustomization and deleting
 `ImageValidatingPolicy/verify-first-party` — NOT restoring the legacy
 ClusterPolicy, which is Audit and retired by PR-C2.
@@ -410,16 +412,12 @@ The bootstrap path is complete only when all of these are true and recorded:
 - ARC scale sets are online, ephemeral, and running rootless Podman.
 - Zot serves runtime manifests plus signature and attestation objects by digest.
 - Kyverno starts with the single merged `verify-first-party` IVP in
-  `[Audit]`/`Ignore`. (Rebuild-order guidance: this is the current deliberate
-  non-blocking canary, not the steady state; the follow-up PR flips it to
-  `[Deny]`/`Fail`.)
+  `[Deny]`/`Fail`.
 - The ARC namespace and `zot-system` remain excluded from image verification.
 - Base and gate image digests exist in GHCR, mirror through Zot, and verify
   against exact signer workflow identities.
-- The follow-up first-party IVP flip to `[Deny]`/`Fail` happens only after those
-  digests exist and are verified.
-- A known-good signed workload admits under the follow-up `[Deny]`/`Fail` posture.
-- A known-bad or wrong-identity workload is denied under the follow-up
+- A known-good signed workload admits under the current `[Deny]`/`Fail` posture.
+- A known-bad or wrong-identity workload is denied under the current
   `[Deny]`/`Fail` posture.
 - Break-glass has been tested from the workstation kubeconfig.
 - No ARC, Zot, or cluster secret bootstrap step depended on Vault-backed ESO or

@@ -14,7 +14,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0006 | Backup-target transport and share-at-rest crypto remain accepted residuals | Open | Low |
 | TD-0007 | NAS administrative and appliance isolation trust boundary accepted residuals | Open | Low |
 | TD-0008 | Selector-bound Vault auth roles cannot be operator-reconciled (vault-config-operator CRD gap) | Open | Medium |
-| TD-0009 | First-party image admission enforcement is temporarily non-blocking | Open | **High** |
+| TD-0009 | First-party image admission enforcement was temporarily non-blocking | Resolved | **High** |
 
 ---
 
@@ -24,11 +24,11 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 **See:** [ADR-0010](decision-records/repo/0010-adopt-kyverno-policy-engine.md)
 
 ### Gap
-Cosign image-signature verification for first-party images is temporarily
-non-blocking under TD-0009. Separately, **Cilium** (`quay.io/cilium/*`) and
-**Kyverno** (`ghcr.io/kyverno/*`) are **Audit-only** — an unsigned/tampered
-Cilium or Kyverno image is *reported* but not *blocked* at admission. (Flux is a
-separate item — see TD-0002.)
+Cosign image-signature verification for first-party images is enforced at
+`[Deny]`/`Fail` by `ImageValidatingPolicy/verify-first-party`. Separately,
+**Cilium** (`quay.io/cilium/*`) and **Kyverno** (`ghcr.io/kyverno/*`) are
+**Audit-only** — an unsigned/tampered Cilium or Kyverno image is *reported* but
+not *blocked* at admission. (Flux is a separate item — see TD-0002.)
 
 ### Root cause (precise)
 The **tested Kyverno admission paths do not provide a working Enforce-mode
@@ -76,7 +76,7 @@ Two distinct failure classes (do not conflate):
   images; rolled back.
 
 ### Current state
-`verify-first-party` = **[Audit]/Ignore** canary (TD-0009);
+`verify-first-party` = **[Deny]/Fail** (TD-0009 resolved);
 `verify-flux-images`, `verify-cilium-images`, `verify-kyverno-images` =
 **Audit**. All legacy `verifyImages` rules use `mutateDigest: false`.
 
@@ -412,39 +412,46 @@ CP-4 design §S4b; [[vault_config_reconciler_oss_root_equiv]]; PR #311;
 
 ---
 
-## TD-0009 — First-party image admission enforcement is temporarily non-blocking
+## TD-0009 — First-party image admission enforcement was temporarily non-blocking
 
-**Opened:** 2026-07-19 · **Status:** Open · **Priority:** High ·
+**Opened:** 2026-07-19 · **Status:** Resolved · **Priority:** High ·
+**Resolved:** 2026-07-19 ·
 **See:** [ADR-0027].
 
+### Resolution
+This PR flips `ImageValidatingPolicy/verify-first-party` and the guard constants
+to `validationActions: [Deny]` plus `failurePolicy: Fail`. The live Audit canary
+proved the merged policy against real first-party images: PolicyReports were
+all-pass with zero non-pass results and zero rule errors. The canary expiry
+constant remains in the guard, but it is inert while the IVP is at steady-state
+`[Deny]`/`Fail`.
+
 ### Gap
-First-party image signatures are currently verified by one merged
+At open time, first-party image signatures were verified by one merged
 `ImageValidatingPolicy/verify-first-party` at `validationActions: [Audit]` and
-`failurePolicy: Ignore`. This is deliberate canary telemetry, not blocking
-admission: an unsigned, wrong-identity, or stale-pin first-party image would be
-reported rather than denied until the follow-up flip lands.
+`failurePolicy: Ignore`. That was deliberate canary telemetry, not blocking
+admission: an unsigned, wrong-identity, or stale-pin first-party image would
+have been reported rather than denied until this PR landed.
 
 ### Why deferred
 Kyverno v1.18.2 exposed two defects in the previous three-IVP shape: IVP
 annotation clobber between policy outcome entries, and autogen slot collision
 under the global generated-policy names. The merge to one IVP removes that
-multi-policy collision class, but it still needs a live non-blocking canary
-because Kyverno's policy-validation webhook can accept CEL that later fails at
-runtime. The canary proves the merged CEL, offline Sigstore pins, and shared
-`ghcr-pull` credential path against real first-party images before restoring
+multi-policy collision class, but it needed a live non-blocking canary because
+Kyverno's policy-validation webhook can accept CEL that later fails at runtime.
+The canary proved the merged CEL, offline Sigstore pins, and shared `ghcr-pull`
+credential path against real first-party images before this PR restored
 fail-closed admission.
 
 ### Current state + mitigation
 CI pins the single-IVP shape, nested IVP spec fields, Sigstore offline pins,
-first-party CEL, credentials, and the `[Audit]`/`Ignore` canary posture. The guard
-also carries `IVP_CANARY_EXPIRES = "2026-08-01"` so a forgotten canary turns CI
-red instead of remaining non-blocking silently.
+first-party CEL, credentials, and the `[Deny]`/`Fail` posture. The guard also
+carries `IVP_CANARY_EXPIRES = "2026-08-01"` so any future forgotten canary turns
+CI red instead of remaining non-blocking silently.
 
-### Closure criteria
-- A follow-up PR flips `ImageValidatingPolicy/verify-first-party` and the guard
-  constants to `validationActions: [Deny]` plus `failurePolicy: Fail`.
-- A known-good signed first-party workload admits.
-- A known-bad or wrong-identity first-party workload is denied.
+### Closure evidence
+- `ImageValidatingPolicy/verify-first-party` and the guard constants are at
+  `validationActions: [Deny]` plus `failurePolicy: Fail`.
 - The canary expiry remains inert after the steady-state `[Deny]`/`Fail` posture
   is reached.
 

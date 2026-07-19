@@ -954,8 +954,8 @@ def fail_closed_fixture(root: Path) -> None:
 def failure_policy_fail_fixture(root: Path) -> None:
     # This LEGACY policy requires failurePolicy: Ignore (fail-open) — it is Audit
     # until PR-C2 retires it, and re-arming it to Fail re-arms the #335 brick.
-    # (Current first-party IVP admission is the non-blocking [Audit]/Ignore
-    # canary; the follow-up restores [Deny]/Fail there, not here.)
+    # (Current first-party IVP admission is the [Deny]/Fail enforcement path,
+    # not this legacy ClusterPolicy.)
     write_real_shape_fixture(root, policy_yaml(failure_policy="Fail"))
 
 
