@@ -8,6 +8,7 @@ import sys
 import tempfile
 import textwrap
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Callable
 
@@ -260,14 +261,21 @@ def ivp_yaml(
     background_enabled: str | None = "true",
     match_constraints_operations: tuple[str, ...] = ("CREATE", "UPDATE"),
     autogen_controllers: tuple[str, ...] | None = guard.FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS,
+    autogen_extra_lines: tuple[str, ...] = (),
+    autogen_pod_controllers_extra_lines: tuple[str, ...] = (),
     include_match_conditions: bool = True,
     match_expression: str | None = None,
     match_condition_name: str | None = None,
+    match_condition_extra_lines: tuple[str, ...] = (),
     match_image_references: tuple[str, ...] | None = None,
+    match_image_reference_extra_entries: tuple[str, ...] = (),
     attestor_overrides: dict[str, dict[str, object]] | None = None,
     credentials: tuple[str, ...] | None = None,
+    credentials_extra_lines: tuple[str, ...] = (),
     extra_spec_blocks: tuple[str, ...] = (),
     validation_expression: str | None = None,
+    validation_message: str | None = None,
+    validation_extra_lines: tuple[str, ...] = (),
 ) -> str:
     policy_name = policy_name if policy_name is not None else guard.FIRST_PARTY_IVP_POLICY_NAME
     validation_actions = (
@@ -300,6 +308,11 @@ def ivp_yaml(
         validation_expression
         if validation_expression is not None
         else guard.canonical_ivp_validation_expression()
+    )
+    validation_message = (
+        validation_message
+        if validation_message is not None
+        else guard.FIRST_PARTY_IVP_VALIDATION_MESSAGE
     )
     attestor_overrides = attestor_overrides or {}
 
@@ -344,6 +357,10 @@ def ivp_yaml(
         )
         for controller in autogen_controllers:
             lines.append(f"        - {controller}")
+        for line in autogen_pod_controllers_extra_lines:
+            lines.append(f"      {line}")
+        for line in autogen_extra_lines:
+            lines.append(f"    {line}")
     if include_match_conditions:
         lines.extend(
             [
@@ -353,14 +370,20 @@ def ivp_yaml(
                 *_indent_block(match_expression, 8),
             ]
         )
+        for line in match_condition_extra_lines:
+            lines.append(f"      {line}")
     lines.append("  matchImageReferences:")
     for glob in match_image_references:
         lines.append(f'    - glob: "{glob}"')
+    for entry in match_image_reference_extra_entries:
+        lines.extend(_indent_block(textwrap.dedent(entry).strip(), 4))
     if credentials:
         lines.append("  credentials:")
         lines.append("    secrets:")
         for secret in credentials:
             lines.append(f"      - {secret}")
+        for line in credentials_extra_lines:
+            lines.append(f"    {line}")
     for block in extra_spec_blocks:
         lines.extend(_indent_block(textwrap.dedent(block).strip(), 2))
     lines.append("  attestors:")
@@ -403,9 +426,11 @@ def ivp_yaml(
             "  validations:",
             "    - expression: |-",
             *_indent_block(validation_expression, 8),
-            '      message: "first-party image failed keyless signature verification"',
+            f'      message: "{validation_message}"',
         ]
     )
+    for line in validation_extra_lines:
+        lines.append(f"      {line}")
     return "\n".join(lines)
 
 
@@ -655,7 +680,8 @@ def fail_closed_fixture(root: Path) -> None:
 def failure_policy_fail_fixture(root: Path) -> None:
     # This LEGACY policy requires failurePolicy: Ignore (fail-open) — it is Audit
     # until PR-C2 retires it, and re-arming it to Fail re-arms the #335 brick.
-    # (Live first-party admission is fail-closed on the IVPs, not here.)
+    # (Current first-party IVP admission is the non-blocking [Audit]/Ignore
+    # canary; the follow-up restores [Deny]/Fail there, not here.)
     write_real_shape_fixture(root, policy_yaml(failure_policy="Fail"))
 
 
@@ -1256,6 +1282,66 @@ def ivp_hwg_credentials_dropped_fixture(root: Path) -> None:
     write_real_shape_fixture(root, ivp_overrides=ivp_over(HWG_ORG, credentials=()))
 
 
+def ivp_credentials_allow_insecure_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            HWG_ORG,
+            credentials_extra_lines=("allowInsecureRegistry: true",),
+        ),
+    )
+
+
+def ivp_credentials_providers_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            HWG_ORG,
+            credentials_extra_lines=("providers: [github]",),
+        ),
+    )
+
+
+def ivp_matchimagereferences_expression_entry_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            HWG_ORG,
+            match_image_reference_extra_entries=('- expression: "true"',),
+        ),
+    )
+
+
+def ivp_autogen_extra_key_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            HWG_ORG,
+            autogen_pod_controllers_extra_lines=("mode: all",),
+        ),
+    )
+
+
+def ivp_matchconditions_extra_field_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            HWG_ORG,
+            match_condition_extra_lines=("message: widened match condition",),
+        ),
+    )
+
+
+def ivp_validations_extra_field_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            HWG_ORG,
+            validation_extra_lines=("reason: Forbidden",),
+        ),
+    )
+
+
 def ivp_file_not_in_kustomization_fixture(root: Path) -> None:
     write_real_shape_fixture(root, ivp_kustomization_omit=True)
 
@@ -1403,6 +1489,56 @@ def run_repository_case(
     expected_fragments: tuple[str, ...] = (),
 ) -> CaseResult:
     run = run_guard_for_roots(tuple(ROOT / root for root in guard.DEFAULT_ROOTS))
+    findings_text = "\n".join(run.findings)
+    fragments_present = all(fragment in findings_text for fragment in expected_fragments)
+    empty_matches_rc = (not run.findings and run.rc == 0) or (
+        bool(run.findings) and run.rc in (1, 2)
+    )
+    passed = (
+        run.rc == expected_rc
+        and fragments_present
+        and empty_matches_rc
+    )
+    return CaseResult(
+        name=name,
+        expected_rc=expected_rc,
+        actual_rc=run.rc,
+        finding_count=len(run.findings),
+        evidence=evidence,
+        passed=passed,
+        findings=run.findings,
+    )
+
+
+def ivp_canary_expiry_case(
+    name: str,
+    expected_rc: int,
+    evidence: str,
+    *,
+    today: str,
+    validation_action: str,
+    failure_policy: str,
+    expected_fragments: tuple[str, ...] = (),
+) -> CaseResult:
+    original_today = guard.current_date
+    original_action = guard.IVP_VALIDATION_ACTION
+    original_failure_policy = guard.IVP_REQUIRED_FAILURE_POLICY
+    original_expires = guard.IVP_CANARY_EXPIRES
+    try:
+        guard.current_date = lambda: date.fromisoformat(today)
+        guard.IVP_VALIDATION_ACTION = validation_action
+        guard.IVP_REQUIRED_FAILURE_POLICY = failure_policy
+        guard.IVP_CANARY_EXPIRES = "2026-08-01"
+        with tempfile.TemporaryDirectory(prefix="image-signature-guard-") as tmpdir:
+            root = Path(tmpdir)
+            write_real_shape_fixture(root)
+            run = run_guard(root)
+    finally:
+        guard.current_date = original_today
+        guard.IVP_VALIDATION_ACTION = original_action
+        guard.IVP_REQUIRED_FAILURE_POLICY = original_failure_policy
+        guard.IVP_CANARY_EXPIRES = original_expires
+
     findings_text = "\n".join(run.findings)
     fragments_present = all(fragment in findings_text for fragment in expected_fragments)
     empty_matches_rc = (not run.findings and run.rc == 0) or (
@@ -1582,6 +1718,35 @@ def main() -> int:
             0,
             "Audit cilium skipImageReferences allowed",
             audit_skip_image_references_fixture,
+        ),
+        ivp_canary_expiry_case(
+            "ivp-canary-expired-canary-posture",
+            1,
+            "expired Audit/Ignore canary turns CI red",
+            today="2026-08-01",
+            validation_action="Audit",
+            failure_policy="Ignore",
+            expected_fragments=(
+                "canary expired on 2026-08-01",
+                "Flip verify-first-party",
+                "extend IVP_CANARY_EXPIRES with a recorded reason",
+            ),
+        ),
+        ivp_canary_expiry_case(
+            "ivp-canary-expired-steady-state",
+            0,
+            "expired date is inert after [Deny]/Fail",
+            today="2026-08-02",
+            validation_action="Deny",
+            failure_policy="Fail",
+        ),
+        ivp_canary_expiry_case(
+            "ivp-canary-before-expiry",
+            0,
+            "Audit/Ignore canary remains green before expiry",
+            today="2026-07-31",
+            validation_action="Audit",
+            failure_policy="Ignore",
         ),
         missing_canonical_attestor_case(),
         dropped_ivp_match_prefix_case(),
@@ -1952,6 +2117,17 @@ def main() -> int:
             ("spec.autogen.podControllers.controllers must preserve",),
         ),
         run_case(
+            "ivp-autogen-extra-key",
+            1,
+            "IVP4 unpinned spec.autogen nested field bites",
+            ivp_autogen_extra_key_fixture,
+            (
+                "spec.autogen.podControllers key is not guard-allowlisted",
+                "controller-created Pods receive signature verification",
+                "spec.autogen.podControllers.mode",
+            ),
+        ),
+        run_case(
             "ivp-no-matchconditions",
             1,
             "IVP5 empty matchConditions bite",
@@ -1973,11 +2149,33 @@ def main() -> int:
             ("matchConditions expression does not exactly match the canonical",),
         ),
         run_case(
+            "ivp-matchconditions-extra-field",
+            1,
+            "IVP5 unpinned spec.matchConditions nested field bites",
+            ivp_matchconditions_extra_field_fixture,
+            (
+                "spec.matchConditions key is not guard-allowlisted",
+                "API-server webhook selection",
+                "spec.matchConditions.message",
+            ),
+        ),
+        run_case(
             "ivp-matchimagereferences-broadened",
             1,
             "IVP6 broadening matchImageReferences bites",
             ivp_matchimagereferences_broadened_fixture,
             ("matchImageReferences must be exactly",),
+        ),
+        run_case(
+            "ivp-matchimagereferences-expression-entry",
+            1,
+            "IVP6 expression-only matchImageReferences entry bites",
+            ivp_matchimagereferences_expression_entry_fixture,
+            (
+                "spec.matchImageReferences key is not guard-allowlisted",
+                "expression can bypass the pinned glob set",
+                "spec.matchImageReferences.expression",
+            ),
         ),
         run_case(
             "ivp-attestor-roots-repointed",
@@ -2043,11 +2241,44 @@ def main() -> int:
             ("validations must be exactly one verifyImageSignatures expression",),
         ),
         run_case(
+            "ivp-validations-extra-field",
+            1,
+            "IVP8 unpinned spec.validations nested field bites",
+            ivp_validations_extra_field_fixture,
+            (
+                "spec.validations key is not guard-allowlisted",
+                "signature-verification semantics",
+                "spec.validations.reason",
+            ),
+        ),
+        run_case(
             "ivp-hwg-credentials-dropped",
             1,
             "IVP9 dropping the shared ghcr-pull image-pull secret bites",
             ivp_hwg_credentials_dropped_fixture,
             ("spec.credentials.secrets must be exactly ['ghcr-pull']",),
+        ),
+        run_case(
+            "ivp-credentials-allow-insecure",
+            1,
+            "IVP9 credentials.allowInsecureRegistry:true bites",
+            ivp_credentials_allow_insecure_fixture,
+            (
+                "spec.credentials key is not guard-allowlisted",
+                "allowInsecureRegistry permits plaintext or skip-TLS registry fetches",
+                "spec.credentials.allowInsecureRegistry",
+            ),
+        ),
+        run_case(
+            "ivp-credentials-providers",
+            1,
+            "IVP9 credentials.providers bites",
+            ivp_credentials_providers_fixture,
+            (
+                "spec.credentials key is not guard-allowlisted",
+                "credential lookup",
+                "spec.credentials.providers",
+            ),
         ),
         run_case(
             "ivp-file-not-in-kustomization",

@@ -55,6 +55,7 @@ import argparse
 import fnmatch
 import sys
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -169,10 +170,10 @@ REKOR_URL = "https://rekor.sigstore.dev"
 # pod creation (Vault + the hwg tenant) on 2026-07-14 is REMOVED: the canonical attestors
 # above verify keyless signatures OFFLINE against the pinned Sigstore keys (rekor.pubkey +
 # ctlog.pubkey + Fulcio roots), no admission-path online GET. This LEGACY ClusterPolicy's
-# rules stay non-blocking (failureAction Audit + failurePolicy Ignore) permanently: live
-# first-party enforcement moved to the merged ImageValidatingPolicy, whose steady-state
-# posture is [Deny]/failurePolicy:Fail. This merge-cutover canary transiently pins that
-# IVP at [Audit]/failurePolicy:Ignore; live first-party enforcement is NOT here.
+# rules stay non-blocking (failureAction Audit + failurePolicy Ignore) permanently.
+# First-party admission verification moved to the merged ImageValidatingPolicy,
+# currently canaried at [Audit]/failurePolicy:Ignore; its steady-state follow-up
+# posture is [Deny]/failurePolicy:Fail. First-party blocking enforcement is NOT here.
 # This guard fully verifies the rule SHAPE (canonical offline attestors,
 # matchConditions, first-party scoping, background, exempt-ns, required, no
 # skip/exclude/preconditions) and pins the offline material.
@@ -251,6 +252,12 @@ IVP_KIND = "ImageValidatingPolicy"
 # current value is the temporary merge-cutover canary at [Audit]/Ignore.
 IVP_VALIDATION_ACTION = "Audit"  # CANARY (PR-2 live-verifies the merged policy); PR-3 flips to "Deny"
 IVP_REQUIRED_FAILURE_POLICY = "Ignore"  # CANARY (PR-2); PR-3 flips to "Fail"
+# Forgetting this canary should turn CI red, not leave first-party admission
+# non-blocking forever. Once the IVP is in steady state ([Deny]/Fail), this date
+# is inert and cannot break CI after the canary is over.
+IVP_CANARY_EXPIRES = "2026-08-01"
+IVP_STEADY_STATE_VALIDATION_ACTION = "Deny"
+IVP_STEADY_STATE_FAILURE_POLICY = "Fail"
 # The unnarrowed Pod CREATE/UPDATE match (node_to_data yields raw scalar strings).
 IVP_MATCH_CONSTRAINTS = {
     "resourceRules": [
@@ -280,6 +287,20 @@ FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS = (
     "statefulsets",
     "jobs",
     "cronjobs",
+)
+FIRST_PARTY_IVP_EVALUATION = {
+    "admission": {"enabled": "true"},
+    "background": {"enabled": "true"},
+}
+FIRST_PARTY_IVP_AUTOGEN = {
+    "podControllers": {"controllers": list(FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS)}
+}
+FIRST_PARTY_IVP_CREDENTIALS_STRUCTURE = {
+    "secrets": list(FIRST_PARTY_IVP_CREDENTIALS)
+}
+FIRST_PARTY_IVP_VALIDATION_MESSAGE = (
+    "first-party image failed keyless signature verification "
+    "(merged ImageValidatingPolicy)"
 )
 # Per first-party org glob: the CEL attestor identifier used in
 # spec.validations (must be a valid CEL identifier -> underscore, never the org
@@ -366,17 +387,33 @@ class ImageValidatingPolicyDocument:
     spec_key_lines: tuple[tuple[str, int], ...]
     validation_actions: tuple[str, ...]
     failure_policy: str | None
+    evaluation: object | None
+    evaluation_key_lines: tuple[tuple[str, int], ...]
+    evaluation_admission_key_lines: tuple[tuple[str, int], ...]
+    evaluation_background_key_lines: tuple[tuple[str, int], ...]
     evaluation_mode_present: bool
     evaluation_mode: str | None
     admission_enabled: str | None
     background_enabled: str | None
+    autogen: object | None
+    autogen_key_lines: tuple[tuple[str, int], ...]
+    autogen_pod_controllers_key_lines: tuple[tuple[str, int], ...]
     autogen_controllers: tuple[str, ...]
     match_constraints: object | None
+    match_condition_entry_count: int
+    match_condition_key_lines: tuple[tuple[str, int], ...]
     match_conditions: tuple[MatchCondition, ...]
+    match_image_reference_entry_count: int
+    match_image_reference_key_lines: tuple[tuple[str, int], ...]
     match_image_references: tuple[str, ...]
+    credentials: object | None
+    credentials_key_lines: tuple[tuple[str, int], ...]
     credentials_secrets: tuple[str, ...]
     attestors: object | None
+    validation_entry_count: int
+    validation_key_lines: tuple[tuple[str, int], ...]
     validation_expressions: tuple[str, ...]
+    validation_messages: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -506,7 +543,8 @@ def parse_args() -> argparse.Namespace:
             "Scan raw YAML for first-party GHCR image refs that are not covered "
             "by Kyverno verifyImages rules with the effective "
             "FIRST_PARTY_ENFORCEMENT_MODE action (Audit; the legacy policy is retired "
-            "by PR-C2, not restored — live enforcement is on the merged IVP)."
+            "by PR-C2, not restored; current first-party IVP verification is "
+            "the [Audit]/Ignore canary)."
         )
     )
     parser.add_argument(
@@ -594,6 +632,12 @@ def mapping_fields(node: MappingNode) -> dict[str, tuple[Node, int]]:
         if key is not None:
             fields[key] = (value_node, node_line(value_node))
     return fields
+
+
+def mapping_key_lines(
+    fields: dict[str, tuple[Node, int]]
+) -> tuple[tuple[str, int], ...]:
+    return tuple((key, line) for key, (_node, line) in fields.items())
 
 
 def parse_kustomize_images(
@@ -1130,9 +1174,7 @@ def extract_ivp_from_document(
 
     spec_pair = mapping_field(document_fields, "spec")
     spec_fields = mapping_fields(spec_pair[0]) if spec_pair is not None else {}
-    spec_key_lines = tuple(
-        (key, line) for key, (_node, line) in spec_fields.items()
-    )
+    spec_key_lines = mapping_key_lines(spec_fields)
 
     validation_actions_pair = sequence_field(spec_fields, "validationActions")
     validation_actions = (
@@ -1143,9 +1185,13 @@ def extract_ivp_from_document(
     failure_policy = scalar_field(spec_fields, "failurePolicy")
 
     evaluation_pair = mapping_field(spec_fields, "evaluation")
+    evaluation = (
+        node_to_data(evaluation_pair[0]) if evaluation_pair is not None else None
+    )
     evaluation_fields = (
         mapping_fields(evaluation_pair[0]) if evaluation_pair is not None else {}
     )
+    evaluation_key_lines = mapping_key_lines(evaluation_fields)
     evaluation_mode_pair = evaluation_fields.get("mode")
     evaluation_mode_present = evaluation_mode_pair is not None
     evaluation_mode = scalar_field(evaluation_fields, "mode")
@@ -1153,43 +1199,79 @@ def extract_ivp_from_document(
     admission_fields = (
         mapping_fields(admission_pair[0]) if admission_pair is not None else {}
     )
+    evaluation_admission_key_lines = mapping_key_lines(admission_fields)
     admission_enabled = scalar_field(admission_fields, "enabled")
     background_pair = mapping_field(evaluation_fields, "background")
     background_fields = (
         mapping_fields(background_pair[0]) if background_pair is not None else {}
     )
+    evaluation_background_key_lines = mapping_key_lines(background_fields)
     background_enabled = scalar_field(background_fields, "enabled")
 
     match_constraints = node_to_data(
         spec_fields["matchConstraints"][0]
     ) if "matchConstraints" in spec_fields else None
+    match_conditions_pair = sequence_field(spec_fields, "matchConditions")
+    match_condition_entry_count = (
+        len(match_conditions_pair[0].value)
+        if match_conditions_pair is not None
+        else 0
+    )
+    match_condition_key_lines: list[tuple[str, int]] = []
+    if match_conditions_pair is not None:
+        for entry in match_conditions_pair[0].value:
+            if not isinstance(entry, MappingNode):
+                continue
+            match_condition_key_lines.extend(
+                mapping_key_lines(mapping_fields(entry))
+            )
     match_conditions = extract_match_conditions(spec_fields)
 
     autogen_controllers: tuple[str, ...] = ()
     autogen_pair = mapping_field(spec_fields, "autogen")
+    autogen = node_to_data(autogen_pair[0]) if autogen_pair is not None else None
+    autogen_key_lines: tuple[tuple[str, int], ...] = ()
+    autogen_pod_controllers_key_lines: tuple[tuple[str, int], ...] = ()
     if autogen_pair is not None:
         autogen_fields = mapping_fields(autogen_pair[0])
+        autogen_key_lines = mapping_key_lines(autogen_fields)
         pod_controllers_pair = mapping_field(autogen_fields, "podControllers")
         if pod_controllers_pair is not None:
             pod_controllers_fields = mapping_fields(pod_controllers_pair[0])
+            autogen_pod_controllers_key_lines = mapping_key_lines(
+                pod_controllers_fields
+            )
             autogen_controllers = string_list(
                 pod_controllers_fields.get("controllers", (None, 0))[0]
             )
 
     match_image_references: list[str] = []
+    match_image_reference_key_lines: list[tuple[str, int]] = []
     match_image_references_pair = sequence_field(spec_fields, "matchImageReferences")
+    match_image_reference_entry_count = (
+        len(match_image_references_pair[0].value)
+        if match_image_references_pair is not None
+        else 0
+    )
     if match_image_references_pair is not None:
         for entry in match_image_references_pair[0].value:
             if not isinstance(entry, MappingNode):
                 continue
-            glob = scalar_field(mapping_fields(entry), "glob")
+            entry_fields = mapping_fields(entry)
+            match_image_reference_key_lines.extend(mapping_key_lines(entry_fields))
+            glob = scalar_field(entry_fields, "glob")
             if glob:
                 match_image_references.append(glob)
 
     credentials_secrets: tuple[str, ...] = ()
     credentials_pair = mapping_field(spec_fields, "credentials")
+    credentials = (
+        node_to_data(credentials_pair[0]) if credentials_pair is not None else None
+    )
+    credentials_key_lines: tuple[tuple[str, int], ...] = ()
     if credentials_pair is not None:
         credentials_fields = mapping_fields(credentials_pair[0])
+        credentials_key_lines = mapping_key_lines(credentials_fields)
         credentials_secrets = string_list(
             credentials_fields.get("secrets", (None, 0))[0]
         )
@@ -1199,14 +1281,24 @@ def extract_ivp_from_document(
     ) if "attestors" in spec_fields else None
 
     validation_expressions: list[str] = []
+    validation_messages: list[str] = []
+    validation_key_lines: list[tuple[str, int]] = []
     validations_pair = sequence_field(spec_fields, "validations")
+    validation_entry_count = (
+        len(validations_pair[0].value) if validations_pair is not None else 0
+    )
     if validations_pair is not None:
         for entry in validations_pair[0].value:
             if not isinstance(entry, MappingNode):
                 continue
-            expression = scalar_field(mapping_fields(entry), "expression")
+            validation_fields = mapping_fields(entry)
+            validation_key_lines.extend(mapping_key_lines(validation_fields))
+            expression = scalar_field(validation_fields, "expression")
             if expression is not None:
                 validation_expressions.append(expression)
+            message = scalar_field(validation_fields, "message")
+            if message is not None:
+                validation_messages.append(message)
 
     return ImageValidatingPolicyDocument(
         name=name,
@@ -1215,17 +1307,33 @@ def extract_ivp_from_document(
         spec_key_lines=spec_key_lines,
         validation_actions=validation_actions,
         failure_policy=failure_policy,
+        evaluation=evaluation,
+        evaluation_key_lines=evaluation_key_lines,
+        evaluation_admission_key_lines=evaluation_admission_key_lines,
+        evaluation_background_key_lines=evaluation_background_key_lines,
         evaluation_mode_present=evaluation_mode_present,
         evaluation_mode=evaluation_mode,
         admission_enabled=admission_enabled,
         background_enabled=background_enabled,
+        autogen=autogen,
+        autogen_key_lines=autogen_key_lines,
+        autogen_pod_controllers_key_lines=autogen_pod_controllers_key_lines,
         autogen_controllers=autogen_controllers,
         match_constraints=match_constraints,
+        match_condition_entry_count=match_condition_entry_count,
+        match_condition_key_lines=tuple(match_condition_key_lines),
         match_conditions=match_conditions,
+        match_image_reference_entry_count=match_image_reference_entry_count,
+        match_image_reference_key_lines=tuple(match_image_reference_key_lines),
         match_image_references=tuple(match_image_references),
+        credentials=credentials,
+        credentials_key_lines=credentials_key_lines,
         credentials_secrets=credentials_secrets,
         attestors=attestors,
+        validation_entry_count=validation_entry_count,
+        validation_key_lines=tuple(validation_key_lines),
         validation_expressions=tuple(validation_expressions),
+        validation_messages=tuple(validation_messages),
     )
 
 
@@ -1542,6 +1650,63 @@ def ivp_covers(ivp: ImageValidatingPolicyDocument, image_name: str) -> bool:
     )
 
 
+def current_date() -> date:
+    return date.today()
+
+
+def ivp_is_steady_state() -> bool:
+    return (
+        IVP_VALIDATION_ACTION == IVP_STEADY_STATE_VALIDATION_ACTION
+        and IVP_REQUIRED_FAILURE_POLICY == IVP_STEADY_STATE_FAILURE_POLICY
+    )
+
+
+def ivp_canary_expiry_findings(today: date | None = None) -> list[str]:
+    try:
+        expires = date.fromisoformat(IVP_CANARY_EXPIRES)
+    except ValueError as exc:
+        raise GuardUsageError(
+            f"IVP_CANARY_EXPIRES must be an ISO date string: {IVP_CANARY_EXPIRES!r}"
+        ) from exc
+
+    if ivp_is_steady_state():
+        return []
+
+    today = today if today is not None else current_date()
+    if today < expires:
+        return []
+
+    return [
+        "ImageValidatingPolicy canary expired on "
+        f"{IVP_CANARY_EXPIRES} while the guard posture is "
+        f"[{IVP_VALIDATION_ACTION}]/{IVP_REQUIRED_FAILURE_POLICY}, not the "
+        f"steady-state [{IVP_STEADY_STATE_VALIDATION_ACTION}]/"
+        f"{IVP_STEADY_STATE_FAILURE_POLICY}. Flip verify-first-party and the "
+        "guard constants to [Deny]/Fail, or consciously extend "
+        "IVP_CANARY_EXPIRES with a recorded reason."
+    ]
+
+
+def append_unexpected_nested_key_findings(
+    findings: list[str],
+    ivp: ImageValidatingPolicyDocument,
+    key_lines: tuple[tuple[str, int], ...],
+    allowed_keys: set[str],
+    yaml_path: str,
+    why: str,
+) -> None:
+    for key, line in key_lines:
+        if key in allowed_keys:
+            continue
+        findings.append(
+            f"ImageValidatingPolicy {yaml_path} key is not guard-allowlisted "
+            "and is rejected fail-closed because "
+            f"{why}. Review the field's Kyverno semantics and pin it "
+            "explicitly in this guard before allowing it: "
+            f"{display_path(ivp.path)}:{line} ({ivp.name}) {yaml_path}.{key}"
+        )
+
+
 def find_ivp_violations(
     first_party_refs: list[ImageRef],
     ivps: list[ImageValidatingPolicyDocument],
@@ -1596,6 +1761,89 @@ def find_ivp_violations(
             f"{display_path(ivp.path)}:{line} ({ivp.name}) spec.{key}"
         )
 
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.evaluation_key_lines,
+        {"admission", "background"},
+        "spec.evaluation",
+        "unpinned evaluation fields may silently change whether signature "
+        "verification runs on the admission and background paths",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.evaluation_admission_key_lines,
+        {"enabled"},
+        "spec.evaluation.admission",
+        "unpinned admission evaluation fields may silently weaken or redirect "
+        "admission-path signature verification",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.evaluation_background_key_lines,
+        {"enabled"},
+        "spec.evaluation.background",
+        "unpinned background evaluation fields may silently weaken PolicyReport "
+        "coverage for the canary and steady-state rollout",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.autogen_key_lines,
+        {"podControllers"},
+        "spec.autogen",
+        "unpinned autogen fields may silently change generated controller "
+        "coverage and resurrect Kyverno v1.18.2 autogen-slot hazards",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.autogen_pod_controllers_key_lines,
+        {"controllers"},
+        "spec.autogen.podControllers",
+        "unpinned podControllers fields may silently narrow or broaden which "
+        "controller-created Pods receive signature verification",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.match_condition_key_lines,
+        {"name", "expression"},
+        "spec.matchConditions",
+        "unpinned matchConditions fields may silently alter API-server webhook "
+        "selection for first-party Pod admissions",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.match_image_reference_key_lines,
+        {"glob"},
+        "spec.matchImageReferences",
+        "unpinned matchImageReferences fields may silently broaden which images "
+        "the policy claims to match; expression can bypass the pinned glob set",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.credentials_key_lines,
+        {"secrets"},
+        "spec.credentials",
+        "unpinned credentials fields may silently weaken registry verification "
+        "or credential lookup; allowInsecureRegistry permits plaintext or "
+        "skip-TLS registry fetches",
+    )
+    append_unexpected_nested_key_findings(
+        findings,
+        ivp,
+        ivp.validation_key_lines,
+        {"expression", "message"},
+        "spec.validations",
+        "unpinned validation fields may silently alter signature-verification "
+        "semantics or operator-facing denial evidence",
+    )
+
     if list(ivp.validation_actions) != [IVP_VALIDATION_ACTION]:
         findings.append(
             "ImageValidatingPolicy spec.validationActions must be "
@@ -1608,6 +1856,14 @@ def find_ivp_violations(
         findings.append(
             "ImageValidatingPolicy must set spec.failurePolicy: "
             f"{IVP_REQUIRED_FAILURE_POLICY}: {ivp_ref} (found {found})"
+        )
+
+    if ivp.evaluation != FIRST_PARTY_IVP_EVALUATION:
+        findings.append(
+            "ImageValidatingPolicy spec.evaluation must exactly equal the "
+            "pinned admission/background enabled structure so unpinned "
+            f"evaluation fields cannot change execution paths: {ivp_ref} "
+            f"(found {ivp.evaluation})"
         )
 
     if ivp.evaluation_mode_present and ivp.evaluation_mode != "Kubernetes":
@@ -1641,6 +1897,13 @@ def find_ivp_violations(
             f"(found {found})"
         )
 
+    if ivp.autogen != FIRST_PARTY_IVP_AUTOGEN:
+        findings.append(
+            "ImageValidatingPolicy spec.autogen must exactly equal the pinned "
+            "full default podControllers structure so controller coverage cannot "
+            f"silently drift: {ivp_ref} (found {ivp.autogen})"
+        )
+
     if tuple(ivp.autogen_controllers) != FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS:
         findings.append(
             "ImageValidatingPolicy spec.autogen.podControllers.controllers must "
@@ -1653,6 +1916,13 @@ def find_ivp_violations(
         findings.append(
             "ImageValidatingPolicy matchConstraints must exactly equal the "
             f"unnarrowed Pod CREATE/UPDATE form: {ivp_ref}"
+        )
+
+    if ivp.match_condition_entry_count != 1:
+        findings.append(
+            "ImageValidatingPolicy spec.matchConditions must contain exactly "
+            f"one name/expression entry: {ivp_ref} "
+            f"(found {ivp.match_condition_entry_count} entries)"
         )
 
     if len(ivp.match_conditions) != 1:
@@ -1679,11 +1949,26 @@ def find_ivp_violations(
                 f"{display_path(ivp.path)}:{condition.line} ({ivp.name})"
             )
 
+    if ivp.match_image_reference_entry_count != len(FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES):
+        findings.append(
+            "ImageValidatingPolicy matchImageReferences must contain exactly "
+            "the pinned glob-only entries: "
+            f"{ivp_ref} (found {ivp.match_image_reference_entry_count} entries)"
+        )
+
     if tuple(ivp.match_image_references) != FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES:
         findings.append(
             "ImageValidatingPolicy matchImageReferences must be exactly "
             f"{list(FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES)}: {ivp_ref} "
             f"(found {list(ivp.match_image_references)})"
+        )
+
+    if ivp.credentials != FIRST_PARTY_IVP_CREDENTIALS_STRUCTURE:
+        findings.append(
+            "ImageValidatingPolicy spec.credentials must exactly equal the "
+            "pinned ghcr-pull secrets-only structure so registry TLS and "
+            f"credential-provider semantics cannot silently drift: {ivp_ref} "
+            f"(found {ivp.credentials})"
         )
 
     if tuple(ivp.credentials_secrets) != FIRST_PARTY_IVP_CREDENTIALS:
@@ -1701,6 +1986,13 @@ def find_ivp_violations(
             f"all first-party orgs: {ivp_ref}"
         )
 
+    if ivp.validation_entry_count != 1:
+        findings.append(
+            "ImageValidatingPolicy spec.validations must contain exactly one "
+            f"expression/message entry: {ivp_ref} "
+            f"(found {ivp.validation_entry_count} entries)"
+        )
+
     actual_expressions = [
         normalize_whitespace(expression)
         for expression in ivp.validation_expressions
@@ -1711,6 +2003,13 @@ def find_ivp_violations(
             "verifyImageSignatures expression over "
             "containers/initContainers/ephemeralContainers with per-image "
             f"attestor dispatch for all first-party orgs: {ivp_ref}"
+        )
+
+    if tuple(ivp.validation_messages) != (FIRST_PARTY_IVP_VALIDATION_MESSAGE,):
+        findings.append(
+            "ImageValidatingPolicy validations must carry the pinned failure "
+            "message so operator-facing denial evidence cannot silently drift: "
+            f"{ivp_ref} (found {list(ivp.validation_messages)})"
         )
 
     for org_glob in FIRST_PARTY_ORG_GLOBS:
@@ -1909,6 +2208,7 @@ def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
         enforce_blocks,
         kyverno_default_registry_settings,
     )
+    findings.extend(ivp_canary_expiry_findings())
     findings.extend(find_ivp_violations(first_party_refs, ivps))
     findings.extend(rendered_ivp_count_findings(policies, ivps))
     findings.extend(policy_resource_membership_findings([*policies, *ivps]))

@@ -186,7 +186,7 @@ jobs:
       - name: "Guard self-test: Flux CRD served-version guard bites"
         run: python3 scripts/check-flux-crd-served-versions.selftest.py
 
-      - name: "Guard: first-party images are signature-Enforce-covered"
+      - name: "Guard: first-party images are signature-policy-covered"
         run: python3 scripts/check-image-signature-enforcement.py
 
       - name: "Guard self-test: image-signature-enforcement guard bites"

@@ -7,11 +7,12 @@ scripts/check-image-signature-enforcement.py (rekor.pubkey / ctlog.pubkey /
 Fulcio roots). Those pins are SINGLE-VALUED (Kyverno's rekor.pubkey/ctlog.pubkey
 take one key each), so if Sigstore rotates a key AND our GitHub-Actions cosign
 signing switches to it, a newly-built first-party image's signature would no
-longer verify against the stale pin. ⚠️ These same four pins are byte-identical in
-the three ImageValidatingPolicies, which run at [Deny]/failurePolicy:Fail since #340
-— so a stale pin FAIL-CLOSES first-party pod admission today. (This script inspects
-the legacy ClusterPolicy, which is Audit; that is a proxy for the shared pins, NOT a
-bound on the blast radius.) The residual must be DETECTED.
+longer verify against the stale pin. These same four pins are byte-identical in
+the single merged ImageValidatingPolicy `verify-first-party`, which is deliberately
+non-blocking at [Audit]/failurePolicy:Ignore during the canary; the follow-up
+steady-state target is [Deny]/failurePolicy:Fail. (This script inspects the legacy
+ClusterPolicy, which is Audit; that is a proxy for the shared pins, not a claim
+that first-party admission currently denies.) The residual must be DETECTED.
 
 WHY SIGNATURE-BASED (not pure-TUF): the live Sigstore TUF root already carries
 MORE than one valid tlog/ctlog key at a time (e.g. the 2021 Rekor v1 key our
@@ -19,18 +20,18 @@ signatures currently use AND a newer 2025 Rekor v2 key). "A newer key exists in
 TUF" is therefore NOT drift — our signatures still use the pinned key. The only
 accurate signal is: does a REAL deployed first-party signature still verify
 against the pins? Kyverno's background scan answers exactly that every cycle and
-records it in the enforced policy's PolicyReport, so this detector reads that
+records it in the guard-pinned policy's PolicyReport, so this detector reads that
 ground truth instead of re-implementing verification or second-guessing TUF.
 
 THE MECHANISM: the daily scheduled scan workflow feeds this script
 `kubectl get clusterpolicies.kyverno.io,policyreports.wgpolicyk8s.io,\
 clusterpolicyreports.wgpolicyk8s.io -A -o json` on stdin. It fails the run RED
 (the repo's established zero-red-sweep visibility surface) on EITHER:
-  (a) the enforced ClusterPolicy is MISSING or not Ready — it is verifying
+  (a) the guard-pinned ClusterPolicy is MISSING or not Ready — it is verifying
       nothing, so an absence of `fail` results is meaningless (closes the
       "policy deleted/broken => silent green" blind spot; a WARN on a green run
       is invisible in a zero-red model); OR
-  (b) any enforced-policy result is not `pass`/`skip` (fail-closed allowlist:
+  (b) any guard-pinned policy result is not `pass`/`skip` (fail-closed allowlist:
       `fail` and `error` and any future/unexpected status all count as drift —
       a deployed first-party signature no longer verifies against the pins, so
       the pins must be bumped to the current Sigstore keys or the failing image
@@ -40,8 +41,9 @@ legitimate PASS.
 
 SCOPE (honest): this is REACTIVE — it catches drift once a mismatched image is
 deployed and scanned. It reads the Audit-mode legacy ClusterPolicy, but the pins it
-checks are the same ones enforcing at [Deny]/Fail on the IVPs — so treat a hit as
-fail-closed-imminent, not a non-destructive warning. Truly
+checks are the same ones in the current non-blocking `verify-first-party` IVP canary
+and the planned [Deny]/Fail follow-up — so treat a hit as a canary/follow-up blocker,
+not a non-destructive warning. Truly
 PROACTIVE (catch a rotation before a new-key image is ever deployed) belongs to
 the source repos' CI verify-at-ingest (supply-chain doctrine) — booked, not here.
 
@@ -68,7 +70,7 @@ SAFE_RESULTS = {"pass", "skip"}
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Fail if the enforced first-party signature policy is missing/not "
+            "Fail if the guard-pinned first-party signature policy is missing/not "
             "Ready, or if any first-party image no longer verifies against the "
             "pinned Sigstore keys (offline-verification drift)."
         )

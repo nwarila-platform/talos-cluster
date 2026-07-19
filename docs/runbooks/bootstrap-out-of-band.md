@@ -303,13 +303,32 @@ availability failures that block legitimate cluster work.
 
 Prefer the narrowest reversible action that restores admission:
 
-1. Patch image verification back to Audit:
+1. For a first-party IVP incident, suspend the policy reconciler and delete the
+   merged IVP. The current canary is already `[Audit]`/`Ignore`, so setting the
+   IVP to Audit is a no-op rather than a mitigation.
 
    ```bash
-   kubectl patch clusterpolicy <image-policy-name> \
-     --type=merge \
-     -p '{"spec":{"validationFailureAction":"Audit"}}'
+   flux suspend kustomization kyverno-policies -n flux-system
+   kubectl delete imagevalidatingpolicy verify-first-party
    ```
+
+   The `flux` CLI is NOT installed on every operator workstation (it is absent on
+   `kasm-nuc01`). Use the kubectl equivalent when it is missing — suspending is a
+   field write on the Kustomization, so it needs no extra tooling:
+
+   ```bash
+   kubectl patch kustomization kyverno-policies -n flux-system \
+     --type=merge -p '{"spec":{"suspend":true}}'
+   kubectl delete imagevalidatingpolicy verify-first-party
+   ```
+
+   Suspend BEFORE deleting: `kyverno-policies` reconciles every 10m with
+   `prune: true`, so deleting the policy without suspending lets Flux re-apply it
+   and the incident resumes.
+
+   For a legacy `verifyImages` incident, delete
+   `clusterpolicy/verify-image-signatures-enforced` instead after suspending the
+   same Kustomization.
 
 2. If the webhook itself is unavailable or blocks the patch, make the webhook
    non-blocking:
@@ -339,28 +358,30 @@ Do not leave the cluster in a silent permissive state after the repair window.
 ## Rekor And Fulcio Availability
 
 Keyless verification requires the trust material needed to validate the
-certificate chain and Rekor inclusion proof. A verification failure must fail
-closed for normal workloads; it must not silently admit unverified images.
+certificate chain and Rekor inclusion proof. In the steady-state follow-up
+posture, a verification failure must fail closed for normal workloads; it must
+not silently admit unverified images.
 
 > **Updated 2026-07-18.** The online Rekor/Fulcio/CT/TUF dependency this section
 > was written against is no longer on the admission path: the first-party
 > attestors verify OFFLINE against pinned Sigstore keys (#333), which is what
 > removed the 2026-07-14 brick vector. A Sigstore *outage* therefore no longer
-> blocks first-party admission — but a *stale pin* now does, because those pins
-> are enforced at `[Deny]`/`Fail` on the per-org ImageValidatingPolicies (#340).
-> Live enforcement is on the IVPs, not the legacy `verify-image-signatures-enforced`
-> ClusterPolicy, which is Audit and retired by PR-C2.
+> blocks first-party admission. A *stale pin* is visible in the current
+> `verify-first-party` canary, which is deliberately non-blocking at
+> `[Audit]`/`Ignore`; it becomes fail-closed only after the follow-up PR flips the
+> single merged IVP to `[Deny]`/`Fail`.
 
-That fail-closed posture is acceptable only because break-glass remains
+That steady-state fail-closed posture is acceptable only because break-glass remains
 out-of-band and ARC/Zot stay excluded. **The outage scenario below is retired:**
 with offline pins (#333) a public-good Sigstore outage no longer prevents
 first-party admission, so there is no Sigstore-availability reason to reach for
-break-glass. The live failure modes that CAN block admission are (a) a STALE PIN
-after a Sigstore key rotation, and (b) the Kyverno v1.18.2 IVP handoff defect that
-intermittently yields `policy not evaluated` (see ADR-0027's 2026-07-18 amendment).
-For either, break-glass means suspending the `kyverno-policies` Kustomization or
-setting the IVPs to `[Audit]` — NOT restoring the legacy ClusterPolicy, which is
-Audit and retired by PR-C2.
+break-glass. The failure modes that can block admission after the follow-up flip
+are (a) a STALE PIN after a Sigstore key rotation, and (b) the Kyverno v1.18.2 IVP
+handoff defect that intermittently yields `policy not evaluated` (see ADR-0027's
+2026-07-18 amendment). For either, break-glass means suspending the
+`kyverno-policies` Kustomization and deleting
+`ImageValidatingPolicy/verify-first-party` — NOT restoring the legacy
+ClusterPolicy, which is Audit and retired by PR-C2.
 
 Reducing this availability exposure is a separate hardening task: pin the
 Sigstore TUF root, cache Rekor proofs where supported by the chosen verifier
@@ -374,15 +395,18 @@ The bootstrap path is complete only when all of these are true and recorded:
 - Talos control plane is Ready from the workstation.
 - ARC scale sets are online, ephemeral, and running rootless Podman.
 - Zot serves runtime manifests plus signature and attestation objects by digest.
-- Kyverno starts in Audit with `failurePolicy=Ignore`. (Rebuild-order guidance:
-  this is the intended *bootstrap* sequence. It is not the steady state — on the
-  live cluster the first-party IVPs run at `[Deny]`/`Fail`.)
+- Kyverno starts with the single merged `verify-first-party` IVP in
+  `[Audit]`/`Ignore`. (Rebuild-order guidance: this is the current deliberate
+  non-blocking canary, not the steady state; the follow-up PR flips it to
+  `[Deny]`/`Fail`.)
 - The ARC namespace and `zot-system` remain excluded from image verification.
 - Base and gate image digests exist in GHCR, mirror through Zot, and verify
   against exact signer workflow identities.
-- Kyverno is flipped to Enforce only after those digests exist and are verified.
-- A known-good signed workload admits under Enforce.
-- A known-bad or wrong-identity workload is denied under Enforce.
+- The follow-up first-party IVP flip to `[Deny]`/`Fail` happens only after those
+  digests exist and are verified.
+- A known-good signed workload admits under the follow-up `[Deny]`/`Fail` posture.
+- A known-bad or wrong-identity workload is denied under the follow-up
+  `[Deny]`/`Fail` posture.
 - Break-glass has been tested from the workstation kubeconfig.
 - No ARC, Zot, or cluster secret bootstrap step depended on Vault-backed ESO or
   on an in-cluster runner before those services were already live.
