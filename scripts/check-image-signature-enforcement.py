@@ -30,7 +30,7 @@ Deliberate scope:
 - Require the first-party ``verifyImages`` policy to carry the exact
   guard-generated first-party Pod matchConditions expression.
 - Discover the single merged ``ImageValidatingPolicy`` (IVP) resource that
-  carries first-party signature enforcement on the ADMISSION path and require it
+  carries first-party signature verification on the ADMISSION path and require it
   to pin the canonical offline attestors, admission+background evaluation,
   first-party CEL scoping, all org matchImageReferences globs, explicit autogen
   coverage, and the effective IVP_VALIDATION_ACTION. See the IVP constants block
@@ -114,11 +114,12 @@ CANONICAL_FIRST_PARTY_ATTESTORS = {
 # CTFE_PUBKEY_PEM; ignoreTlog/ignoreSCT stay false so both log proofs are checked
 # offline. These MUST stay byte-identical to the PEMs inlined in
 # verify-image-signatures-enforced.yaml (this guard exact-matches them). Rotation is
-# watched by scripts/check-sigstore-pin-verification.py (#334, BUILT and CI-wired). Note
-# it inspects the legacy ClusterPolicy only — a sound proxy, since these same four pins
-# are byte-identical in the three enforcing IVPs. There is NO pending Enforce flip: the
-# legacy policy is retired by PR-C2. Sources: Sigstore TUF trusted_root targets
-# rekor.pub / ctfe_2022.pub / fulcio_v1.crt.pem + fulcio_intermediate_v1.crt.pem.
+# watched by scripts/check-sigstore-pin-verification.py (#334, BUILT and
+# CI-wired). Note it inspects the legacy ClusterPolicy only — a sound proxy,
+# since these same four pins are byte-identical in the merged verify-first-party
+# IVP. There is NO pending Enforce flip for the legacy policy: it is retired by
+# PR-C2. Sources: Sigstore TUF trusted_root targets rekor.pub / ctfe_2022.pub /
+# fulcio_v1.crt.pem + fulcio_intermediate_v1.crt.pem.
 FULCIO_ROOTS_PEM = "\n".join([
     '-----BEGIN CERTIFICATE-----',
     'MIIB9zCCAXygAwIBAgIUALZNAPFdxHPwjeDloDwyYChAO/4wCgYIKoZIzj0EAwMw',
@@ -168,11 +169,13 @@ REKOR_URL = "https://rekor.sigstore.dev"
 # pod creation (Vault + the hwg tenant) on 2026-07-14 is REMOVED: the canonical attestors
 # above verify keyless signatures OFFLINE against the pinned Sigstore keys (rekor.pubkey +
 # ctlog.pubkey + Fulcio roots), no admission-path online GET. This LEGACY ClusterPolicy's
-# rules stay non-blocking (failureAction Audit + failurePolicy Ignore) permanently: since
-# #340, live first-party enforcement runs on the merged ImageValidatingPolicy resource at
-# [Deny]/failurePolicy:Fail, NOT here. This guard fully verifies the rule SHAPE (canonical
-# offline attestors, matchConditions, first-party scoping, background, exempt-ns, required,
-# no skip/exclude/preconditions) and pins the offline material.
+# rules stay non-blocking (failureAction Audit + failurePolicy Ignore) permanently: live
+# first-party enforcement moved to the merged ImageValidatingPolicy, whose steady-state
+# posture is [Deny]/failurePolicy:Fail. This merge-cutover canary transiently pins that
+# IVP at [Audit]/failurePolicy:Ignore; live first-party enforcement is NOT here.
+# This guard fully verifies the rule SHAPE (canonical offline attestors,
+# matchConditions, first-party scoping, background, exempt-ns, required, no
+# skip/exclude/preconditions) and pins the offline material.
 # ⚠️ DO NOT flip the two constants below to Enforce/Fail. This header previously instructed
 # exactly that; re-arming the legacy verifyImages path is what BRICKED the cluster in #335
 # (its mutating image-verification never runs under fine-grained webhooks, so every signed
@@ -203,7 +206,7 @@ YAML_SUFFIXES = {".yaml", ".yml"}
 KUSTOMIZATION_FILENAMES = ("kustomization.yaml", "kustomization.yml")
 KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 
-# ---- ImageValidatingPolicy (IVP) first-party admission-path enforcement -------
+# ---- ImageValidatingPolicy (IVP) first-party admission-path verification ------
 # The legacy verifyImages ClusterPolicy (verify-image-signatures-enforced) CANNOT
 # verify first-party images on the ADMISSION path: a Kyverno v1.18.2 dispatch bug
 # (legacy verifyImages + webhookConfiguration.matchConditions miscategorizes the
@@ -211,8 +214,8 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # pods unannotated, so at Enforce the validating webhook DENIES every signed
 # first-party pod -> the #335 brick of 2026-07-17 (a DIFFERENT defect from the
 # 2026-07-14 brick, which was an online Rekor query on the admission hot path).
-# First-party signature
-# enforcement therefore migrated to an ``ImageValidatingPolicy`` resource, but
+# The first-party admission-path mechanism therefore migrated to an
+# ``ImageValidatingPolicy`` resource, but
 # Kyverno v1.18.2 IVP still uses a mutate->annotate->validate handoff. The
 # mutating webhook does the cosign signature-verification work and writes
 # ``kyverno.io/image-verification-outcomes``; on Kyverno v1.18.2 the validating
@@ -220,13 +223,16 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # the result read back from that annotation. At
 # pkg/cel/policies/ivpol/engine/engine.go:356, "policy not evaluated" means the
 # annotation has no entry keyed by this policy name, causing RuleFail and a deny
-# at the IVP's fail-closed setting. That is the same bug class as legacy
-# verifyImages, with a different annotation key suffix
+# at the IVP's steady-state fail-closed setting; during this Audit/Ignore canary
+# it is non-blocking telemetry. That is the same bug class as legacy verifyImages,
+# with a different annotation key suffix
 # (``image-verification-outcomes`` vs ``verify-images``), so the migration did
 # not escape the class.
 #
-# This guard pins the single merged IVP shape used for first-party fail-closed
-# enforcement: exactly one IVP in source and in the rendered policy set; offline
+# This guard pins the single merged IVP shape used for first-party admission-path
+# verification. Its steady-state target is fail-closed enforcement ([Deny]/Fail),
+# but the current constants intentionally pin the temporary Audit/Ignore canary:
+# exactly one IVP in source and in the rendered policy set; offline
 # pins byte-identical to FULCIO_ROOTS_PEM/REKOR_PUBKEY_PEM/CTFE_PUBKEY_PEM; the
 # admission path enabled; first-party CEL scoping (=> a scoped fine-grained
 # webhook, never the shared cluster-wide fail webhook that would brick all pod
@@ -240,9 +246,9 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # until the retire-legacy PR removes it. See cp1_offline_verify_decision.
 IVP_API_VERSION_PREFIX = "policies.kyverno.io/"
 IVP_KIND = "ImageValidatingPolicy"
-# First-party signatures are ENFORCED: unsigned/mis-signed first-party pods are
-# DENIED at admission, fail-closed. Mode-parameterized so the posture stays a
-# single-constant source of truth the YAML must match (a half-flip fails CI).
+# The IVP posture stays a constant-pair source of truth the YAML must match
+# exactly, so a half-flip fails CI. The steady-state target is [Deny]/Fail; the
+# current value is the temporary merge-cutover canary at [Audit]/Ignore.
 IVP_VALIDATION_ACTION = "Audit"  # CANARY (PR-2 live-verifies the merged policy); PR-3 flips to "Deny"
 IVP_REQUIRED_FAILURE_POLICY = "Ignore"  # CANARY (PR-2); PR-3 flips to "Fail"
 # The unnarrowed Pod CREATE/UPDATE match (node_to_data yields raw scalar strings).
@@ -287,6 +293,18 @@ FIRST_PARTY_IVP_ATTESTOR_ORDER = (
     "ghcr.io/the-hero-wars-guys/*",
     "ghcr.io/nwarila-platform/*",
     "ghcr.io/nwarila/*",
+)
+FIRST_PARTY_IVP_ALLOWED_SPEC_KEYS = (
+    "validationActions",
+    "failurePolicy",
+    "evaluation",
+    "autogen",
+    "matchConstraints",
+    "matchConditions",
+    "matchImageReferences",
+    "credentials",
+    "attestors",
+    "validations",
 )
 
 
@@ -345,8 +363,11 @@ class ImageValidatingPolicyDocument:
     name: str
     path: Path
     line: int
+    spec_key_lines: tuple[tuple[str, int], ...]
     validation_actions: tuple[str, ...]
     failure_policy: str | None
+    evaluation_mode_present: bool
+    evaluation_mode: str | None
     admission_enabled: str | None
     background_enabled: str | None
     autogen_controllers: tuple[str, ...]
@@ -1109,6 +1130,9 @@ def extract_ivp_from_document(
 
     spec_pair = mapping_field(document_fields, "spec")
     spec_fields = mapping_fields(spec_pair[0]) if spec_pair is not None else {}
+    spec_key_lines = tuple(
+        (key, line) for key, (_node, line) in spec_fields.items()
+    )
 
     validation_actions_pair = sequence_field(spec_fields, "validationActions")
     validation_actions = (
@@ -1122,6 +1146,9 @@ def extract_ivp_from_document(
     evaluation_fields = (
         mapping_fields(evaluation_pair[0]) if evaluation_pair is not None else {}
     )
+    evaluation_mode_pair = evaluation_fields.get("mode")
+    evaluation_mode_present = evaluation_mode_pair is not None
+    evaluation_mode = scalar_field(evaluation_fields, "mode")
     admission_pair = mapping_field(evaluation_fields, "admission")
     admission_fields = (
         mapping_fields(admission_pair[0]) if admission_pair is not None else {}
@@ -1185,8 +1212,11 @@ def extract_ivp_from_document(
         name=name,
         path=path,
         line=node_line(document),
+        spec_key_lines=spec_key_lines,
         validation_actions=validation_actions,
         failure_policy=failure_policy,
+        evaluation_mode_present=evaluation_mode_present,
+        evaluation_mode=evaluation_mode,
         admission_enabled=admission_enabled,
         background_enabled=background_enabled,
         autogen_controllers=autogen_controllers,
@@ -1553,6 +1583,19 @@ def find_ivp_violations(
 
     ivp_ref = f"{display_path(ivp.path)}:{ivp.line} ({ivp.name})"
 
+    allowed_spec_keys = set(FIRST_PARTY_IVP_ALLOWED_SPEC_KEYS)
+    for key, line in ivp.spec_key_lines:
+        if key in allowed_spec_keys:
+            continue
+        findings.append(
+            "ImageValidatingPolicy spec key is not guard-allowlisted and is "
+            "rejected fail-closed because unpinned IVP spec fields may "
+            "silently alter signature-verification semantics. Review the "
+            "field's Kyverno semantics and pin it explicitly in this guard "
+            "before allowing it: "
+            f"{display_path(ivp.path)}:{line} ({ivp.name}) spec.{key}"
+        )
+
     if list(ivp.validation_actions) != [IVP_VALIDATION_ACTION]:
         findings.append(
             "ImageValidatingPolicy spec.validationActions must be "
@@ -1565,6 +1608,14 @@ def find_ivp_violations(
         findings.append(
             "ImageValidatingPolicy must set spec.failurePolicy: "
             f"{IVP_REQUIRED_FAILURE_POLICY}: {ivp_ref} (found {found})"
+        )
+
+    if ivp.evaluation_mode_present and ivp.evaluation_mode != "Kubernetes":
+        found = ivp.evaluation_mode if ivp.evaluation_mode is not None else "<non-scalar>"
+        findings.append(
+            "ImageValidatingPolicy spec.evaluation.mode must be absent or "
+            f"Kubernetes so the policy remains on the admission path: {ivp_ref} "
+            f"(found {found})"
         )
 
     if ivp.admission_enabled != "true":
@@ -1702,6 +1753,11 @@ def rendered_ivps_from_kustomization_directory(
     findings: list[str] = []
     for resource in kustomization_resource_entries(kustomization_path):
         if "://" in resource:
+            findings.append(
+                "rendered Kyverno policy set cannot be verified because "
+                "kustomization references remote resource: "
+                f"{display_path(kustomization_path)} -> {resource}"
+            )
             continue
         target = (directory / resource).resolve()
         if target.is_dir():

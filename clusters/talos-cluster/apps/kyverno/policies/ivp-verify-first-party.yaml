@@ -29,14 +29,16 @@
 #
 # The matchConditions expression is load-bearing. Kyverno's fine-grained webhook
 # selection keys off validConditions / MatchPolicy:Exact / custom timeout, not
-# matchImageReferences. Removing matchConditions would aggregate this Fail policy
-# into the shared cluster-wide Fail webhook (`validate.kyverno.svc-fail`), which
-# already has rules=8 in the live cluster.
+# matchImageReferences. Removing matchConditions would aggregate this policy into
+# the shared cluster-wide webhook for its failurePolicy. At the steady-state Fail
+# posture, that is the cluster-wide brick surface
+# (`validate.kyverno.svc-fail`), which already has rules=8 in the live cluster.
 #
 # Credential coupling is intentional for this CP-1 merge: ghcr-pull now applies
-# to all first-party fetches, so an expired credential denies all three orgs
-# rather than only the hwg org. CP-3 narrows this with per-repository scoped
-# credentials.
+# to all first-party fetches. An expired credential affects all three orgs rather
+# than only the hwg org: during this canary it is non-blocking audit telemetry;
+# at the steady-state Fail posture it denies all three. CP-3 narrows this with
+# per-repository scoped credentials.
 #
 # The validation CEL is copied from the Kyverno compiler-clean scratch artifact.
 # Its ternary else branch is a maintenance hazard: a future fourth org added to

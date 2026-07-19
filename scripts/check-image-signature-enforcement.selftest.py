@@ -255,6 +255,7 @@ def ivp_yaml(
     policy_name: str | None = None,
     validation_actions: tuple[str, ...] | None = None,
     failure_policy: str | None | object = _UNSET,
+    evaluation_mode: str | None = None,
     admission_enabled: str | None = "true",
     background_enabled: str | None = "true",
     match_constraints_operations: tuple[str, ...] = ("CREATE", "UPDATE"),
@@ -265,6 +266,7 @@ def ivp_yaml(
     match_image_references: tuple[str, ...] | None = None,
     attestor_overrides: dict[str, dict[str, object]] | None = None,
     credentials: tuple[str, ...] | None = None,
+    extra_spec_blocks: tuple[str, ...] = (),
     validation_expression: str | None = None,
 ) -> str:
     policy_name = policy_name if policy_name is not None else guard.FIRST_PARTY_IVP_POLICY_NAME
@@ -314,6 +316,8 @@ def ivp_yaml(
     if failure_policy is not None:
         lines.append(f"  failurePolicy: {failure_policy}")
     lines.append("  evaluation:")
+    if evaluation_mode is not None:
+        lines.append(f"    mode: {evaluation_mode}")
     lines.append("    admission:")
     if admission_enabled is not None:
         lines.append(f"      enabled: {admission_enabled}")
@@ -357,6 +361,8 @@ def ivp_yaml(
         lines.append("    secrets:")
         for secret in credentials:
             lines.append(f"      - {secret}")
+    for block in extra_spec_blocks:
+        lines.extend(_indent_block(textwrap.dedent(block).strip(), 2))
     lines.append("  attestors:")
     for org_glob in guard.FIRST_PARTY_IVP_ATTESTOR_ORDER:
         identity = guard.CANONICAL_FIRST_PARTY_ATTESTORS[org_glob]
@@ -1074,6 +1080,62 @@ def ivp_background_disabled_fixture(root: Path) -> None:
     )
 
 
+def ivp_images_extractors_shadow_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            extra_spec_blocks=(
+                """
+                images:
+                  - name: containers
+                    expression: "[]"
+                  - name: initContainers
+                    expression: "[]"
+                  - name: ephemeralContainers
+                    expression: "[]"
+                """,
+            ),
+        ),
+    )
+
+
+def ivp_evaluation_mode_json_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root, ivp_overrides=ivp_over(NWARILA_ORG, evaluation_mode="JSON")
+    )
+
+
+def ivp_validationconfigurations_required_false_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            extra_spec_blocks=(
+                """
+                validationConfigurations:
+                  required: false
+                """,
+            ),
+        ),
+    )
+
+
+def ivp_unknown_spec_key_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            extra_spec_blocks=(
+                """
+                webhookConfiguration:
+                  failurePolicy: Ignore
+                """,
+            ),
+        ),
+    )
+
+
 def ivp_matchconstraints_narrowed_fixture(root: Path) -> None:
     write_real_shape_fixture(
         root,
@@ -1233,6 +1295,19 @@ def ivp_second_policy_fixture(root: Path) -> None:
             "verify-image-signatures-enforced.yaml",
             ivp_filename(),
             "second-ivp.yaml",
+        ),
+    )
+
+
+def ivp_remote_kustomization_resource_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            ivp_filename(),
+            "https://example.invalid/kyverno/remote-ivp.yaml",
         ),
     )
 
@@ -1773,6 +1848,17 @@ def main() -> int:
             ("source policy files must contain exactly one ImageValidatingPolicy",),
         ),
         run_case(
+            "ivp-remote-kustomization-resource",
+            1,
+            "IVP1 remote kustomization resource is unverifiable and bites",
+            ivp_remote_kustomization_resource_fixture,
+            (
+                "kustomization references remote resource",
+                "policies/kustomization.yaml -> "
+                "https://example.invalid/kyverno/remote-ivp.yaml",
+            ),
+        ),
+        run_case(
             "ivp-validation-action-audit",
             1,
             "IVP2 non-configured validationActions value bites",
@@ -1809,6 +1895,47 @@ def main() -> int:
             "IVP3 disabling background (PolicyReports) bites",
             ivp_background_disabled_fixture,
             ("spec.evaluation.background.enabled: true",),
+        ),
+        run_case(
+            "ivp-images-extractors-shadow",
+            1,
+            "IVP3 spec.images extractor shadowing bites",
+            ivp_images_extractors_shadow_fixture,
+            (
+                "not guard-allowlisted",
+                "silently alter signature-verification semantics",
+                "pin it explicitly in this guard",
+                "spec.images",
+            ),
+        ),
+        run_case(
+            "ivp-evaluation-mode-json",
+            1,
+            "IVP3 evaluation.mode JSON leaves admission path",
+            ivp_evaluation_mode_json_fixture,
+            ("spec.evaluation.mode must be absent or Kubernetes", "found JSON"),
+        ),
+        run_case(
+            "ivp-validationconfigurations-required-false",
+            1,
+            "IVP3 validationConfigurations.required:false bites",
+            ivp_validationconfigurations_required_false_fixture,
+            (
+                "not guard-allowlisted",
+                "silently alter signature-verification semantics",
+                "spec.validationConfigurations",
+            ),
+        ),
+        run_case(
+            "ivp-unknown-spec-key-webhookconfiguration",
+            1,
+            "IVP3 arbitrary unknown spec key bites",
+            ivp_unknown_spec_key_fixture,
+            (
+                "not guard-allowlisted",
+                "pin it explicitly in this guard",
+                "spec.webhookConfiguration",
+            ),
         ),
         run_case(
             "ivp-matchconstraints-narrowed",
