@@ -18,10 +18,9 @@
 > DECISION (first-party images fail closed at admission) still holds, but
 > enforcement no longer runs on the `verify-image-signatures-enforced`
 > ClusterPolicy described here — it runs on a single merged
-> `ImageValidatingPolicy/verify-first-party`, which is TRANSIENTLY at
-> `[Audit]`/`Ignore` for the merge-cutover canary. The TL;DR and Consequences
-> sections below are written in the present tense and describe the ORIGINAL
-> mechanism; treat them as historical.
+> `ImageValidatingPolicy/verify-first-party`, which now enforces at
+> `[Deny]`/`Fail`. The TL;DR and Consequences sections below are written in the
+> present tense and describe the ORIGINAL mechanism; treat them as historical.
 
 First-party image verification is split out of the Audit-only Kyverno
 `verify-image-signatures` ClusterPolicy into
@@ -349,19 +348,19 @@ ABOVE) is **no longer the enforcing mechanism**.
 The second defect is structural and unfixed upstream, so first-party enforcement moved to one merged
 `ImageValidatingPolicy`, `verify-first-party`. The merge was forced by two Kyverno v1.18.2 IVP defects:
 annotation clobber between per-org outcome entries and autogen slot collision under the shared
-`defaults`/`cronjobs` slots. The merged IVP is currently live as a non-blocking merge-cutover canary at
-`validationActions: [Audit]` + `failurePolicy: Ignore`; the steady-state target remains
-`validationActions: [Deny]` + `failurePolicy: Fail` in the follow-up PR. The ClusterPolicy stays
+`defaults`/`cronjobs` slots. The merged IVP completed its non-blocking merge-cutover canary: the live
+Audit run showed all-pass PolicyReports with zero rule errors against real first-party images, which is
+the real acceptance test because Kyverno's policy-validation webhook only warns on CEL compile errors.
+The merged IVP is now at `validationActions: [Deny]` + `failurePolicy: Fail`. The ClusterPolicy stays
 non-blocking (Audit) and is retired by PR-C2.
 
 **Known defect in the IVP mechanism (do not read this ADR as "solved"):** IVP on Kyverno v1.18.2 uses a
 mutate→annotate→validate handoff (the mutating webhook does the cosign work and writes
 `kyverno.io/image-verification-outcomes`; the validating webhook evaluates the result read back). A missing
-entry yields `"policy not evaluated"` ⇒ RuleFail. At the steady-state [Deny]/Fail posture this denies; during
-the current [Audit]/Ignore canary it is non-blocking telemetry. On 2026-07-18 this intermittently
-false-denied a genuinely signed image in the hwg tenant. The fail direction is CLOSED once the steady-state
-posture is restored, so this ADR's security property still depends on that follow-up; the canary harm is
-limited to availability telemetry. Root cause is under diagnosis. As of 2026-07-18 no
+entry yields `"policy not evaluated"` ⇒ RuleFail. At the current [Deny]/Fail posture this denies. On
+2026-07-18 this intermittently false-denied a genuinely signed image in the hwg tenant during the canary.
+The fail direction is now CLOSED, so the ADR's security property is restored and the residual is current
+availability risk. Root cause is under diagnosis. As of 2026-07-18 no
 Kyverno release carries even the related status-controller fix (PR #15754 is merged to
 main only — `git tag --contains 7b31196` returns zero tags, and release-1.18 branched
 before it), so an upgrade is not an available remedy today.

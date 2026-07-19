@@ -30,15 +30,14 @@
 # The matchConditions expression is load-bearing. Kyverno's fine-grained webhook
 # selection keys off validConditions / MatchPolicy:Exact / custom timeout, not
 # matchImageReferences. Removing matchConditions would aggregate this policy into
-# the shared cluster-wide webhook for its failurePolicy. At the steady-state Fail
-# posture, that is the cluster-wide brick surface
-# (`validate.kyverno.svc-fail`), which already has rules=8 in the live cluster.
+# the shared cluster-wide webhook for its current Fail posture. That is the
+# cluster-wide brick surface (`validate.kyverno.svc-fail`), which already has
+# rules=8 in the live cluster.
 #
 # Credential coupling is intentional for this CP-1 merge: ghcr-pull now applies
 # to all first-party fetches. An expired credential affects all three orgs rather
-# than only the hwg org: during this canary it is non-blocking audit telemetry;
-# at the steady-state Fail posture it denies all three. CP-3 narrows this with
-# per-repository scoped credentials.
+# than only the hwg org: at the current Fail posture it denies all three. CP-3
+# narrows this with per-repository scoped credentials.
 #
 # The validation CEL is copied from the Kyverno compiler-clean scratch artifact.
 # Its ternary else branch is a maintenance hazard: a future fourth org added to
@@ -49,14 +48,13 @@
 # present as a runtime dead fallback (cosign's opts builder requires a non-empty
 # url even when rekorPubKey is pinned) -> no online Rekor/Fulcio/CT/TUF call on
 # the admission path.
-# POSTURE THIS STEP: validationActions [Audit] + failurePolicy Ignore -- fully
-# NON-BLOCKING. This is the deliberate canary step of the merge cutover: it proves
-# the merged CEL compiles and verifies correctly against real first-party images
-# (Kyverno's policy-validation webhook only WARNS on compile errors, so a live
-# Audit run -- not webhook acceptance -- is the real acceptance test) while being
-# structurally unable to deny anything. The follow-up PR flips this policy to
-# [Deny] + failurePolicy Fail, restoring fail-closed enforcement; the CI guard
-# constants IVP_VALIDATION_ACTION / IVP_REQUIRED_FAILURE_POLICY move in lockstep.
+# POSTURE THIS STEP: validationActions [Deny] + failurePolicy Fail -- fail-closed
+# enforcement. Unsigned, mis-signed, or unverifiable first-party pods are DENIED
+# at admission. The Audit canary step is complete: the live run showed all-pass
+# PolicyReports with zero rule errors against real first-party images, which is
+# the real acceptance test because Kyverno's policy-validation webhook only WARNS
+# on CEL compile errors. The CI guard constants IVP_VALIDATION_ACTION /
+# IVP_REQUIRED_FAILURE_POLICY move in lockstep with this posture.
 # Pins mirror scripts/check-image-signature-enforcement.py. See cp1_offline_verify_decision.
 apiVersion: policies.kyverno.io/v1beta1
 kind: ImageValidatingPolicy
@@ -67,8 +65,8 @@ metadata:
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/severity: high
 spec:
-  validationActions: [Audit]
-  failurePolicy: Ignore
+  validationActions: [Deny]
+  failurePolicy: Fail
   evaluation:
     admission:
       enabled: true

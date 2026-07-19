@@ -175,8 +175,8 @@ REKOR_URL = "https://rekor.sigstore.dev"
 # ctlog.pubkey + Fulcio roots), no admission-path online GET. This LEGACY ClusterPolicy's
 # rules stay non-blocking (failureAction Audit + failurePolicy Ignore) permanently.
 # First-party admission verification moved to the merged ImageValidatingPolicy,
-# currently canaried at [Audit]/failurePolicy:Ignore; its steady-state follow-up
-# posture is [Deny]/failurePolicy:Fail. First-party blocking enforcement is NOT here.
+# which now enforces [Deny]/failurePolicy:Fail. First-party blocking enforcement
+# is NOT here.
 # This guard fully verifies the rule SHAPE (canonical offline attestors,
 # matchConditions, first-party scoping, background, exempt-ns, required, no
 # skip/exclude/preconditions) and pins the offline material.
@@ -240,16 +240,14 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # the result read back from that annotation. At
 # pkg/cel/policies/ivpol/engine/engine.go:356, "policy not evaluated" means the
 # annotation has no entry keyed by this policy name, causing RuleFail and a deny
-# at the IVP's steady-state fail-closed setting; during this Audit/Ignore canary
-# it is non-blocking telemetry. That is the same bug class as legacy verifyImages,
-# with a different annotation key suffix
+# at the current fail-closed IVP setting. That is the same bug class as legacy
+# verifyImages, with a different annotation key suffix
 # (``image-verification-outcomes`` vs ``verify-images``), so the migration did
 # not escape the class.
 #
 # This guard pins the single merged IVP shape used for first-party admission-path
-# verification. Its steady-state target is fail-closed enforcement ([Deny]/Fail),
-# but the current constants intentionally pin the temporary Audit/Ignore canary:
-# exactly one IVP in source and in the rendered policy set; offline
+# verification. The current steady state is fail-closed enforcement
+# ([Deny]/Fail): exactly one IVP in source and in the rendered policy set; offline
 # pins byte-identical to FULCIO_ROOTS_PEM/REKOR_PUBKEY_PEM/CTFE_PUBKEY_PEM; the
 # admission path enabled; first-party CEL scoping (=> a scoped fine-grained
 # webhook, never the shared cluster-wide fail webhook that would brick all pod
@@ -264,13 +262,11 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 IVP_API_VERSION = "policies.kyverno.io/v1beta1"
 IVP_KIND = "ImageValidatingPolicy"
 # The IVP posture stays a constant-pair source of truth the YAML must match
-# exactly, so a half-flip fails CI. The steady-state target is [Deny]/Fail; the
-# current value is the temporary merge-cutover canary at [Audit]/Ignore.
-IVP_VALIDATION_ACTION = "Audit"  # CANARY (PR-2 live-verifies the merged policy); PR-3 flips to "Deny"
-IVP_REQUIRED_FAILURE_POLICY = "Ignore"  # CANARY (PR-2); PR-3 flips to "Fail"
-# Forgetting this canary should turn CI red, not leave first-party admission
-# non-blocking forever. Once the IVP is in steady state ([Deny]/Fail), this date
-# is inert and cannot break CI after the canary is over.
+# exactly, so a half-flip fails CI. Current steady state is [Deny]/Fail.
+IVP_VALIDATION_ACTION = "Deny"  # steady-state IVP admission enforcement
+IVP_REQUIRED_FAILURE_POLICY = "Fail"  # steady-state IVP admission enforcement
+# The canary expiry guard remains for future temporary canary postures. Once the
+# IVP is in steady state ([Deny]/Fail), this date is inert and cannot break CI.
 IVP_CANARY_EXPIRES = "2026-08-01"
 IVP_STEADY_STATE_VALIDATION_ACTION = "Deny"
 IVP_STEADY_STATE_FAILURE_POLICY = "Fail"
@@ -641,7 +637,7 @@ def parse_args() -> argparse.Namespace:
             "by Kyverno verifyImages rules with the effective "
             "FIRST_PARTY_ENFORCEMENT_MODE action (Audit; the legacy policy is retired "
             "by PR-C2, not restored; current first-party IVP verification is "
-            "the [Audit]/Ignore canary)."
+            "the [Deny]/Fail enforcement path)."
         )
     )
     parser.add_argument(
@@ -2087,7 +2083,7 @@ def find_ivp_violations(
         {"enabled"},
         "spec.evaluation.background",
         "unpinned background evaluation fields may silently weaken PolicyReport "
-        "coverage for the canary and steady-state rollout",
+        "coverage for future canaries and steady-state enforcement",
     )
     append_unexpected_nested_key_findings(
         findings,
