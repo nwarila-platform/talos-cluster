@@ -16,7 +16,6 @@ resources:
   - longhorn-vault-storage
   - metrics-server
   - namespace-hardening
-  - network-floor
   - kustomization-source-rotator.yaml
   - talos-drift
   - vault-auth
