@@ -34,6 +34,9 @@ def load_guard():
 
 
 guard = load_guard()
+KUBECTL_KUSTOMIZE_TIMEOUT_SECONDS = getattr(
+    guard, "KUBECTL_KUSTOMIZE_TIMEOUT_SECONDS", 120
+)
 
 
 @dataclass(frozen=True)
@@ -58,17 +61,27 @@ def write_yaml(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
 
 
-def assert_kubectl_renders_ivp(directory: Path) -> None:
+def assert_kubectl_renders_ivp(
+    directory: Path,
+    *,
+    expected_name: str | None = guard.FIRST_PARTY_IVP_POLICY_NAME,
+) -> None:
     try:
         completed = subprocess.run(
             ("kubectl", "kustomize", str(directory)),
             check=False,
             capture_output=True,
             text=True,
+            timeout=KUBECTL_KUSTOMIZE_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
             f"kubectl is required for render-backed selftest case: {directory}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "kubectl kustomize timed out in render-backed selftest case "
+            f"after {KUBECTL_KUSTOMIZE_TIMEOUT_SECONDS}s for {directory}"
         ) from exc
 
     if completed.returncode != 0:
@@ -87,13 +100,21 @@ def assert_kubectl_renders_ivp(directory: Path) -> None:
             continue
         if (
             document.get("kind") == guard.IVP_KIND
-            and metadata.get("name") == guard.FIRST_PARTY_IVP_POLICY_NAME
+            and (
+                expected_name is None
+                or metadata.get("name") == expected_name
+            )
         ):
             return
 
+    expected = (
+        "an ImageValidatingPolicy"
+        if expected_name is None
+        else f"{guard.IVP_KIND}/{expected_name}"
+    )
     raise RuntimeError(
         "kubectl kustomize did not render the expected "
-        f"{guard.IVP_KIND}/{guard.FIRST_PARTY_IVP_POLICY_NAME}: {directory}"
+        f"{expected}: {directory}"
     )
 
 
@@ -104,10 +125,16 @@ def assert_kubectl_available() -> None:
             check=False,
             capture_output=True,
             text=True,
+            timeout=KUBECTL_KUSTOMIZE_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
             "kubectl is required for render-backed selftest cases"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "kubectl version timed out in render-backed selftest case "
+            f"after {KUBECTL_KUSTOMIZE_TIMEOUT_SECONDS}s"
         ) from exc
     if completed.returncode != 0:
         raise RuntimeError(
@@ -1737,14 +1764,87 @@ def flux_shadow_generators_fail_closed_fixture(root: Path) -> None:
         """
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
-        generators:
-          - ivp-generator.yaml
+        resources:
+          - seed-one.yaml
+          - seed-two.yaml
+        transformers:
+          - patch-one.yaml
+          - patch-two.yaml
         """,
     )
     write_yaml(
-        shadow_dir / "ivp-generator.yaml",
-        ivp_yaml(validation_expression="true"),
+        shadow_dir / "seed-one.yaml",
+        """
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: seed-one
+        """,
     )
+    write_yaml(
+        shadow_dir / "seed-two.yaml",
+        """
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: seed-two
+        """,
+    )
+    write_yaml(
+        shadow_dir / "patch-one.yaml",
+        """
+        apiVersion: builtin
+        kind: PatchTransformer
+        metadata:
+          name: shadow-ivp-one
+        patch: |-
+          - op: replace
+            path: /apiVersion
+            value: policies.kyverno.io/v1beta1
+          - op: replace
+            path: /kind
+            value: ImageValidatingPolicy
+          - op: replace
+            path: /metadata/name
+            value: shadow-one
+          - op: add
+            path: /spec
+            value:
+              validationActions: [Audit]
+              failurePolicy: Ignore
+        target:
+          kind: ConfigMap
+          name: seed-one
+        """,
+    )
+    write_yaml(
+        shadow_dir / "patch-two.yaml",
+        """
+        apiVersion: builtin
+        kind: PatchTransformer
+        metadata:
+          name: shadow-ivp-two
+        patch: |-
+          - op: replace
+            path: /apiVersion
+            value: policies.kyverno.io/v1beta1
+          - op: replace
+            path: /kind
+            value: ImageValidatingPolicy
+          - op: replace
+            path: /metadata/name
+            value: shadow-two
+          - op: add
+            path: /spec
+            value:
+              validationActions: [Audit]
+              failurePolicy: Ignore
+        target:
+          kind: ConfigMap
+          name: seed-two
+        """,
+    )
+    assert_kubectl_renders_ivp(shadow_dir, expected_name=None)
     write_shadow_flux_kustomization(
         root,
         name="kyverno-policies-shadow-generators",
@@ -1804,6 +1904,28 @@ def ivp_remote_kustomization_resource_fixture(root: Path) -> None:
             "verify-image-signatures-enforced.yaml",
             ivp_filename(),
             "https://example.invalid/kyverno/remote-ivp.yaml",
+        ),
+    )
+
+
+def ivp_nested_remote_kustomization_resource_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        policy_dir(root) / "nested-remote/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - https://example.invalid/kyverno/nested-remote-ivp.yaml
+        """,
+    )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            ivp_filename(),
+            "nested-remote",
         ),
     )
 
@@ -2451,12 +2573,23 @@ def main() -> int:
             ),
         ),
         run_case(
+            "ivp-nested-remote-kustomization-resource",
+            1,
+            "IVP1 nested remote kustomization resource is unverifiable and bites",
+            ivp_nested_remote_kustomization_resource_fixture,
+            (
+                "kustomization references remote resource",
+                "policies/nested-remote/kustomization.yaml -> "
+                "https://example.invalid/kyverno/nested-remote-ivp.yaml",
+            ),
+        ),
+        run_case(
             "ivp-kustomization-patches-weaken-render",
             1,
             "rendered kustomize patches weakening bites",
             ivp_kustomization_patches_weaken_render_fixture,
             (
-                "<kubectl kustomize>",
+                "policies/<kubectl kustomize>",
                 "validations must be exactly one verifyImageSignatures expression",
                 "attestors must exactly match",
             ),
@@ -2467,7 +2600,7 @@ def main() -> int:
             "rendered kustomize components weakening bites",
             ivp_kustomization_components_weaken_render_fixture,
             (
-                "<kubectl kustomize>",
+                "policies/<kubectl kustomize>",
                 "validations must be exactly one verifyImageSignatures expression",
             ),
         ),
@@ -2490,7 +2623,7 @@ def main() -> int:
             (
                 "spec.path exactly to "
                 f"{guard.KYVERNO_POLICIES_REPO_PATH}",
-                "<kubectl kustomize>",
+                "policies-applied/<kubectl kustomize>",
                 "validations must be exactly one verifyImageSignatures expression",
                 "attestors must exactly match",
             ),
@@ -2503,7 +2636,7 @@ def main() -> int:
             (
                 "spec.path exactly to "
                 f"{guard.KYVERNO_POLICIES_REPO_PATH}",
-                "<kubectl kustomize>",
+                "policies-applied/<kubectl kustomize>",
                 "validations must be exactly one verifyImageSignatures expression",
                 "attestors must exactly match",
             ),
@@ -2534,7 +2667,7 @@ def main() -> int:
             "ATTACK A non-YAML resource IVP bites",
             flux_shadow_non_yaml_ivp_fixture,
             (
-                "<kubectl kustomize>",
+                "shadow/<kubectl kustomize>",
                 "validations must be exactly one verifyImageSignatures expression",
             ),
         ),
@@ -2544,7 +2677,7 @@ def main() -> int:
             "ATTACK C2 kindless kustomization bites",
             flux_shadow_no_kind_kustomization_fixture,
             (
-                "<kubectl kustomize>",
+                "shadow-no-kind/<kubectl kustomize>",
                 "validations must be exactly one verifyImageSignatures expression",
             ),
         ),
@@ -2554,8 +2687,11 @@ def main() -> int:
             "unwalked generators field forces render",
             flux_shadow_generators_fail_closed_fixture,
             (
-                "kubectl kustomize failed",
-                "shadow-generators",
+                "Flux Kustomization rendered output "
+                "flux-system/kyverno-policies-shadow-generators",
+                "found 2",
+                "shadow-one",
+                "shadow-two",
             ),
         ),
         run_case(
@@ -2603,6 +2739,7 @@ def main() -> int:
             ivp_images_extractors_shadow_fixture,
             (
                 "not guard-allowlisted",
+                "Review the field's Kyverno semantics",
                 "silently alter signature-verification semantics",
                 "pin it explicitly in this guard",
                 "spec.images",
@@ -2613,7 +2750,11 @@ def main() -> int:
             1,
             "IVP3 evaluation.mode JSON leaves admission path",
             ivp_evaluation_mode_json_fixture,
-            ("spec.evaluation.mode must be absent or Kubernetes", "found JSON"),
+            (
+                "spec.evaluation.mode must be absent or Kubernetes",
+                "policy remains on the admission path",
+                "(found JSON)",
+            ),
         ),
         run_case(
             "ivp-validationconfigurations-required-false",
