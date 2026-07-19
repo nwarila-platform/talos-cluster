@@ -1,9 +1,11 @@
 # ClusterPolicy: verify-image-signatures-enforced
 #
 # ⚠️ NON-BLOCKING (Audit) BY DESIGN — and it is NOT slated to return to Enforce.
-# First-party admission enforcement moved to the per-org ImageValidatingPolicy
-# resources (live at [Deny]/Fail since #340); this legacy ClusterPolicy stays
-# Audit and guard-pinned until the retire-legacy PR (PR-C2) removes it. Its
+# First-party admission enforcement moved to the merged ImageValidatingPolicy
+# resource (enforcing at [Deny]/Fail since #340; transiently at [Audit]/Ignore
+# for the merge-cutover canary step, flipped back by the follow-up PR); this
+# legacy ClusterPolicy stays Audit and guard-pinned until the retire-legacy PR
+# (PR-C2) removes it. Its
 # original blocker (online-Rekor on the admission path) was fixed by the offline
 # pins below, so "waiting on offline verification" no longer applies.
 # Root cause of the 2026-07-14 brick: keyless verification against `rekor.url` made
@@ -31,12 +33,13 @@
 # ⚠️ CORRECTED 2026-07-18: this header previously bounded that residual with "this
 # policy stays non-blocking Audit, so a stale pin surfaces only as a PolicyReport
 # fail, never a brick". THAT NO LONGER HOLDS. All four pinned PEMs here are
-# content-identical to the pins in the three ImageValidatingPolicy resources, which
-# run at [Deny]/failurePolicy:Fail since #340 — so a stale pin WOULD deny first-party
-# pod admission, not merely report. This policy being Audit bounds nothing.
+# content-identical to the pins in the merged ImageValidatingPolicy resource, whose
+# steady-state posture is [Deny]/failurePolicy:Fail (since #340; transiently
+# [Audit]/Ignore during the merge-cutover canary step) — so a stale pin WOULD deny
+# first-party pod admission, not merely report. This policy being Audit bounds nothing.
 # The sigstore-TUF-root drift-watcher IS built (scripts/check-sigstore-pin-verification.py,
 # #334) and wired into CI. Two caveats: it inspects the LEGACY ClusterPolicy only (a
-# sound proxy, since these four pins are byte-identical in the enforcing IVPs), and its
+# sound proxy, since these four pins are byte-identical in the enforcing IVP), and its
 # live daily detector runs in the kubescape workflow whose kubectl fetch has been failing
 # (runner->dl.k8s.io egress) — so treat RUNTIME drift detection as unproven until that is
 # confirmed restored. Sigstore rotations are rare (Rekor key stable since

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "scripts/check-image-signature-enforcement.py"
 FIRST_PARTY_IMAGE = "ghcr.io/nwarila-platform/foo"
 FUTURE_FIRST_PARTY_IMAGE = "ghcr.io/nwarila-platform/not-yet-deployed"
+_UNSET = object()
 
 
 def load_guard():
@@ -245,54 +246,43 @@ def _indent_block(text: str, spaces: int) -> list[str]:
     return [f"{pad}{line}" for line in text.split("\n")]
 
 
-def ivp_filename(org_glob: str) -> str:
-    return f"ivp-{guard.FIRST_PARTY_IVP[org_glob]['policy_name']}.yaml"
+def ivp_filename() -> str:
+    return guard.FIRST_PARTY_IVP_FILENAME
 
 
 def ivp_yaml(
-    org_glob: str,
     *,
     policy_name: str | None = None,
-    validation_actions: tuple[str, ...] = ("Deny",),
-    failure_policy: str | None = "Fail",
+    validation_actions: tuple[str, ...] | None = None,
+    failure_policy: str | None | object = _UNSET,
     admission_enabled: str | None = "true",
     background_enabled: str | None = "true",
     match_constraints_operations: tuple[str, ...] = ("CREATE", "UPDATE"),
+    autogen_controllers: tuple[str, ...] | None = guard.FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS,
     include_match_conditions: bool = True,
     match_expression: str | None = None,
     match_condition_name: str | None = None,
     match_image_references: tuple[str, ...] | None = None,
-    attestor_name: str | None = None,
-    issuer: str | None = None,
-    subject_regexp: str | None = None,
-    roots: str | None = None,
-    rekor_url: str | None = None,
-    rekor_pubkey: str | None = None,
-    ctlog_pubkey: str | None = None,
-    ignore_tlog: str | None = None,
-    ignore_sct: str | None = None,
+    attestor_overrides: dict[str, dict[str, object]] | None = None,
     credentials: tuple[str, ...] | None = None,
     validation_expression: str | None = None,
 ) -> str:
-    spec = guard.FIRST_PARTY_IVP[org_glob]
-    policy_name = policy_name if policy_name is not None else spec["policy_name"]
-    attestor_name = attestor_name if attestor_name is not None else spec["attestor"]
-    identity = guard.CANONICAL_FIRST_PARTY_ATTESTORS[org_glob]
-    issuer = issuer if issuer is not None else identity["issuer"]
-    subject_regexp = (
-        subject_regexp if subject_regexp is not None else identity["subjectRegExp"]
+    policy_name = policy_name if policy_name is not None else guard.FIRST_PARTY_IVP_POLICY_NAME
+    validation_actions = (
+        validation_actions
+        if validation_actions is not None
+        else (guard.IVP_VALIDATION_ACTION,)
     )
-    roots = roots if roots is not None else guard.FULCIO_ROOTS_PEM
-    rekor_url = rekor_url if rekor_url is not None else guard.REKOR_URL
-    rekor_pubkey = rekor_pubkey if rekor_pubkey is not None else guard.REKOR_PUBKEY_PEM
-    ctlog_pubkey = ctlog_pubkey if ctlog_pubkey is not None else guard.CTFE_PUBKEY_PEM
-    ignore_tlog = ignore_tlog if ignore_tlog is not None else "false"
-    ignore_sct = ignore_sct if ignore_sct is not None else "false"
-    credentials = credentials if credentials is not None else spec["credentials"]
+    failure_policy = (
+        failure_policy
+        if failure_policy is not _UNSET
+        else guard.IVP_REQUIRED_FAILURE_POLICY
+    )
+    credentials = credentials if credentials is not None else guard.FIRST_PARTY_IVP_CREDENTIALS
     match_image_references = (
         match_image_references
         if match_image_references is not None
-        else (org_glob,)
+        else guard.FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES
     )
     match_condition_name = (
         match_condition_name
@@ -302,13 +292,14 @@ def ivp_yaml(
     match_expression = (
         match_expression
         if match_expression is not None
-        else guard.canonical_ivp_match_expression(org_glob)
+        else guard.canonical_ivp_match_expression()
     )
     validation_expression = (
         validation_expression
         if validation_expression is not None
-        else guard.canonical_ivp_validation_expression(attestor_name)
+        else guard.canonical_ivp_validation_expression()
     )
+    attestor_overrides = attestor_overrides or {}
 
     operations = ", ".join(f'"{op}"' for op in match_constraints_operations)
     actions = ", ".join(validation_actions)
@@ -339,6 +330,16 @@ def ivp_yaml(
             '        resources: ["pods"]',
         ]
     )
+    if autogen_controllers is not None:
+        lines.extend(
+            [
+                "  autogen:",
+                "    podControllers:",
+                "      controllers:",
+            ]
+        )
+        for controller in autogen_controllers:
+            lines.append(f"        - {controller}")
     if include_match_conditions:
         lines.extend(
             [
@@ -356,25 +357,43 @@ def ivp_yaml(
         lines.append("    secrets:")
         for secret in credentials:
             lines.append(f"      - {secret}")
+    lines.append("  attestors:")
+    for org_glob in guard.FIRST_PARTY_IVP_ATTESTOR_ORDER:
+        identity = guard.CANONICAL_FIRST_PARTY_ATTESTORS[org_glob]
+        overrides = attestor_overrides.get(org_glob, {})
+        attestor_name = guard.FIRST_PARTY_IVP_ATTESTORS[org_glob]
+        issuer = str(overrides.get("issuer", identity["issuer"]))
+        subject_regexp = str(
+            overrides.get("subject_regexp", identity["subjectRegExp"])
+        )
+        roots = str(overrides.get("roots", guard.FULCIO_ROOTS_PEM))
+        rekor_url = str(overrides.get("rekor_url", guard.REKOR_URL))
+        rekor_pubkey = str(overrides.get("rekor_pubkey", guard.REKOR_PUBKEY_PEM))
+        ctlog_pubkey = str(overrides.get("ctlog_pubkey", guard.CTFE_PUBKEY_PEM))
+        ignore_tlog = str(overrides.get("ignore_tlog", "false"))
+        ignore_sct = str(overrides.get("ignore_sct", "false"))
+        lines.extend(
+            [
+                f"    - name: {attestor_name}",
+                "      cosign:",
+                "        keyless:",
+                "          identities:",
+                f'            - issuer: "{issuer}"',
+                f"              subjectRegExp: '{subject_regexp}'",
+                "          roots: |-",
+                *_indent_block(roots, 12),
+                "        ctlog:",
+                f'          url: "{rekor_url}"',
+                "          rekorPubKey: |-",
+                *_indent_block(rekor_pubkey, 12),
+                "          ctLogPubKey: |-",
+                *_indent_block(ctlog_pubkey, 12),
+                f"          insecureIgnoreTlog: {ignore_tlog}",
+                f"          insecureIgnoreSCT: {ignore_sct}",
+            ]
+        )
     lines.extend(
         [
-            "  attestors:",
-            f"    - name: {attestor_name}",
-            "      cosign:",
-            "        keyless:",
-            "          identities:",
-            f'            - issuer: "{issuer}"',
-            f"              subjectRegExp: '{subject_regexp}'",
-            "          roots: |-",
-            *_indent_block(roots, 12),
-            "        ctlog:",
-            f'          url: "{rekor_url}"',
-            "          rekorPubKey: |-",
-            *_indent_block(rekor_pubkey, 12),
-            "          ctLogPubKey: |-",
-            *_indent_block(ctlog_pubkey, 12),
-            f"          insecureIgnoreTlog: {ignore_tlog}",
-            f"          insecureIgnoreSCT: {ignore_sct}",
             "  validations:",
             "    - expression: |-",
             *_indent_block(validation_expression, 8),
@@ -386,24 +405,17 @@ def ivp_yaml(
 
 def write_ivps(
     root: Path,
-    omit: tuple[str, ...] = (),
-    overrides: dict[str, dict[str, object]] | None = None,
+    omit: bool = False,
+    overrides: dict[str, object] | None = None,
 ) -> tuple[str, ...]:
-    overrides = overrides or {}
-    filenames: list[str] = []
-    for org_glob in guard.FIRST_PARTY_ORG_GLOBS:
-        # Skip orgs absent from FIRST_PARTY_IVP (e.g. the synthetic org the
-        # constants-consistency case injects): the guard's startup assert fires
-        # on that inconsistency at evaluation time (rc 2) before any IVP check.
-        if org_glob in omit or org_glob not in guard.FIRST_PARTY_IVP:
-            continue
-        filename = ivp_filename(org_glob)
-        write_yaml(
-            root / f"policies/{filename}",
-            ivp_yaml(org_glob, **overrides.get(org_glob, {})),
-        )
-        filenames.append(filename)
-    return tuple(filenames)
+    if omit:
+        return ()
+    filename = ivp_filename()
+    write_yaml(
+        root / f"policies/{filename}",
+        ivp_yaml(**(overrides or {})),
+    )
+    return (filename,)
 
 
 def audit_policy_yaml() -> str:
@@ -521,19 +533,13 @@ def write_real_shape_fixture(
     image: str = FIRST_PARTY_IMAGE,
     namespace: str | None = None,
     kustomize_namespace: str | None = None,
-    ivp_omit: tuple[str, ...] = (),
-    ivp_overrides: dict[str, dict[str, object]] | None = None,
-    ivp_kustomization_omit: tuple[str, ...] = (),
+    ivp_omit: bool = False,
+    ivp_overrides: dict[str, object] | None = None,
+    ivp_kustomization_omit: bool = False,
 ) -> None:
     write_yaml(root / "policies/verify-image-signatures.yaml", audit_policy_yaml())
     write_ivps(root, omit=ivp_omit, overrides=ivp_overrides)
-    listed_ivps = tuple(
-        ivp_filename(org_glob)
-        for org_glob in guard.FIRST_PARTY_ORG_GLOBS
-        if org_glob in guard.FIRST_PARTY_IVP
-        and org_glob not in ivp_omit
-        and org_glob not in ivp_kustomization_omit
-    )
+    listed_ivps = () if ivp_omit or ivp_kustomization_omit else (ivp_filename(),)
     write_policy_kustomization(
         root,
         (
@@ -731,7 +737,7 @@ def fail_mutate_no_matchconditions_fixture(root: Path) -> None:
             "verify-image-signatures-enforced.yaml",
             "fail-mutate-no-matchconditions.yaml",
         )
-        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
+        + (ivp_filename(),),
     )
 
 
@@ -761,7 +767,7 @@ def fail_mutate_no_webhook_configuration_fixture(root: Path) -> None:
             "verify-image-signatures-enforced.yaml",
             "fail-mutate-no-webhook-configuration.yaml",
         )
-        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
+        + (ivp_filename(),),
     )
 
 
@@ -786,7 +792,7 @@ def missing_policy_kustomization_resource_fixture(root: Path) -> None:
     write_policy_kustomization(
         root,
         ("verify-image-signatures.yaml",)
-        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
+        + (ivp_filename(),),
     )
 
 
@@ -947,9 +953,9 @@ def autogen_removed_fixture(root: Path) -> None:
 
 
 # ---- ImageValidatingPolicy (IVP) weakening fixtures --------------------------
-# Independent constructions (NOT the guard's own builders) so a builder bug can't
-# hide a real weakening. The clean baseline (3 IVPs) is written by
-# write_real_shape_fixture; each case mutates exactly one IVP via ivp_overrides.
+# Independent constructions (NOT the guard's own parser) so a parser bug cannot
+# hide a real weakening. The clean baseline (one merged IVP) is written by
+# write_real_shape_fixture; each case mutates that IVP via ivp_overrides.
 HWG_ORG = "ghcr.io/the-hero-wars-guys/*"
 NWARILA_ORG = "ghcr.io/nwarila/*"
 
@@ -967,44 +973,92 @@ def ivp_weak_cel(
 
 
 def ivp_weak_validation(
-    attestor: str,
     fields: tuple[str, ...] = ("containers", "initContainers", "ephemeralContainers"),
 ) -> str:
     clauses = [
-        f"images.{field}.map(image, verifyImageSignatures(image, "
-        f"[attestors.{attestor}])).all(e, e > 0)"
+        f"images.{field}.all(image,\n"
+        "  image.startsWith('ghcr.io/the-hero-wars-guys/') ? "
+        "verifyImageSignatures(image, [attestors.hwg]) > 0 :\n"
+        "  image.startsWith('ghcr.io/nwarila-platform/') ? "
+        "verifyImageSignatures(image, [attestors.nwarila_platform]) > 0 :\n"
+        "  verifyImageSignatures(image, [attestors.nwarila]) > 0)"
         for field in fields
     ]
     return " &&\n".join(clauses)
 
 
-def ivp_over(org_glob: str, **kwargs: object) -> dict[str, dict[str, object]]:
-    return {org_glob: kwargs}
+def ivp_over(org_glob: str, **kwargs: object) -> dict[str, object]:
+    attestor_keys = {
+        "issuer",
+        "subject_regexp",
+        "roots",
+        "rekor_url",
+        "rekor_pubkey",
+        "ctlog_pubkey",
+        "ignore_tlog",
+        "ignore_sct",
+    }
+    attestor_overrides = {
+        key: value for key, value in kwargs.items() if key in attestor_keys
+    }
+    merged_overrides = {
+        key: value for key, value in kwargs.items() if key not in attestor_keys
+    }
+    if attestor_overrides:
+        merged_overrides["attestor_overrides"] = {org_glob: attestor_overrides}
+    return merged_overrides
+
+
+def different_ivp_validation_action(suffix: str) -> str:
+    return f"{guard.IVP_VALIDATION_ACTION}-{suffix}"
+
+
+def different_ivp_failure_policy() -> str:
+    return f"{guard.IVP_REQUIRED_FAILURE_POLICY}-different"
 
 
 def ivp_missing_org_fixture(root: Path) -> None:
-    write_real_shape_fixture(root, ivp_omit=(HWG_ORG,))
+    write_real_shape_fixture(
+        root,
+        ivp_overrides={
+            "match_image_references": tuple(
+                glob
+                for glob in guard.FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES
+                if glob != HWG_ORG
+            )
+        },
+    )
 
 
 def ivp_validation_action_audit_fixture(root: Path) -> None:
-    # Enforcement is [Deny]; downgrading an org's IVP back to [Audit]
-    # (non-blocking) must bite.
+    # Name kept for continuity; the assertion is posture-agnostic.
     write_real_shape_fixture(
-        root, ivp_overrides=ivp_over(NWARILA_ORG, validation_actions=("Audit",))
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            validation_actions=(different_ivp_validation_action("different"),),
+        ),
     )
 
 
 def ivp_validation_action_warn_fixture(root: Path) -> None:
     write_real_shape_fixture(
-        root, ivp_overrides=ivp_over(NWARILA_ORG, validation_actions=("Warn",))
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            validation_actions=(different_ivp_validation_action("Warn"),),
+        ),
     )
 
 
 def ivp_failure_policy_ignore_fixture(root: Path) -> None:
-    # Enforcement is failurePolicy: Fail (fail-closed); reverting an org's IVP to
-    # Ignore (fail-open) must bite.
+    # Name kept for continuity; the assertion is posture-agnostic.
     write_real_shape_fixture(
-        root, ivp_overrides=ivp_over(NWARILA_ORG, failure_policy="Ignore")
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG,
+            failure_policy=different_ivp_failure_policy(),
+        ),
     )
 
 
@@ -1025,6 +1079,15 @@ def ivp_matchconstraints_narrowed_fixture(root: Path) -> None:
         root,
         ivp_overrides=ivp_over(
             NWARILA_ORG, match_constraints_operations=("CREATE",)
+        ),
+    )
+
+
+def ivp_autogen_narrowed_fixture(root: Path) -> None:
+    write_real_shape_fixture(
+        root,
+        ivp_overrides=ivp_over(
+            NWARILA_ORG, autogen_controllers=("deployments", "jobs")
         ),
     )
 
@@ -1121,7 +1184,7 @@ def ivp_validations_weakened_fixture(root: Path) -> None:
         ivp_overrides=ivp_over(
             NWARILA_ORG,
             validation_expression=ivp_weak_validation(
-                "nwarila", fields=("containers", "ephemeralContainers")
+                fields=("containers", "ephemeralContainers")
             ),
         ),
     )
@@ -1132,20 +1195,59 @@ def ivp_hwg_credentials_dropped_fixture(root: Path) -> None:
 
 
 def ivp_file_not_in_kustomization_fixture(root: Path) -> None:
-    write_real_shape_fixture(root, ivp_kustomization_omit=(HWG_ORG,))
+    write_real_shape_fixture(root, ivp_kustomization_omit=True)
+
+
+def ivp_second_policy_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    write_yaml(
+        root / "policies/second-ivp.yaml",
+        f"""
+        apiVersion: policies.kyverno.io/v1beta1
+        kind: ImageValidatingPolicy
+        metadata:
+          name: second-ivp
+        spec:
+          validationActions: [{guard.IVP_VALIDATION_ACTION}]
+          failurePolicy: {guard.IVP_REQUIRED_FAILURE_POLICY}
+          matchConstraints:
+            resourceRules:
+              - apiGroups: [""]
+                apiVersions: ["v1"]
+                operations: ["CREATE"]
+                resources: ["pods"]
+          matchConditions:
+            - name: scoped
+              expression: "object != null"
+          matchImageReferences:
+            - glob: "example.com/*"
+          attestors: []
+          validations:
+            - expression: "true"
+        """,
+    )
+    write_policy_kustomization(
+        root,
+        (
+            "verify-image-signatures.yaml",
+            "verify-image-signatures-enforced.yaml",
+            ivp_filename(),
+            "second-ivp.yaml",
+        ),
+    )
 
 
 def ivp_fail_no_matchconditions_fixture(root: Path) -> None:
     write_real_shape_fixture(root)
     write_yaml(
         root / "policies/extra-fail-ivp.yaml",
-        """
+        f"""
         apiVersion: policies.kyverno.io/v1beta1
         kind: ImageValidatingPolicy
         metadata:
           name: extra-fail-ivp
         spec:
-          validationActions: [Deny]
+          validationActions: [{guard.IVP_VALIDATION_ACTION}]
           failurePolicy: Fail
           matchConstraints:
             resourceRules:
@@ -1167,7 +1269,7 @@ def ivp_fail_no_matchconditions_fixture(root: Path) -> None:
             "verify-image-signatures-enforced.yaml",
             "extra-fail-ivp.yaml",
         )
-        + tuple(ivp_filename(org) for org in guard.FIRST_PARTY_ORG_GLOBS),
+        + (ivp_filename(),),
     )
 
 
@@ -1272,6 +1374,76 @@ def missing_canonical_attestor_case() -> CaseResult:
         guard.FIRST_PARTY_IMAGE_PREFIXES = original_prefixes
 
 
+def dropped_ivp_match_prefix_case() -> CaseResult:
+    dropped_prefix = "ghcr.io/nwarila/"
+    original_match_prefixes = guard.FIRST_PARTY_IVP_MATCH_PREFIXES
+    try:
+        guard.FIRST_PARTY_IVP_MATCH_PREFIXES = tuple(
+            prefix
+            for prefix in original_match_prefixes
+            if prefix != dropped_prefix
+        )
+        return run_case(
+            "constants-dropped-ivp-match-prefix",
+            2,
+            "startup match-prefix consistency assert exits 2",
+            good_fixture,
+            (
+                "FIRST_PARTY_ORG_GLOBS and FIRST_PARTY_IVP_MATCH_PREFIXES "
+                "disagree",
+                f"missing merged IVP match prefix for {dropped_prefix!r}",
+            ),
+        )
+    finally:
+        guard.FIRST_PARTY_IVP_MATCH_PREFIXES = original_match_prefixes
+
+
+def extra_ivp_match_prefix_case() -> CaseResult:
+    extra_prefix = "ghcr.io/example-extra/"
+    original_match_prefixes = guard.FIRST_PARTY_IVP_MATCH_PREFIXES
+    try:
+        guard.FIRST_PARTY_IVP_MATCH_PREFIXES = (
+            original_match_prefixes + (extra_prefix,)
+        )
+        return run_case(
+            "constants-extra-ivp-match-prefix",
+            2,
+            "startup match-prefix consistency assert exits 2",
+            good_fixture,
+            (
+                "FIRST_PARTY_ORG_GLOBS and FIRST_PARTY_IVP_MATCH_PREFIXES "
+                "disagree",
+                f"extra merged IVP match prefix for {extra_prefix!r}",
+            ),
+        )
+    finally:
+        guard.FIRST_PARTY_IVP_MATCH_PREFIXES = original_match_prefixes
+
+
+def attestor_order_missing_case() -> CaseResult:
+    missing_org = "ghcr.io/the-hero-wars-guys/*"
+    original_attestor_order = guard.FIRST_PARTY_IVP_ATTESTOR_ORDER
+    try:
+        guard.FIRST_PARTY_IVP_ATTESTOR_ORDER = tuple(
+            org_glob
+            for org_glob in original_attestor_order
+            if org_glob != missing_org
+        )
+        return run_case(
+            "constants-attestor-order-missing",
+            2,
+            "startup attestor-order consistency assert exits 2",
+            good_fixture,
+            (
+                "FIRST_PARTY_IVP_ATTESTOR_ORDER and FIRST_PARTY_IVP_ATTESTORS "
+                "disagree",
+                f"missing IVP attestor order entry for {missing_org!r}",
+            ),
+        )
+    finally:
+        guard.FIRST_PARTY_IVP_ATTESTOR_ORDER = original_attestor_order
+
+
 def exit_code_invariant_case(results: list[CaseResult]) -> CaseResult:
     invariant_holds = all(
         (result.finding_count == 0 and result.actual_rc == 0)
@@ -1337,6 +1509,9 @@ def main() -> int:
             audit_skip_image_references_fixture,
         ),
         missing_canonical_attestor_case(),
+        dropped_ivp_match_prefix_case(),
+        extra_ivp_match_prefix_case(),
+        attestor_order_missing_case(),
         run_case(
             "attestor-subject-wildcard",
             1,
@@ -1583,33 +1758,43 @@ def main() -> int:
         run_case(
             "ivp-missing-org",
             1,
-            "IVP1 a missing per-org IVP bites",
+            "IVP1 missing merged matchImageReferences org bites",
             ivp_missing_org_fixture,
             (
                 "first-party org ghcr.io/the-hero-wars-guys/* has no "
-                "ImageValidatingPolicy verify-first-party-hwg",
+                "ImageValidatingPolicy matchImageReferences coverage",
             ),
+        ),
+        run_case(
+            "ivp-second-policy",
+            1,
+            "IVP1 a second IVP resurrects Kyverno IVP defects",
+            ivp_second_policy_fixture,
+            ("source policy files must contain exactly one ImageValidatingPolicy",),
         ),
         run_case(
             "ivp-validation-action-audit",
             1,
-            "IVP2 downgrading an org to [Audit] (non-blocking) bites",
+            "IVP2 non-configured validationActions value bites",
             ivp_validation_action_audit_fixture,
-            ("validationActions must be [Deny]",),
+            (f"validationActions must be [{guard.IVP_VALIDATION_ACTION}]",),
         ),
         run_case(
             "ivp-validation-action-warn",
             1,
-            "IVP2 [Warn] downgrade bites",
+            "IVP2 non-configured validationActions value bites",
             ivp_validation_action_warn_fixture,
-            ("validationActions must be [Deny]",),
+            (f"validationActions must be [{guard.IVP_VALIDATION_ACTION}]",),
         ),
         run_case(
             "ivp-failure-policy-ignore",
             1,
-            "IVP2 reverting failurePolicy to Ignore (fail-open) bites",
+            "IVP2 non-configured failurePolicy value bites",
             ivp_failure_policy_ignore_fixture,
-            ("must set spec.failurePolicy: Fail",),
+            (
+                "must set spec.failurePolicy: "
+                f"{guard.IVP_REQUIRED_FAILURE_POLICY}",
+            ),
         ),
         run_case(
             "ivp-admission-disabled",
@@ -1631,6 +1816,13 @@ def main() -> int:
             "IVP4 narrowing matchConstraints operations bites",
             ivp_matchconstraints_narrowed_fixture,
             ("matchConstraints must exactly equal",),
+        ),
+        run_case(
+            "ivp-autogen-narrowed",
+            1,
+            "IVP4 narrowed spec.autogen controller set bites",
+            ivp_autogen_narrowed_fixture,
+            ("spec.autogen.podControllers.controllers must preserve",),
         ),
         run_case(
             "ivp-no-matchconditions",
@@ -1726,7 +1918,7 @@ def main() -> int:
         run_case(
             "ivp-hwg-credentials-dropped",
             1,
-            "IVP9 dropping the hwg ghcr-pull image-pull secret bites",
+            "IVP9 dropping the shared ghcr-pull image-pull secret bites",
             ivp_hwg_credentials_dropped_fixture,
             ("spec.credentials.secrets must be exactly ['ghcr-pull']",),
         ),

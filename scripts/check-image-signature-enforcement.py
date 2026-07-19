@@ -11,7 +11,7 @@ verifyImages ..." literally; that is fixed shorthand for "the first-party
 signature rules", NOT a claim about the current mode. Only the checks that compare
 against FIRST_PARTY_ENFORCEMENT_MODE track the mode. That legacy ClusterPolicy is NOT waiting on a Kyverno upgrade: the
 offline keyless pins that were its original blocker landed in #333, and
-first-party enforcement now runs on the per-org ImageValidatingPolicy resources
+first-party enforcement now runs on one merged ImageValidatingPolicy resource
 instead. The legacy policy therefore stays non-blocking and guard-pinned until
 the retire-legacy PR (PR-C2) removes it outright — it is not slated to return to
 ``Enforce``.
@@ -29,12 +29,12 @@ Deliberate scope:
   the effective FIRST_PARTY_ENFORCEMENT_MODE action.
 - Require the first-party ``verifyImages`` policy to carry the exact
   guard-generated first-party Pod matchConditions expression.
-- Discover the per-org ``ImageValidatingPolicy`` (IVP) resources that carry
-  first-party signature enforcement on the ADMISSION path and require each to
-  pin the canonical offline attestors, admission+background evaluation, the
-  first-party CEL scoping, the org matchImageReferences glob, and the effective
-  IVP_VALIDATION_ACTION. See the IVP constants block for why enforcement
-  migrated off the legacy verifyImages ClusterPolicy.
+- Discover the single merged ``ImageValidatingPolicy`` (IVP) resource that
+  carries first-party signature enforcement on the ADMISSION path and require it
+  to pin the canonical offline attestors, admission+background evaluation,
+  first-party CEL scoping, all org matchImageReferences globs, explicit autogen
+  coverage, and the effective IVP_VALIDATION_ACTION. See the IVP constants block
+  for why enforcement migrated off the legacy verifyImages ClusterPolicy.
 - Reject fail-closed mutate/verifyImages policies (and Fail IVPs) with empty
   matchConditions because Kyverno places them in the shared cluster-wide fail
   webhook.
@@ -76,6 +76,12 @@ FIRST_PARTY_IMAGE_PREFIXES = tuple(
     org_glob[:-1] for org_glob in FIRST_PARTY_ORG_GLOBS
 )
 FIRST_PARTY_MATCH_CONDITION_NAME = "first-party-image-present"
+
+
+def first_party_glob_prefixes_longest_first(globs: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted((glob[:-1] for glob in globs), key=len, reverse=True))
+
+
 CANONICAL_FIRST_PARTY_ATTESTORS = {
     "ghcr.io/nwarila/*": {
         "issuer": "https://token.actions.githubusercontent.com",
@@ -163,7 +169,7 @@ REKOR_URL = "https://rekor.sigstore.dev"
 # above verify keyless signatures OFFLINE against the pinned Sigstore keys (rekor.pubkey +
 # ctlog.pubkey + Fulcio roots), no admission-path online GET. This LEGACY ClusterPolicy's
 # rules stay non-blocking (failureAction Audit + failurePolicy Ignore) permanently: since
-# #340, live first-party enforcement runs on the per-org ImageValidatingPolicy resources at
+# #340, live first-party enforcement runs on the merged ImageValidatingPolicy resource at
 # [Deny]/failurePolicy:Fail, NOT here. This guard fully verifies the rule SHAPE (canonical
 # offline attestors, matchConditions, first-party scoping, background, exempt-ns, required,
 # no skip/exclude/preconditions) and pins the offline material.
@@ -206,8 +212,8 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # first-party pod -> the #335 brick of 2026-07-17 (a DIFFERENT defect from the
 # 2026-07-14 brick, which was an online Rekor query on the admission hot path).
 # First-party signature
-# enforcement therefore migrated to per-org ``ImageValidatingPolicy`` resources,
-# but Kyverno v1.18.2 IVP still uses a mutate->annotate->validate handoff. The
+# enforcement therefore migrated to an ``ImageValidatingPolicy`` resource, but
+# Kyverno v1.18.2 IVP still uses a mutate->annotate->validate handoff. The
 # mutating webhook does the cosign signature-verification work and writes
 # ``kyverno.io/image-verification-outcomes``; on Kyverno v1.18.2 the validating
 # webhook does not perform the cosign signature-verification work; it evaluates
@@ -219,29 +225,26 @@ KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 # (``image-verification-outcomes`` vs ``verify-images``), so the migration did
 # not escape the class.
 #
-# This guard pins the IVP shape used for first-party fail-closed enforcement:
-# offline pins byte-identical to
-# FULCIO_ROOTS_PEM/REKOR_PUBKEY_PEM/CTFE_PUBKEY_PEM, the admission path enabled,
-# first-party CEL scoping (=> a scoped fine-grained webhook per policy, never the
-# shared cluster-wide fail webhook that would brick all pod creation), and full
-# first-party image coverage. The offline-Audit canary (#333) and the live
-# admission-path canary (#337: a real signed first-party pod ADMITTED via the
-# IVP) were necessary evidence, but not sufficient proof: they sampled a passing
-# moment and could not catch the intermittent handoff miss observed on
-# 2026-07-18 when the hwg tenant falsely denied a genuinely signed image while
-# background PolicyReport showed pass=1 fail=0. The IVP admission path reads
-# .spec, not .status; the status-controller conflict loop may be diagnostic, but
-# it is not on the admission data path. The drop path that loses or misses the
-# annotation entry is still unknown. The legacy verifyImages ClusterPolicy stays
-# non-blocking (Audit/Ignore) and guard-pinned until the retire-legacy PR removes
-# it. See cp1_offline_verify_decision.
+# This guard pins the single merged IVP shape used for first-party fail-closed
+# enforcement: exactly one IVP in source and in the rendered policy set; offline
+# pins byte-identical to FULCIO_ROOTS_PEM/REKOR_PUBKEY_PEM/CTFE_PUBKEY_PEM; the
+# admission path enabled; first-party CEL scoping (=> a scoped fine-grained
+# webhook, never the shared cluster-wide fail webhook that would brick all pod
+# creation); explicit default autogen controller coverage; and full first-party
+# image coverage. The old three-IVP shape exposed two Kyverno v1.18.2 defects:
+# annotation clobber between policy outcome entries, and global autogen slot
+# collision under the "defaults"/"cronjobs" keys. The status-controller conflict
+# loop is therefore indirectly on the admission data path: through that autogen
+# collision it rotates which controller-level policy is live. The legacy
+# verifyImages ClusterPolicy stays non-blocking (Audit/Ignore) and guard-pinned
+# until the retire-legacy PR removes it. See cp1_offline_verify_decision.
 IVP_API_VERSION_PREFIX = "policies.kyverno.io/"
 IVP_KIND = "ImageValidatingPolicy"
 # First-party signatures are ENFORCED: unsigned/mis-signed first-party pods are
 # DENIED at admission, fail-closed. Mode-parameterized so the posture stays a
 # single-constant source of truth the YAML must match (a half-flip fails CI).
-IVP_VALIDATION_ACTION = "Deny"  # blocking (was interim "Audit")
-IVP_REQUIRED_FAILURE_POLICY = "Fail"  # fail-closed (was interim "Ignore")
+IVP_VALIDATION_ACTION = "Audit"  # CANARY (PR-2 live-verifies the merged policy); PR-3 flips to "Deny"
+IVP_REQUIRED_FAILURE_POLICY = "Ignore"  # CANARY (PR-2); PR-3 flips to "Fail"
 # The unnarrowed Pod CREATE/UPDATE match (node_to_data yields raw scalar strings).
 IVP_MATCH_CONSTRAINTS = {
     "resourceRules": [
@@ -253,28 +256,38 @@ IVP_MATCH_CONSTRAINTS = {
         }
     ]
 }
-# Per first-party org glob: the IVP metadata.name, the CEL attestor identifier
-# used in spec.validations (must be a valid CEL identifier -> underscore, never
-# the org slug's hyphen), and the exact spec.credentials.secrets list (the
-# private the-hero-wars-guys org needs an image-pull secret to fetch the
-# signature payload; the public orgs carry none).
-FIRST_PARTY_IVP = {
-    "ghcr.io/nwarila/*": {
-        "policy_name": "verify-first-party-nwarila",
-        "attestor": "nwarila",
-        "credentials": (),
-    },
-    "ghcr.io/nwarila-platform/*": {
-        "policy_name": "verify-first-party-nwarila-platform",
-        "attestor": "nwarila_platform",
-        "credentials": (),
-    },
-    "ghcr.io/the-hero-wars-guys/*": {
-        "policy_name": "verify-first-party-hwg",
-        "attestor": "hwg",
-        "credentials": ("ghcr-pull",),
-    },
+FIRST_PARTY_IVP_POLICY_NAME = "verify-first-party"
+FIRST_PARTY_IVP_FILENAME = "ivp-verify-first-party.yaml"
+FIRST_PARTY_IVP_CREDENTIALS = ("ghcr-pull",)
+FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES = (
+    "ghcr.io/the-hero-wars-guys/*",
+    "ghcr.io/nwarila/*",
+    "ghcr.io/nwarila-platform/*",
+)
+FIRST_PARTY_IVP_MATCH_PREFIXES = first_party_glob_prefixes_longest_first(
+    FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES
+)
+FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS = (
+    "daemonsets",
+    "deployments",
+    "replicasets",
+    "statefulsets",
+    "jobs",
+    "cronjobs",
+)
+# Per first-party org glob: the CEL attestor identifier used in
+# spec.validations (must be a valid CEL identifier -> underscore, never the org
+# slug's hyphen). The merged IVP carries all three attestors in this exact order.
+FIRST_PARTY_IVP_ATTESTORS = {
+    "ghcr.io/the-hero-wars-guys/*": "hwg",
+    "ghcr.io/nwarila-platform/*": "nwarila_platform",
+    "ghcr.io/nwarila/*": "nwarila",
 }
+FIRST_PARTY_IVP_ATTESTOR_ORDER = (
+    "ghcr.io/the-hero-wars-guys/*",
+    "ghcr.io/nwarila-platform/*",
+    "ghcr.io/nwarila/*",
+)
 
 
 @dataclass(frozen=True)
@@ -336,6 +349,7 @@ class ImageValidatingPolicyDocument:
     failure_policy: str | None
     admission_enabled: str | None
     background_enabled: str | None
+    autogen_controllers: tuple[str, ...]
     match_constraints: object | None
     match_conditions: tuple[MatchCondition, ...]
     match_image_references: tuple[str, ...]
@@ -385,7 +399,54 @@ def assert_first_party_attestor_constants_consistent() -> None:
             + "; ".join(problems)
         )
 
-    ivp_orgs = set(FIRST_PARTY_IVP)
+    for org_glob in FIRST_PARTY_ORG_GLOBS:
+        if not org_glob.endswith("*"):
+            raise GuardUsageError(
+                f"first-party org glob must end with '*': {org_glob!r}"
+            )
+
+    match_ref_orgs = set(FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES)
+    match_ref_missing = sorted(org_globs - match_ref_orgs)
+    match_ref_extra = sorted(match_ref_orgs - org_globs)
+    if match_ref_missing or match_ref_extra:
+        problems = [
+            *(
+                f"missing merged IVP matchImageReferences entry for {org_glob!r}"
+                for org_glob in match_ref_missing
+            ),
+            *(
+                f"extra merged IVP matchImageReferences entry for {org_glob!r}"
+                for org_glob in match_ref_extra
+            ),
+        ]
+        raise GuardUsageError(
+            "FIRST_PARTY_ORG_GLOBS and FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES "
+            "disagree: " + "; ".join(problems)
+        )
+
+    expected_match_prefixes = set(
+        first_party_glob_prefixes_longest_first(FIRST_PARTY_ORG_GLOBS)
+    )
+    match_prefixes = set(FIRST_PARTY_IVP_MATCH_PREFIXES)
+    match_prefix_missing = sorted(expected_match_prefixes - match_prefixes)
+    match_prefix_extra = sorted(match_prefixes - expected_match_prefixes)
+    if match_prefix_missing or match_prefix_extra:
+        problems = [
+            *(
+                f"missing merged IVP match prefix for {prefix!r}"
+                for prefix in match_prefix_missing
+            ),
+            *(
+                f"extra merged IVP match prefix for {prefix!r}"
+                for prefix in match_prefix_extra
+            ),
+        ]
+        raise GuardUsageError(
+            "FIRST_PARTY_ORG_GLOBS and FIRST_PARTY_IVP_MATCH_PREFIXES "
+            "disagree: " + "; ".join(problems)
+        )
+
+    ivp_orgs = set(FIRST_PARTY_IVP_ATTESTORS)
     ivp_missing = sorted(org_globs - ivp_orgs)
     ivp_extra = sorted(ivp_orgs - org_globs)
     if ivp_missing or ivp_extra:
@@ -394,8 +455,27 @@ def assert_first_party_attestor_constants_consistent() -> None:
             *(f"extra IVP entry for {org_glob!r}" for org_glob in ivp_extra),
         ]
         raise GuardUsageError(
-            "FIRST_PARTY_ORG_GLOBS and FIRST_PARTY_IVP disagree: "
+            "FIRST_PARTY_ORG_GLOBS and FIRST_PARTY_IVP_ATTESTORS disagree: "
             + "; ".join(problems)
+        )
+
+    attestor_order_orgs = set(FIRST_PARTY_IVP_ATTESTOR_ORDER)
+    attestor_order_missing = sorted(ivp_orgs - attestor_order_orgs)
+    attestor_order_extra = sorted(attestor_order_orgs - ivp_orgs)
+    if attestor_order_missing or attestor_order_extra:
+        problems = [
+            *(
+                f"missing IVP attestor order entry for {org_glob!r}"
+                for org_glob in attestor_order_missing
+            ),
+            *(
+                f"extra IVP attestor order entry for {org_glob!r}"
+                for org_glob in attestor_order_extra
+            ),
+        ]
+        raise GuardUsageError(
+            "FIRST_PARTY_IVP_ATTESTOR_ORDER and FIRST_PARTY_IVP_ATTESTORS "
+            "disagree: " + "; ".join(problems)
         )
 
 
@@ -405,7 +485,7 @@ def parse_args() -> argparse.Namespace:
             "Scan raw YAML for first-party GHCR image refs that are not covered "
             "by Kyverno verifyImages rules with the effective "
             "FIRST_PARTY_ENFORCEMENT_MODE action (Audit; the legacy policy is retired "
-            "by PR-C2, not restored — live enforcement is on the IVPs)."
+            "by PR-C2, not restored — live enforcement is on the merged IVP)."
         )
     )
     parser.add_argument(
@@ -771,62 +851,81 @@ def canonical_attestors_for(org_glob: str) -> object:
     ]
 
 
-def canonical_ivp_match_expression(org_glob: str) -> str:
-    prefix = org_glob[:-1]
+def canonical_ivp_match_expression() -> str:
+    terms = " || ".join(
+        f"c.image.startsWith('{prefix}')" for prefix in FIRST_PARTY_IVP_MATCH_PREFIXES
+    )
     clauses = [
         f"(has(object.spec.{field}) && object.spec.{field}.exists(c, "
-        f"c.image.startsWith('{prefix}')))"
+        f"{terms}))"
         for field in ("containers", "initContainers", "ephemeralContainers")
     ]
     return "object != null && (\n  " + " ||\n  ".join(clauses) + "\n)"
 
 
-def canonical_ivp_match_expression_normalized(org_glob: str) -> str:
-    return normalize_whitespace(canonical_ivp_match_expression(org_glob))
+def canonical_ivp_match_expression_normalized() -> str:
+    return normalize_whitespace(canonical_ivp_match_expression())
 
 
-def canonical_ivp_validation_expression(attestor: str) -> str:
+def canonical_ivp_validation_expression() -> str:
+    dispatch_orgs = FIRST_PARTY_IVP_ATTESTOR_ORDER
+    dispatch_lines = [
+        f"  image.startsWith('{org_glob[:-1]}') ? "
+        f"verifyImageSignatures(image, "
+        f"[attestors.{FIRST_PARTY_IVP_ATTESTORS[org_glob]}]) > 0 :"
+        for org_glob in dispatch_orgs[:-1]
+    ]
+    dispatch_lines.append(
+        "  verifyImageSignatures(image, "
+        f"[attestors.{FIRST_PARTY_IVP_ATTESTORS[dispatch_orgs[-1]]}]) > 0)"
+    )
+    dispatch = "\n".join(dispatch_lines)
     clauses = [
-        f"images.{field}.map(image, verifyImageSignatures(image, "
-        f"[attestors.{attestor}])).all(e, e > 0)"
+        f"images.{field}.all(image,\n"
+        f"{dispatch}"
         for field in ("containers", "initContainers", "ephemeralContainers")
     ]
     return " &&\n".join(clauses)
 
 
-def canonical_ivp_validation_expression_normalized(attestor: str) -> str:
-    return normalize_whitespace(canonical_ivp_validation_expression(attestor))
+def canonical_ivp_validation_expression_normalized() -> str:
+    return normalize_whitespace(canonical_ivp_validation_expression())
 
 
-def canonical_ivp_attestors_for(org_glob: str) -> object:
+def canonical_ivp_attestor_for(org_glob: str) -> object:
     # node_to_data returns raw scalar strings, so booleans are the strings "false".
-    attestor_id = FIRST_PARTY_IVP[org_glob]["attestor"]
+    attestor_id = FIRST_PARTY_IVP_ATTESTORS[org_glob]
     identity = CANONICAL_FIRST_PARTY_ATTESTORS[org_glob]
     # In the IVP cosign schema ``ctlog`` is a SIBLING of ``keyless`` under
     # ``cosign`` (unlike the legacy verifyImages shape, where rekor/ctlog nest
     # inside keyless). The rekor pubkey lives at ctlog.rekorPubKey.
-    return [
-        {
-            "name": attestor_id,
-            "cosign": {
-                "keyless": {
-                    "identities": [
-                        {
-                            "issuer": identity["issuer"],
-                            "subjectRegExp": identity["subjectRegExp"],
-                        }
-                    ],
-                    "roots": FULCIO_ROOTS_PEM,
-                },
-                "ctlog": {
-                    "url": REKOR_URL,
-                    "rekorPubKey": REKOR_PUBKEY_PEM,
-                    "ctLogPubKey": CTFE_PUBKEY_PEM,
-                    "insecureIgnoreTlog": "false",
-                    "insecureIgnoreSCT": "false",
-                },
+    return {
+        "name": attestor_id,
+        "cosign": {
+            "keyless": {
+                "identities": [
+                    {
+                        "issuer": identity["issuer"],
+                        "subjectRegExp": identity["subjectRegExp"],
+                    }
+                ],
+                "roots": FULCIO_ROOTS_PEM,
             },
-        }
+            "ctlog": {
+                "url": REKOR_URL,
+                "rekorPubKey": REKOR_PUBKEY_PEM,
+                "ctLogPubKey": CTFE_PUBKEY_PEM,
+                "insecureIgnoreTlog": "false",
+                "insecureIgnoreSCT": "false",
+            },
+        },
+    }
+
+
+def canonical_ivp_attestors() -> object:
+    return [
+        canonical_ivp_attestor_for(org_glob)
+        for org_glob in FIRST_PARTY_IVP_ATTESTOR_ORDER
     ]
 
 
@@ -1039,6 +1138,17 @@ def extract_ivp_from_document(
     ) if "matchConstraints" in spec_fields else None
     match_conditions = extract_match_conditions(spec_fields)
 
+    autogen_controllers: tuple[str, ...] = ()
+    autogen_pair = mapping_field(spec_fields, "autogen")
+    if autogen_pair is not None:
+        autogen_fields = mapping_fields(autogen_pair[0])
+        pod_controllers_pair = mapping_field(autogen_fields, "podControllers")
+        if pod_controllers_pair is not None:
+            pod_controllers_fields = mapping_fields(pod_controllers_pair[0])
+            autogen_controllers = string_list(
+                pod_controllers_fields.get("controllers", (None, 0))[0]
+            )
+
     match_image_references: list[str] = []
     match_image_references_pair = sequence_field(spec_fields, "matchImageReferences")
     if match_image_references_pair is not None:
@@ -1079,6 +1189,7 @@ def extract_ivp_from_document(
         failure_policy=failure_policy,
         admission_enabled=admission_enabled,
         background_enabled=background_enabled,
+        autogen_controllers=autogen_controllers,
         match_constraints=match_constraints,
         match_conditions=match_conditions,
         match_image_references=tuple(match_image_references),
@@ -1406,9 +1517,24 @@ def find_ivp_violations(
     ivps: list[ImageValidatingPolicyDocument],
 ) -> list[str]:
     findings: list[str] = []
-    ivps_by_name: dict[str, ImageValidatingPolicyDocument] = {}
-    for ivp in ivps:
-        ivps_by_name.setdefault(ivp.name, ivp)
+
+    if len(ivps) != 1:
+        found = ", ".join(
+            f"{display_path(ivp.path)}:{ivp.line} ({ivp.name})"
+            for ivp in sorted(ivps, key=lambda item: (display_path(item.path), item.line))
+        ) or "<none>"
+        findings.append(
+            "source policy files must contain exactly one ImageValidatingPolicy "
+            f"for first-party admission enforcement, named "
+            f"{FIRST_PARTY_IVP_POLICY_NAME}: found {len(ivps)}: {found}"
+        )
+
+    merged_ivps = [ivp for ivp in ivps if ivp.name == FIRST_PARTY_IVP_POLICY_NAME]
+    ivp = merged_ivps[0] if merged_ivps else None
+    if ivp is None:
+        findings.append(
+            f"merged ImageValidatingPolicy {FIRST_PARTY_IVP_POLICY_NAME} not found"
+        )
 
     # Brick-safety (universal): a Fail (or default-Fail) IVP with empty
     # matchConditions is placed in Kyverno's shared cluster-wide fail webhook and
@@ -1422,132 +1548,225 @@ def find_ivp_violations(
                 f"webhook: {display_path(ivp.path)}:{ivp.line} ({ivp.name})"
             )
 
+    if ivp is None:
+        return findings
+
+    ivp_ref = f"{display_path(ivp.path)}:{ivp.line} ({ivp.name})"
+
+    if list(ivp.validation_actions) != [IVP_VALIDATION_ACTION]:
+        findings.append(
+            "ImageValidatingPolicy spec.validationActions must be "
+            f"[{IVP_VALIDATION_ACTION}]: {ivp_ref} "
+            f"(found {list(ivp.validation_actions)})"
+        )
+
+    if ivp.failure_policy != IVP_REQUIRED_FAILURE_POLICY:
+        found = ivp.failure_policy if ivp.failure_policy is not None else "<unset>"
+        findings.append(
+            "ImageValidatingPolicy must set spec.failurePolicy: "
+            f"{IVP_REQUIRED_FAILURE_POLICY}: {ivp_ref} (found {found})"
+        )
+
+    if ivp.admission_enabled != "true":
+        found = (
+            ivp.admission_enabled if ivp.admission_enabled is not None else "<unset>"
+        )
+        findings.append(
+            "ImageValidatingPolicy must set "
+            "spec.evaluation.admission.enabled: true (admission-path "
+            f"verification is the migration's whole point): {ivp_ref} "
+            f"(found {found})"
+        )
+
+    if ivp.background_enabled != "true":
+        found = (
+            ivp.background_enabled
+            if ivp.background_enabled is not None
+            else "<unset>"
+        )
+        findings.append(
+            "ImageValidatingPolicy must set "
+            f"spec.evaluation.background.enabled: true: {ivp_ref} "
+            f"(found {found})"
+        )
+
+    if tuple(ivp.autogen_controllers) != FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS:
+        findings.append(
+            "ImageValidatingPolicy spec.autogen.podControllers.controllers must "
+            "preserve Kyverno's full default controller set "
+            f"{list(FIRST_PARTY_IVP_AUTOGEN_CONTROLLERS)}: {ivp_ref} "
+            f"(found {list(ivp.autogen_controllers)})"
+        )
+
+    if ivp.match_constraints != IVP_MATCH_CONSTRAINTS:
+        findings.append(
+            "ImageValidatingPolicy matchConstraints must exactly equal the "
+            f"unnarrowed Pod CREATE/UPDATE form: {ivp_ref}"
+        )
+
+    if len(ivp.match_conditions) != 1:
+        findings.append(
+            "ImageValidatingPolicy must declare exactly one matchCondition "
+            f"with the canonical merged first-party expression: {ivp_ref} "
+            f"(found {len(ivp.match_conditions)})"
+        )
+    else:
+        condition = ivp.match_conditions[0]
+        if condition.name != FIRST_PARTY_MATCH_CONDITION_NAME:
+            found = condition.name if condition.name is not None else "<unset>"
+            findings.append(
+                "ImageValidatingPolicy matchCondition has unexpected name: "
+                f"{display_path(ivp.path)}:{condition.line} ({ivp.name}) "
+                f"(found {found})"
+            )
+        if normalize_whitespace(
+            condition.expression
+        ) != canonical_ivp_match_expression_normalized():
+            findings.append(
+                "ImageValidatingPolicy matchConditions expression does not "
+                "exactly match the canonical merged first-party Pod CEL: "
+                f"{display_path(ivp.path)}:{condition.line} ({ivp.name})"
+            )
+
+    if tuple(ivp.match_image_references) != FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES:
+        findings.append(
+            "ImageValidatingPolicy matchImageReferences must be exactly "
+            f"{list(FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES)}: {ivp_ref} "
+            f"(found {list(ivp.match_image_references)})"
+        )
+
+    if tuple(ivp.credentials_secrets) != FIRST_PARTY_IVP_CREDENTIALS:
+        findings.append(
+            "ImageValidatingPolicy spec.credentials.secrets must be exactly "
+            f"{list(FIRST_PARTY_IVP_CREDENTIALS)}: {ivp_ref} "
+            f"(found {list(ivp.credentials_secrets)})"
+        )
+
+    if ivp.attestors != canonical_ivp_attestors():
+        findings.append(
+            "ImageValidatingPolicy attestors must exactly match the guard "
+            "canonical offline keyless "
+            "identities/roots/ctlog.rekorPubKey/ctlog.ctLogPubKey triples for "
+            f"all first-party orgs: {ivp_ref}"
+        )
+
+    actual_expressions = [
+        normalize_whitespace(expression)
+        for expression in ivp.validation_expressions
+    ]
+    if actual_expressions != [canonical_ivp_validation_expression_normalized()]:
+        findings.append(
+            "ImageValidatingPolicy validations must be exactly one "
+            "verifyImageSignatures expression over "
+            "containers/initContainers/ephemeralContainers with per-image "
+            f"attestor dispatch for all first-party orgs: {ivp_ref}"
+        )
+
     for org_glob in FIRST_PARTY_ORG_GLOBS:
-        spec = FIRST_PARTY_IVP[org_glob]
-        policy_name = spec["policy_name"]
-        ivp = ivps_by_name.get(policy_name)
-        if ivp is None:
+        probe = org_probe(org_glob)
+        if not ivp_covers(ivp, probe):
             findings.append(
                 f"first-party org {org_glob} has no ImageValidatingPolicy "
-                f"{policy_name} (admission-path signature verification)"
-            )
-            continue
-
-        ivp_ref = f"{display_path(ivp.path)}:{ivp.line} ({ivp.name})"
-
-        if list(ivp.validation_actions) != [IVP_VALIDATION_ACTION]:
-            findings.append(
-                "ImageValidatingPolicy spec.validationActions must be "
-                f"[{IVP_VALIDATION_ACTION}]: {ivp_ref} "
-                f"(found {list(ivp.validation_actions)})"
-            )
-
-        if ivp.failure_policy != IVP_REQUIRED_FAILURE_POLICY:
-            found = ivp.failure_policy if ivp.failure_policy is not None else "<unset>"
-            findings.append(
-                "ImageValidatingPolicy must set spec.failurePolicy: "
-                f"{IVP_REQUIRED_FAILURE_POLICY}: {ivp_ref} (found {found})"
-            )
-
-        if ivp.admission_enabled != "true":
-            found = (
-                ivp.admission_enabled if ivp.admission_enabled is not None else "<unset>"
-            )
-            findings.append(
-                "ImageValidatingPolicy must set "
-                "spec.evaluation.admission.enabled: true (admission-path "
-                f"verification is the migration's whole point): {ivp_ref} "
-                f"(found {found})"
-            )
-
-        if ivp.background_enabled != "true":
-            found = (
-                ivp.background_enabled
-                if ivp.background_enabled is not None
-                else "<unset>"
-            )
-            findings.append(
-                "ImageValidatingPolicy must set "
-                f"spec.evaluation.background.enabled: true: {ivp_ref} "
-                f"(found {found})"
-            )
-
-        if ivp.match_constraints != IVP_MATCH_CONSTRAINTS:
-            findings.append(
-                "ImageValidatingPolicy matchConstraints must exactly equal the "
-                f"unnarrowed Pod CREATE/UPDATE form: {ivp_ref}"
-            )
-
-        if len(ivp.match_conditions) != 1:
-            findings.append(
-                "ImageValidatingPolicy must declare exactly one matchCondition "
-                f"with the canonical first-party expression: {ivp_ref} "
-                f"(found {len(ivp.match_conditions)})"
-            )
-        else:
-            condition = ivp.match_conditions[0]
-            if condition.name != FIRST_PARTY_MATCH_CONDITION_NAME:
-                found = condition.name if condition.name is not None else "<unset>"
-                findings.append(
-                    "ImageValidatingPolicy matchCondition has unexpected name: "
-                    f"{display_path(ivp.path)}:{condition.line} ({ivp.name}) "
-                    f"(found {found})"
-                )
-            if normalize_whitespace(
-                condition.expression
-            ) != canonical_ivp_match_expression_normalized(org_glob):
-                findings.append(
-                    "ImageValidatingPolicy matchConditions expression does not "
-                    f"exactly match the canonical first-party Pod CEL for "
-                    f"{org_glob}: {display_path(ivp.path)}:{condition.line} "
-                    f"({ivp.name})"
-                )
-
-        if list(ivp.match_image_references) != [org_glob]:
-            findings.append(
-                "ImageValidatingPolicy matchImageReferences must be exactly "
-                f"['{org_glob}']: {ivp_ref} "
-                f"(found {list(ivp.match_image_references)})"
-            )
-
-        if tuple(ivp.credentials_secrets) != tuple(spec["credentials"]):
-            findings.append(
-                "ImageValidatingPolicy spec.credentials.secrets must be exactly "
-                f"{list(spec['credentials'])} for {org_glob}: {ivp_ref} "
-                f"(found {list(ivp.credentials_secrets)})"
-            )
-
-        if ivp.attestors != canonical_ivp_attestors_for(org_glob):
-            findings.append(
-                "ImageValidatingPolicy attestors must exactly match the guard "
-                "canonical offline keyless "
-                "identities/roots/ctlog.rekorPubKey/ctlog.ctLogPubKey triple for "
-                f"{org_glob}: {ivp_ref}"
-            )
-
-        expected_expression = canonical_ivp_validation_expression_normalized(
-            spec["attestor"]
-        )
-        actual_expressions = [
-            normalize_whitespace(expression)
-            for expression in ivp.validation_expressions
-        ]
-        if actual_expressions != [expected_expression]:
-            findings.append(
-                "ImageValidatingPolicy validations must be exactly one "
-                "verifyImageSignatures expression over "
-                "containers/initContainers/ephemeralContainers for "
-                f"{org_glob}: {ivp_ref}"
+                "matchImageReferences coverage"
             )
 
     for ref in sorted(
         first_party_refs, key=lambda item: (display_path(item.path), item.line)
     ):
-        if not any(ivp_covers(ivp, ref.name) for ivp in ivps):
+        if not ivp_covers(ivp, ref.name):
             findings.append(
                 "first-party image not covered by an ImageValidatingPolicy: "
                 f"{display_path(ref.path)}:{ref.line} ({ref.name})"
             )
+
+    return findings
+
+
+def rendered_ivps_from_kustomization_directory(
+    directory: Path, seen: set[Path] | None = None
+) -> tuple[list[ImageValidatingPolicyDocument], list[str]]:
+    seen = seen or set()
+    directory = directory.resolve()
+    if directory in seen:
+        return [], []
+    seen.add(directory)
+
+    kustomization_path = kustomization_path_for_directory(directory)
+    if kustomization_path is None:
+        return [], [
+            "rendered Kyverno policy set cannot be checked because "
+            f"{display_path(directory)} has no kustomization.yaml"
+        ]
+
+    rendered_ivps: list[ImageValidatingPolicyDocument] = []
+    findings: list[str] = []
+    for resource in kustomization_resource_entries(kustomization_path):
+        if "://" in resource:
+            continue
+        target = (directory / resource).resolve()
+        if target.is_dir():
+            child_ivps, child_findings = rendered_ivps_from_kustomization_directory(
+                target, seen
+            )
+            rendered_ivps.extend(child_ivps)
+            findings.extend(child_findings)
+            continue
+        if not target.is_file():
+            findings.append(
+                "rendered Kyverno policy kustomization resource does not exist: "
+                f"{display_path(kustomization_path)} -> {resource}"
+            )
+            continue
+        if target.suffix not in YAML_SUFFIXES:
+            continue
+        _refs, _policies, target_ivps, _settings = parse_yaml_file(target)
+        rendered_ivps.extend(target_ivps)
+
+    return rendered_ivps, findings
+
+
+def rendered_ivp_count_findings(
+    policies: list[PolicyDocument],
+    ivps: list[ImageValidatingPolicyDocument],
+) -> list[str]:
+    findings: list[str] = []
+    policy_dirs: dict[Path, list[PolicyDocument | ImageValidatingPolicyDocument]] = {}
+    for policy in [*policies, *ivps]:
+        policy_dirs.setdefault(policy.path.parent, []).append(policy)
+
+    for directory, directory_policies in sorted(
+        policy_dirs.items(), key=lambda item: display_path(item[0])
+    ):
+        has_first_party_policy = any(
+            isinstance(policy, PolicyDocument)
+            and policy.name in IMAGE_SIGNATURE_POLICY_NAMES
+            for policy in directory_policies
+        )
+        has_source_ivp = any(
+            isinstance(policy, ImageValidatingPolicyDocument)
+            for policy in directory_policies
+        )
+        if not has_first_party_policy and not has_source_ivp:
+            continue
+
+        rendered_ivps, render_findings = rendered_ivps_from_kustomization_directory(
+            directory
+        )
+        findings.extend(render_findings)
+        if len(rendered_ivps) == 1 and rendered_ivps[0].name == FIRST_PARTY_IVP_POLICY_NAME:
+            continue
+
+        found = ", ".join(
+            f"{display_path(ivp.path)}:{ivp.line} ({ivp.name})"
+            for ivp in sorted(
+                rendered_ivps, key=lambda item: (display_path(item.path), item.line)
+            )
+        ) or "<none>"
+        findings.append(
+            "rendered Kyverno policy set must contain exactly one "
+            f"ImageValidatingPolicy, named {FIRST_PARTY_IVP_POLICY_NAME}: "
+            f"{display_path(directory)} found {len(rendered_ivps)}: {found}"
+        )
 
     return findings
 
@@ -1635,6 +1854,7 @@ def evaluate_roots(roots: Iterable[Path]) -> GuardResult:
         kyverno_default_registry_settings,
     )
     findings.extend(find_ivp_violations(first_party_refs, ivps))
+    findings.extend(rendered_ivp_count_findings(policies, ivps))
     findings.extend(policy_resource_membership_findings([*policies, *ivps]))
     return GuardResult(
         paths=paths,
@@ -1680,10 +1900,13 @@ def print_pass(result: GuardResult) -> None:
     print(
         f"ImageValidatingPolicy admission-path enforcement "
         f"({IVP_VALIDATION_ACTION}/{IVP_REQUIRED_FAILURE_POLICY}), "
-        f"{len(result.ivps)} first-party IVPs:"
+        f"{len(result.ivps)} first-party IVP:"
     )
-    for org_glob in FIRST_PARTY_ORG_GLOBS:
-        print(f"  - {FIRST_PARTY_IVP[org_glob]['policy_name']} -> {org_glob}")
+    for ivp in result.ivps:
+        print(
+            f"  - {ivp.name} -> "
+            f"{', '.join(FIRST_PARTY_IVP_MATCH_IMAGE_REFERENCES)}"
+        )
 
 
 def main() -> int:
