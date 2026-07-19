@@ -206,6 +206,19 @@ KYVERNO_EXEMPTION_SURFACE_NAMESPACES = {
 KYVERNO_DEFAULT_REGISTRY = "docker.io"
 YAML_SUFFIXES = {".yaml", ".yml"}
 KUSTOMIZATION_FILENAMES = ("kustomization.yaml", "kustomization.yml")
+KUSTOMIZATION_KINDS = {"Kustomization", "Component"}
+KUSTOMIZATION_WALKED_ENTRY_FIELDS = ("resources", "bases", "components")
+KUSTOMIZATION_UNKNOWN_GRAPH_FIELDS = (
+    "generators",
+    "transformers",
+    "helmCharts",
+    "helmChartInflationGenerator",
+    "crds",
+)
+KUSTOMIZATION_DIRECT_UNKNOWN_GRAPH_FIELDS = (
+    "configMapGenerator",
+    "secretGenerator",
+)
 KYVERNO_POLICY_KINDS = {"ClusterPolicy", "Policy"}
 
 # ---- ImageValidatingPolicy (IVP) first-party admission-path verification ------
@@ -2486,6 +2499,8 @@ def flux_spec_path_directory(
 def kustomization_graph_contains_ivp(
     directory: Path,
     seen: set[Path] | None = None,
+    *,
+    fail_closed_on_direct_unknowns: bool = True,
 ) -> bool:
     directory = directory.resolve()
     seen = seen or set()
@@ -2503,32 +2518,50 @@ def kustomization_graph_contains_ivp(
     except (OSError, yaml.YAMLError):
         return True
 
+    if not documents:
+        return True
+
     entries: list[str] = []
     for document in documents:
         if not isinstance(document, dict):
-            continue
-        if document.get("kind") != "Kustomization" and document.get("kind") != "Component":
-            continue
-        for field in ("resources", "components"):
+            return True
+        if document.get("kind") not in KUSTOMIZATION_KINDS:
+            return True
+        if any(field in document for field in KUSTOMIZATION_UNKNOWN_GRAPH_FIELDS):
+            return True
+        if fail_closed_on_direct_unknowns and any(
+            field in document for field in KUSTOMIZATION_DIRECT_UNKNOWN_GRAPH_FIELDS
+        ):
+            return True
+        for field in KUSTOMIZATION_WALKED_ENTRY_FIELDS:
             field_entries = document.get(field)
-            if not isinstance(field_entries, list):
+            if field_entries is None:
                 continue
+            if not isinstance(field_entries, list):
+                return True
             for entry in field_entries:
-                if isinstance(entry, str) and entry.strip():
-                    entries.append(entry.strip())
+                if not isinstance(entry, str) or not entry.strip():
+                    return True
+                entries.append(entry.strip())
 
     for entry in entries:
         if "://" in entry:
+            if fail_closed_on_direct_unknowns:
+                return True
             continue
         target = (directory / entry).resolve()
         if target.is_dir():
-            if kustomization_graph_contains_ivp(target, seen):
+            if kustomization_graph_contains_ivp(
+                target,
+                seen,
+                fail_closed_on_direct_unknowns=False,
+            ):
                 return True
             continue
         if not target.exists():
             return True
-        if not target.is_file() or target.suffix not in YAML_SUFFIXES:
-            continue
+        if not target.is_file():
+            return True
         try:
             _refs, _policies, ivps, _flux_kustomizations, _settings = parse_yaml_file(
                 target

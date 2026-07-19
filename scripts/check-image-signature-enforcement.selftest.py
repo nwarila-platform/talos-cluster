@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -55,6 +56,64 @@ class CaseResult:
 def write_yaml(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
+
+
+def assert_kubectl_renders_ivp(directory: Path) -> None:
+    try:
+        completed = subprocess.run(
+            ("kubectl", "kustomize", str(directory)),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"kubectl is required for render-backed selftest case: {directory}"
+        ) from exc
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "kubectl kustomize failed in render-backed selftest case "
+            f"for {directory} (rc {completed.returncode}): "
+            f"{completed.stderr.strip()}"
+        )
+
+    rendered_documents = list(guard.yaml.safe_load_all(completed.stdout))
+    for document in rendered_documents:
+        if not isinstance(document, dict):
+            continue
+        metadata = document.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if (
+            document.get("kind") == guard.IVP_KIND
+            and metadata.get("name") == guard.FIRST_PARTY_IVP_POLICY_NAME
+        ):
+            return
+
+    raise RuntimeError(
+        "kubectl kustomize did not render the expected "
+        f"{guard.IVP_KIND}/{guard.FIRST_PARTY_IVP_POLICY_NAME}: {directory}"
+    )
+
+
+def assert_kubectl_available() -> None:
+    try:
+        completed = subprocess.run(
+            ("kubectl", "version", "--client"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "kubectl is required for render-backed selftest cases"
+        ) from exc
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "kubectl is required for render-backed selftest cases "
+            f"(rc {completed.returncode}): {completed.stderr.strip()}"
+        )
 
 
 def policy_dir(root: Path) -> Path:
@@ -1586,6 +1645,113 @@ def flux_dangling_spec_path_fixture(root: Path) -> None:
     )
 
 
+def write_shadow_flux_kustomization(
+    root: Path,
+    *,
+    name: str,
+    spec_path: str,
+) -> None:
+    kyverno_dir = policy_dir(root).parent
+    flux_filename = f"kustomization-{name}.yaml"
+    write_yaml(
+        kyverno_dir / flux_filename,
+        f"""
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: {name}
+          namespace: flux-system
+        spec:
+          interval: 10m
+          path: {spec_path}
+          prune: true
+          sourceRef:
+            kind: GitRepository
+            name: flux-system
+        """,
+    )
+    write_yaml(
+        kyverno_dir / "kustomization.yaml",
+        f"""
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - kustomization-policies.yaml
+          - {flux_filename}
+        """,
+    )
+
+
+def flux_shadow_non_yaml_ivp_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    shadow_dir = policy_dir(root).parent / "shadow"
+    write_yaml(
+        shadow_dir / "kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - ivp.conf
+        """,
+    )
+    write_yaml(
+        shadow_dir / "ivp.conf",
+        ivp_yaml(validation_expression="true"),
+    )
+    assert_kubectl_renders_ivp(shadow_dir)
+    write_shadow_flux_kustomization(
+        root,
+        name="kyverno-policies-shadow",
+        spec_path="./clusters/talos-cluster/apps/kyverno/shadow",
+    )
+
+
+def flux_shadow_no_kind_kustomization_fixture(root: Path) -> None:
+    write_real_shape_fixture(root)
+    shadow_dir = policy_dir(root).parent / "shadow-no-kind"
+    write_yaml(
+        shadow_dir / "kustomization.yaml",
+        """
+        resources:
+          - ivp.conf
+        """,
+    )
+    write_yaml(
+        shadow_dir / "ivp.conf",
+        ivp_yaml(validation_expression="true"),
+    )
+    assert_kubectl_renders_ivp(shadow_dir)
+    write_shadow_flux_kustomization(
+        root,
+        name="kyverno-policies-shadow-no-kind",
+        spec_path="./clusters/talos-cluster/apps/kyverno/shadow-no-kind",
+    )
+
+
+def flux_shadow_generators_fail_closed_fixture(root: Path) -> None:
+    assert_kubectl_available()
+    write_real_shape_fixture(root)
+    shadow_dir = policy_dir(root).parent / "shadow-generators"
+    write_yaml(
+        shadow_dir / "kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        generators:
+          - ivp-generator.yaml
+        """,
+    )
+    write_yaml(
+        shadow_dir / "ivp-generator.yaml",
+        ivp_yaml(validation_expression="true"),
+    )
+    write_shadow_flux_kustomization(
+        root,
+        name="kyverno-policies-shadow-generators",
+        spec_path="./clusters/talos-cluster/apps/kyverno/shadow-generators",
+    )
+
+
 def ivp_file_not_in_kustomization_fixture(root: Path) -> None:
     write_real_shape_fixture(root, ivp_kustomization_omit=True)
 
@@ -2360,6 +2526,36 @@ def main() -> int:
             (
                 "Flux Kustomization spec.path does not exist in this repo",
                 "dangling-local-path",
+            ),
+        ),
+        run_case(
+            "flux-shadow-non-yaml-ivp",
+            1,
+            "ATTACK A non-YAML resource IVP bites",
+            flux_shadow_non_yaml_ivp_fixture,
+            (
+                "<kubectl kustomize>",
+                "validations must be exactly one verifyImageSignatures expression",
+            ),
+        ),
+        run_case(
+            "flux-shadow-no-kind-kustomization",
+            1,
+            "ATTACK C2 kindless kustomization bites",
+            flux_shadow_no_kind_kustomization_fixture,
+            (
+                "<kubectl kustomize>",
+                "validations must be exactly one verifyImageSignatures expression",
+            ),
+        ),
+        run_case(
+            "flux-shadow-generators-fail-closed",
+            1,
+            "unwalked generators field forces render",
+            flux_shadow_generators_fail_closed_fixture,
+            (
+                "kubectl kustomize failed",
+                "shadow-generators",
             ),
         ),
         run_case(
