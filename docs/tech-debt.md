@@ -660,6 +660,59 @@ other direction.
 
 ---
 
+## TD-0013 — Image-verification proof stops at the signature branch, and the engine trusts its own annotation
+
+**Opened:** 2026-07-20 · **Status:** Open (accepted by the owner) · **Priority:** Medium
+
+### What IS proven, so this is scoped honestly
+CP-1 is live: the `verify-first-party` ImageValidatingPolicy runs `[Deny]` / `failurePolicy: Fail`.
+CP-2's **core** is proven — a fetchable-but-unsigned first-party subject is DENIED on the
+**signature** path, with cosign independently reproducing `no signatures found` against the
+policy's exact pinned trust root, Kyverno denying via the CEL validation-false branch (distinct
+from the fetch-error branch), and a signed control admitting. A signed `nwarila-platform` image
+was additionally observed being admitted through the live gate on 2026-07-20.
+
+### Gap 1 — the identity-mismatch branch is unproven (formerly "CP-2b")
+Never demonstrated: a *validly signed* image whose signer identity does **not** match the
+policy's pinned `subjectRegExp`/issuer. That is the branch which distinguishes "a signature
+exists" from "the RIGHT party signed it" — the property the policy actually exists to assert.
+
+**Why deferred:** it requires pushing a deliberately mis-signed artifact into a first-party
+namespace, which needs `packages:write`. No GitHub App in the estate carries it, and the
+classic PATs available are `read:packages` only.
+
+**What closes it:** a `packages:write` credential plus a throwaway mis-signed image, pushed,
+denied, and deleted. Owner has previously authorised build-push-delete for this purpose.
+
+### Gap 2 — upstream: the validating webhook trusts an annotation it did not re-verify
+`kyverno/kyverno` **#16336** (open, milestone *Kyverno Release 1.19.0*): the
+ImageValidatingPolicy validating webhook trusts the `image-verification-outcomes` annotation
+written by the mutating phase rather than re-verifying. The related key/certificate cosign
+defect **#16435** is closed against the same milestone.
+
+**There is no version to upgrade to.** Verified 2026-07-20: `v1.18.2` (published 2026-07-10) is
+the newest release upstream publishes — **no v1.19 release, tag, or release-candidate exists**.
+We already run `v1.18.2`. The fix is merged but unshipped, so this is a wait, not a task.
+
+**Consequence while waiting:** the mutate→annotate→validate handoff is the known cause of
+intermittent verification anomalies, so a single point-in-time canary is weak evidence about
+this engine. Prefer sustained or repeated probes over one-shot checks when asserting
+image-verification behaviour.
+
+### Current state and impact
+Enforcement is real and fail-closed; the unproven branch is *which signer*, not *whether
+signed*. An attacker would need to produce a validly-signed image under a Sigstore identity
+that the policy's pinned regex does not cover — and then rely on the annotation-trust defect —
+to benefit. Digest pinning and merge review remain in front of that path.
+
+### References
+- `clusters/talos-cluster/apps/kyverno/policies/ivp-verify-first-party.yaml`
+- [kyverno#16336](https://github.com/kyverno/kyverno/issues/16336) — open, milestone 1.19.0
+- [kyverno#16435](https://github.com/kyverno/kyverno/issues/16435) — closed, milestone 1.19.0
+- [ADR-0027]: fail-closed first-party image admission
+
+---
+
 [ADR-0010]: decision-records/repo/0010-adopt-kyverno-policy-engine.md
 [ADR-0002]: decision-records/org/0002-adopt-diataxis-documentation-framework.md
 [ADR-0021]: decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md
