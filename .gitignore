@@ -459,3 +459,4 @@
 !/.github/workflows/org-adr-auto-sync.yaml
 !/docs/kyverno-tests/
 !/docs/kyverno-tests/**
+!/docs/.b4-probe.md
