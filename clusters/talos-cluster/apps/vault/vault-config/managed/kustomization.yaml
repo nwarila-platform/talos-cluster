@@ -2,9 +2,11 @@
 # vault-config-managed Flux Kustomization (prune: false until S7 — see
 # apps/kustomization-vault-config-managed.yaml). Every CR here is an ADOPTION
 # of a pre-existing live object (adopt-before-prune, the crown-jewel care) —
-# EXCEPT the CP-5 vault-server policy/role pair, which is CREATE-class: the
-# operator's first reconcile writes the new live objects (forward-declared in
-# the bootstrap policy since S2b), so post-reconcile parity is their proof.
+# EXCEPT two CREATE-class pairs, whose first reconcile WRITES a new live object
+# (forward-declared in the bootstrap policy), so post-reconcile parity is their
+# proof rather than adoption fidelity:
+#   - the CP-5 vault-server policy/role pair (since S2b)
+#   - the B5 source-minter-nwp policy/role pair (nwarila-platform onboarding)
 #
 # NOT here (deliberately):
 # - bootstrap/ — the operator's OWN identity; never GitOps-applied (ADR-0028,
@@ -20,6 +22,7 @@ kind: Kustomization
 namespace: vault-config-operator
 resources:
   - policy-source-minter-hwg.yaml
+  - policy-source-minter-nwp.yaml
   - policy-tenant-read.yaml
   - policy-tenant-write.yaml
   - policy-vault-snapshot-backup.yaml
@@ -27,6 +30,7 @@ resources:
   - policy-vso-org-pull-read-nwp.yaml
   - policy-vault-server.yaml
   - role-source-minter-hwg.yaml
+  - role-source-minter-nwp.yaml
   - role-vault-snapshot-backup.yaml
   - role-vault-server.yaml
   - secretenginemount-pki-int-tcn.yaml

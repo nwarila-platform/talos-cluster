@@ -252,6 +252,7 @@ jobs:
       - name: "Guard self-test: reference-safety guard bites"
         run: python3 scripts/check-vault-config-reference-safety.selftest.py
 
+
       - name: "Guard self-test: stuck-Terminating detector bites (S7 #133)"
         run: python3 scripts/check-vault-config-terminating.selftest.py
 

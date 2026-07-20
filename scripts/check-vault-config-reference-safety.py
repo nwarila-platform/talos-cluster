@@ -73,16 +73,14 @@ CLUSTERS_DIR = Path("clusters")
 # (path, expected substring, role name it references)
 PINNED_CONSUMERS: tuple[tuple[str, str, str], ...] = (
     (
-        "clusters/talos-cluster/apps/source-rotator/cronjob.yaml",
+        "clusters/talos-cluster/apps/source-rotator/cronjob-hwg.yaml",
         "source-minter-hwg",
         "source-minter-hwg",
     ),
     (
-        # The ConfigMap's in-script fallback default is an INDEPENDENT
-        # reference: it would dangle even if the CronJob env were retired.
-        "clusters/talos-cluster/apps/source-rotator/configmap.yaml",
-        '"source-minter-hwg"',
-        "source-minter-hwg",
+        "clusters/talos-cluster/apps/source-rotator/cronjob-nwp.yaml",
+        "source-minter-nwp",
+        "source-minter-nwp",
     ),
     (
         "clusters/talos-cluster/apps/vault/restore-drill/s0-restore-generate-root.sh",

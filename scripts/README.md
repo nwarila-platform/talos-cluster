@@ -36,7 +36,7 @@ oversized/reinvents a wheel) · **CONSOLIDATE** (merge with a sibling / a shared
 |---|---|---|---|
 | `check-vault-policy-no-escalation.py` (878) | Managed Vault policy grants can't reach the management plane (allowlist + ACL path-subsumption `covers()`) — config-writer is root-equivalent | Vault doesn't constrain authored policies; nothing parses HCL path-subsumption → **NO** | **KEEP** — simplify only the bespoke HCL tokenizer (swap for a vetted lib; never touch `covers()`) |
 | `check-vault-config-operator-bootstrap-invariants.py` (416) | The operator's own identity + break-glass `vault-admin` are never self-managed/self-escalating (ADR-0028 bootstrap paradox) | none → **NO** | **KEEP** — highest-stakes anti-self-escalation invariant |
-| `check-vault-config-reference-safety.py` (417) | Every Vault-object reference (role→policy, issuer→mount, …) resolves to an in-git provider (S7 prune safety) | cross-CRD semantic refs are opaque to Flux/kustomize → **NO** | **KEEP** |
+| `check-vault-config-reference-safety.py` (415) | Every Vault-object reference (role→policy, issuer→mount, …) resolves to an in-git provider (S7 prune safety) | cross-CRD semantic refs are opaque to Flux/kustomize → **NO** | **KEEP** |
 | `check-vault-config-terminating.py` (118) | Daily: no managed CR stuck Terminating >30m (fire-and-forget prune blind spot, #133) | Flux reports the Kustomization Ready while the object hangs → **NO** | **KEEP** |
 | `check-vault-fold-invariants.sh` (72) | Vault stays folded into `apps/vault`; can't be silently recreated as a `deploy-*` repo | none (valid YAML to native tools) → **NO** | **KEEP** |
 | `check-live-vault-config-invariants.sh` (62) | Live Vault never enables unauthenticated generate-root (ADR-0019) | Kyverno runtime + this source-pin = deliberate defense-in-depth → **PARTIAL** | **KEEP** |
@@ -92,7 +92,7 @@ single source) so the guards evaporate, or failing that collapse 3→1 parameter
 | `check-text-encoding.py` (64) | No UTF-8 BOM / Windows-1252 mojibake in tracked text (Windows→Linux migration residue) | `.editorconfig`/pre-commit not CI-enforced here; mojibake bespoke → **PARTIAL** | **KEEP** — tiny, hermetic |
 | `render-readme-versions.py` (260) | README version pins derived from source of truth; `--check` fails if stale | Right pattern, but 10 brittle prose-anchored regexes | **SIMPLIFY** — move prose pins into a `README.md.tmpl` template |
 | `render-dr-schedule-values.py` (325) | DR schedule/retention numbers rendered from canonical manifests into 11 target doc lines; `--check` fails if stale | none; generation is the repo's preferred source-backed docs pattern | **KEEP** — additive precondition for cutting the curated schedule-claim guard |
-| `render-scripts-readme-counts.py` (164) | scripts/README line-count cells derived with `wc -l` semantics; `--check` fails if stale | none; generation removes the hand-maintained count drift class | **KEEP** |
+| `render-scripts-readme-counts.py` (192) | scripts/README line-count cells derived with `wc -l` semantics; `--check` fails if stale | none; generation removes the hand-maintained count drift class | **KEEP** |
 | `check-doc-links.py` (187) | No broken *relative* markdown links | `lychee --offline` / markdown-link-check do exactly this → **FULLY** | **CONSOLIDATE** — replace with `lychee --offline` (a pinned binary like actionlint) |
 
 ## Operational / lifecycle (thin `talosctl`/`aws`/Factory wrappers — zero-manual)

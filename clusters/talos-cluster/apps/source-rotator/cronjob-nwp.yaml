@@ -1,13 +1,28 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: source-rotator-hwg
+  name: source-rotator-nwp
   namespace: source-rotator
   labels:
     app.kubernetes.io/name: source-rotator
     app.kubernetes.io/component: source-token-minter
 spec:
-  schedule: "*/45 * * * *"
+  # Staggered ten minutes from the hwg rotator (0,45). This REDUCES but does not
+  # eliminate concurrency: activeDeadlineSeconds is 600s and the stagger is exactly
+  # 600s, so a slow hwg job can still overlap this one. That is tolerable - the two
+  # rotators use different Vault roles, different App keys, and — because each selects
+  # tenants by its own ORG_LABEL — disjoint tenant sets, so concurrent runs do not write
+  # the same key. (That disjointness is what makes overlap safe. The kv-v2 check-and-set
+  # the script sends is a client-side courtesy, not an enforced constraint: the ACL grants
+  # plain create/update. See TD-0012.) The stagger is GitHub rate-limit hygiene, not a
+  # correctness guarantee. Same 45/15-minute gap shape as hwg, which
+  # keeps every rotation inside the 1-hour GitHub App token lifetime.
+  #
+  # EXPECTED until the first nwarila-platform tenant is onboarded: this job SUCCEEDS
+  # as a no-op, logging "no tenants for org nwarila-platform". No namespace carries
+  # nwarila.io/org=nwarila-platform yet, so there is nothing to mint for. A green
+  # no-op here is correct behaviour, not a misconfiguration.
+  schedule: "10,55 * * * *"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   successfulJobsHistoryLimit: 3
@@ -19,10 +34,13 @@ spec:
       template:
         metadata:
           labels:
+            # Both labels are load-bearing: the source-rotator CiliumNetworkPolicy
+            # selects on this pair, so a pod missing either gets no egress to Vault
+            # or the GitHub API and fails closed.
             app.kubernetes.io/name: source-rotator
             app.kubernetes.io/component: source-token-minter
         spec:
-          serviceAccountName: source-rotator-hwg
+          serviceAccountName: source-rotator-nwp
           automountServiceAccountToken: true
           restartPolicy: Never
           securityContext:
@@ -41,17 +59,20 @@ spec:
                 - python3
                 - /script/minter.py
               env:
-                # Org label selects tenant namespaces; Vault role/key path keep the hwg prefix.
+                # ORG_LABEL is the FULL GitHub org name (the nwarila.io/org label value
+                # used to SELECT this org's tenant namespaces). The Vault role and key
+                # path use the PREFIX form ("nwp"). These two identifiers are NOT
+                # interchangeable - conflating them is what broke the B-apex minter.
                 - name: PYTHONDONTWRITEBYTECODE
                   value: "1"
                 - name: ORG_LABEL
-                  value: the-hero-wars-guys
+                  value: nwarila-platform
                 - name: VAULT_ADDR
                   value: https://vault.deploy-vault.svc.cluster.local:8200
                 - name: VAULT_ROLE
-                  value: source-minter-hwg
+                  value: source-minter-nwp
                 - name: VAULT_KEY_PATH
-                  value: secret/data/platform/org-pull/hwg/gitops-source-auth
+                  value: secret/data/platform/org-pull/nwp/gitops-source-auth
                 - name: VAULT_CACERT
                   value: /etc/vault-ca/ca.crt
               volumeMounts:
@@ -72,7 +93,7 @@ spec:
           volumes:
             - name: script
               configMap:
-                name: source-rotator-hwg-script
+                name: source-rotator-script
                 defaultMode: 0555
             - name: vault-ca
               configMap:

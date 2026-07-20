@@ -1,0 +1,32 @@
+# B5 Stage 0 — managed Kubernetes-auth role for the nwarila-platform source minter.
+# Authored (not adopted): no live role of this name existed before this commit, so
+# the operator's first reconcile is a genuine CREATE. Field-for-field mirror of
+# role-source-minter-hwg.yaml with the org prefix changed hwg -> nwp.
+# NOTE (declared, same as the hwg role): role reconciles are idempotent RE-WRITES,
+# not read-no-ops — the operator's equivalence compare (reflect.DeepEqual of
+# Go-typed desired vs JSON-decoded live) never matches for roles, so it rewrites
+# the same payload each reconcile. Harmless; verified for the hwg pair via
+# scripts/vault-config/verify-adoption-parity.py.
+# Connection: none (global VAULT_ADDR/VAULT_CACERT on the manager, PR #309).
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: KubernetesAuthEngineRole
+metadata:
+  name: source-minter-nwp
+  namespace: vault-config-operator
+spec:
+  path: kubernetes
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  targetServiceAccounts:
+    - source-rotator-nwp
+  targetNamespaces:
+    targetNamespaces:
+      - source-rotator
+  policies:
+    - source-minter-nwp
+  aliasNameSource: serviceaccount_uid
+  tokenTTL: 900
+  tokenNoDefaultPolicy: true
