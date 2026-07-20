@@ -82,15 +82,22 @@ def resolve_script_path(display: str, root: Path = Path(".")) -> Path:
     return matches[0]
 
 
+
+
 def render_readme(root: Path = Path(".")) -> RenderedDocument:
     current = read_text(root / README)
     row_count = 0
+    listed_rows: set[str] = set()
     loose_only_rows: list[str] = []
 
     def replace_row(match: re.Match[str]) -> str:
         nonlocal row_count
         row_count += 1
         display = match.group("display")
+        # Row IDENTITY, normalised: a row may legitimately cite "check-x.py",
+        # "./check-x.py", or a nested "vault-config/check-x.py". Comparing basenames of
+        # real rows is what makes the coverage check below trustworthy.
+        listed_rows.add(Path(display).name)
         line_count = wc_line_count(resolve_script_path(display, root=root))
         return f"{match.group('prefix')}{line_count}{match.group('suffix')}"
 
@@ -114,6 +121,27 @@ def render_readme(root: Path = Path(".")) -> RenderedDocument:
             "scripts/README.md row(s) look like manifest entries but did not match the expected cell format"
             f" ({row_count} strict rows, {row_count + len(loose_only_rows)} loose rows): {'; '.join(loose_only_rows)}"
         )
+
+    # COVERAGE, not just freshness. Refreshing the wc -l of rows that EXIST cannot notice a
+    # guard that was never listed at all, so a new guard could stay invisible in the audit
+    # manifest forever while this check reported green — the "derived value drifts, and no
+    # guard watches it" blind spot. Adding a guard must therefore also add its row.
+    # Membership is tested against PARSED ROW IDENTITIES, never a substring search of the
+    # document: scanning the raw text accepted a mere prose mention of a guard as though it
+    # were a manifest row, and rejected a legitimate "./check-x.py" row because the literal
+    # backticked basename did not appear.
+    unlisted = [
+        path.name
+        for path in sorted((root / "scripts").glob("check-*.py"))
+        if not path.name.endswith(".selftest.py") and path.name not in listed_rows
+    ]
+    if unlisted:
+        raise RenderError(
+            "scripts/README.md is the guard audit manifest but is MISSING a row for: "
+            + ", ".join(unlisted)
+            + " — add each guard's row (a missing row cannot be detected by refreshing existing rows)"
+        )
+
     rendered = "".join(rendered_lines)
     return RenderedDocument(path=README, current=current, rendered=rendered, row_count=row_count)
 

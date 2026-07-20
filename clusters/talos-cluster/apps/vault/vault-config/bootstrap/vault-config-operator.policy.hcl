@@ -39,6 +39,7 @@ path "auth/token/lookup-self" { capabilities = ["read"] }
 path "sys/policies/acl/tenant-read"           { capabilities = ["create", "read", "update"] }
 path "sys/policies/acl/tenant-write"          { capabilities = ["create", "read", "update"] }
 path "sys/policies/acl/source-minter-hwg"     { capabilities = ["create", "read", "update"] }
+path "sys/policies/acl/source-minter-nwp"     { capabilities = ["create", "read", "update"] }
 path "sys/policies/acl/vso-org-pull-read-hwg" { capabilities = ["create", "read", "update"] }
 path "sys/policies/acl/vso-org-pull-read-nwp" { capabilities = ["create", "read", "update"] }
 path "sys/policies/acl/vault-snapshot-backup" { capabilities = ["create", "read", "update"] }
@@ -47,6 +48,7 @@ path "sys/policies/acl/vault-server"          { capabilities = ["create", "read"
 # --- managed k8s-auth roles: auth/kubernetes/role/<name> (S4 adopt + S5 vault-server) ---
 path "auth/kubernetes/role/tenant"                { capabilities = ["create", "read", "update"] }
 path "auth/kubernetes/role/source-minter-hwg"     { capabilities = ["create", "read", "update"] }
+path "auth/kubernetes/role/source-minter-nwp"     { capabilities = ["create", "read", "update"] }
 path "auth/kubernetes/role/vso-org-pull-hwg"      { capabilities = ["create", "read", "update"] }
 path "auth/kubernetes/role/vso-org-pull-nwp"      { capabilities = ["create", "read", "update"] }
 path "auth/kubernetes/role/vault-snapshot-backup" { capabilities = ["create", "read", "update"] }

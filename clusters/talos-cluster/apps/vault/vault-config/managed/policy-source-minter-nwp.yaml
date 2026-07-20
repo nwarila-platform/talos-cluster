@@ -1,0 +1,49 @@
+# B5 Stage 0 — managed Vault ACL policy for the nwarila-platform source minter.
+# Authored (not adopted): unlike the hwg pair, no live policy of this name existed
+# before this commit, so the operator's first reconcile is a genuine CREATE. The
+# HCL grants the same PATH SET as policy-source-minter-hwg.yaml with the org prefix
+# changed hwg -> nwp. The two files are NOT byte-comparable: this one additionally
+# carries the cross-org risk commentary below (TD-0012), which has no hwg counterpart.
+# Diff the `path` lines, not the whole file.
+# Connection: none (global VAULT_ADDR/VAULT_CACERT on the manager, PR #309).
+# Content policing: scripts/check-vault-policy-no-escalation.py scans this CR's
+# spec.policy (deny-by-default allowlist) — the S0 escalation guard.
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: Policy
+metadata:
+  name: source-minter-nwp
+  namespace: vault-config-operator
+spec:
+  type: acl
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  policy: |
+    # B-apex source-minter (nwp). Reads ONLY the nwarila-platform org App key, mints
+    # per-repo contents:read tokens, and writes them to the per-tenant source-auth leaf.
+    # metadata read is required for the kv-v2 cas (check-and-set) version lookup;
+    # it exposes version info only, never the token value, and not other provisioned secrets.
+    # ACCEPTED RISK - the "+" is CROSS-ORG, not org-scoped. It matches any single path
+    # segment, so this role can write the source-auth leaf of ANY tenant namespace,
+    # including another organization's. With a single org that wildcard was effectively
+    # self-scoped; onboarding a second org makes it a real cross-org write capability.
+    # Vault ACL cannot express the scope we actually want ("namespaces beginning nwp-,
+    # source-auth leaf only"): "*" is legal only as the FINAL character of a path and
+    # "+" matches exactly one whole segment, so "nwp-*" or "nwp-+" cannot be combined
+    # with a deeper suffix. The alternatives are this (narrow leaf / any org) or
+    # "secret/data/nwp-*" (org-scoped / entire tenant subtree, including tenant state).
+    # Accepted because the blast radius is bounded: the repository URL lives in the
+    # GitRepository CR rather than this secret, so overwriting another org's leaf
+    # degrades that tenant's fetch (a DoS) but grants the writer no new access. Note the
+    # kv-v2 check-and-set the minter sends is OUR CLIENT's behaviour, not an enforced
+    # control - this policy grants plain create/update, so a compromised holder could omit
+    # cas entirely (enforcing it needs mount-wide cas_required). Tightening requires BOTH org
+    # policies together - a one-sided change leaves the hole open in the other
+    # direction. Tracked in docs/tech-debt.md.
+    path "secret/data/platform/org-pull/nwp/gitops-source-auth" { capabilities = ["read"] }
+    path "secret/metadata/+/provisioned/source-auth"            { capabilities = ["read"] }
+    path "secret/data/+/provisioned/source-auth"                { capabilities = ["create", "update"] }
+    path "auth/token/renew-self"  { capabilities = ["update"] }
+    path "auth/token/lookup-self" { capabilities = ["read"] }

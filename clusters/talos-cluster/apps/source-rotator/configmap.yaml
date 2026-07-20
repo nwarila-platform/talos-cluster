@@ -1,7 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: source-rotator-hwg-script
+  # Shared by every per-org rotator (hwg, nwp, ...). The script is fully generic -
+  # ORG_LABEL / VAULT_ROLE / VAULT_KEY_PATH come from each CronJob's env - so there
+  # is exactly ONE copy of this security-critical minter to review and patch.
+  name: source-rotator-script
   namespace: source-rotator
   labels:
     app.kubernetes.io/name: source-rotator
@@ -16,10 +19,38 @@ data:
     # minter image inside verify-image-signatures scope.
     import base64, hashlib, json, os, ssl, sys, time, urllib.request, urllib.error
 
-    ORG_LABEL   = os.environ.get("ORG_LABEL", "the-hero-wars-guys")
+    # NO DEFAULTS for the three org-selecting variables. This script is SHARED by every
+    # per-org rotator, so a default would silently decide WHICH ORG a misconfigured CronJob
+    # acts as. Fail fast instead.
+    #
+    # Scope this correctly, and note the asymmetry between the three variables:
+    #
+    #   VAULT_ROLE     - STRUCTURALLY blocked. The Vault k8s-auth role binds an exact
+    #                    ServiceAccount name, checked by TokenReview against the pod's
+    #                    projected token. The pod's SA comes from serviceAccountName, not
+    #                    from env, so it cannot be forged. Vault DENIES a cross-org value
+    #                    (do not rely on a specific status code - an unknown role and an
+    #                    unauthorized path do not answer alike).
+    #   VAULT_KEY_PATH - STRUCTURALLY blocked. Whatever role authenticates carries a policy
+    #                    granting read on only that org's App key, so a cross-org path is
+    #                    denied.
+    #   ORG_LABEL      - NOT blocked. It affects neither authentication nor the key read; it
+    #                    only selects which tenant namespaces to mint for. A wrong value is
+    #                    caught only by GitHub refusing to mint, and that is CONTINGENT, not
+    #                    structural: the mint sends a BARE repository name (the
+    #                    nwarila.io/deploy-repo label cannot contain a slash), which GitHub
+    #                    resolves inside the minter's OWN installation. If a same-named repo
+    #                    exists there, the mint SUCCEEDS and the token is written into the
+    #                    other org's tenant leaf - logging "OK", not an error. A wrong
+    #                    ORG_LABEL matching no tenants also exits 0 as a no-op. See TD-0012.
+    #
+    # So fail-fast here is HYGIENE, not the security boundary - and for ORG_LABEL there is
+    # currently no structural boundary at all. Do not add a default back, and do not read
+    # this comment as a claim that a misconfiguration always fails loudly.
+    ORG_LABEL   = os.environ["ORG_LABEL"]
     VAULT_ADDR  = os.environ["VAULT_ADDR"]
-    VAULT_ROLE  = os.environ.get("VAULT_ROLE", "source-minter-hwg")
-    KEY_PATH    = os.environ.get("VAULT_KEY_PATH", "secret/data/platform/org-pull/hwg/gitops-source-auth")
+    VAULT_ROLE  = os.environ["VAULT_ROLE"]
+    KEY_PATH    = os.environ["VAULT_KEY_PATH"]
     VAULT_CA    = os.environ.get("VAULT_CACERT", "/etc/vault-ca/ca.crt")
     K8S_ADDR    = "https://kubernetes.default.svc"
     K8S_CA      = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -27,8 +58,9 @@ data:
     GH_API      = "https://api.github.com"
     # GitHub REQUIRES a descriptive User-Agent; the default urllib UA is intermittently
     # 403'd from datacenter IPs. ORG_LABEL is the FULL GitHub org name (nwarila.io/org
-    # label value, e.g. "the-hero-wars-guys") used to SELECT this org's tenant namespaces
-    # - a DIFFERENT string from the Vault prefix ("hwg") baked into VAULT_ROLE/VAULT_KEY_PATH.
+    # label value, e.g. "the-hero-wars-guys" / "nwarila-platform") used to SELECT this
+    # org's tenant namespaces - a DIFFERENT string from the Vault prefix ("hwg" / "nwp")
+    # carried in VAULT_ROLE/VAULT_KEY_PATH. Conflating the two broke the B-apex minter.
     USER_AGENT  = "nwarila-source-rotator"
 
     def b64u(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()

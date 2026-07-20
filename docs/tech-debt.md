@@ -546,6 +546,120 @@ Route 1 is consistent with the zero-manual doctrine; route 2 is a stopgap.
 
 ---
 
+## TD-0012 — Source-minter Vault policies grant a CROSS-ORG write on the tenant source-auth leaf
+
+**Opened:** 2026-07-20 · **Status:** Open · **Priority:** Medium
+
+### Gap
+Every per-org source minter holds
+`path "secret/data/+/provisioned/source-auth" { capabilities = ["create", "update"] }`.
+The `+` matches **any single path segment**, so `source-minter-nwp` can write the
+`source-auth` leaf of **any** tenant namespace — including `hwg-*` — and vice versa. The
+org suffix in the role name implies an isolation the policy does not actually enforce.
+
+While only one organization existed the wildcard was effectively self-scoped and inert.
+Onboarding `nwp` (2026-07-20) turned it into a real cross-org write capability. It was
+found by an independent adversarial audit of that change, not by a guard.
+
+### Why deferred
+Vault ACL cannot express the scope we want. `*` is legal only as the **final** character of
+a path and `+` matches exactly one **whole** segment, so neither `secret/data/nwp-*/provisioned/source-auth`
+nor `secret/data/nwp-+/provisioned/source-auth` is a valid narrowing. The only two
+expressible shapes are:
+
+| Option | Scope | Cost |
+|---|---|---|
+| `secret/data/+/provisioned/source-auth` (today) | narrow leaf, **any** org | cross-org write |
+| `secret/data/<prefix>-*` | org-scoped | widens to the **entire** tenant subtree, including tenant state |
+
+Neither is strictly better, so this is a deliberate trade rather than an oversight.
+
+### Two triggers, not one
+This was first written as a *compromised-holder* residual. An adversarial audit established a
+second, purely **accidental** trigger that needs no compromise at all:
+
+1. **Compromised holder.** Any principal holding a `source-minter-*` policy can write any
+   tenant's `source-auth` leaf.
+2. **Misconfigured `ORG_LABEL`.** That variable affects neither Vault authentication nor the
+   App-key read — it only selects which tenant namespaces to mint for. An onboarding
+   copy-paste that leaves the previous org's `ORG_LABEL` in a new CronJob makes org A's
+   minter select org B's tenants. The mint normally fails, but **only contingently**: it
+   sends a *bare* repository name (a `nwarila.io/deploy-repo` label value cannot contain a
+   slash), which GitHub resolves inside the minter's own installation. If a same-named
+   repository exists there, the mint **succeeds** and the token is written cross-org. The job
+   logs `OK <namespace> -> <repo> (cas N)` — silent, not loud.
+
+### Current state and impact
+The Git repository URL lives in the tenant's `GitRepository` CR, **not** in this secret, so an
+overwrite does not redirect a tenant's fetch. But the impact is **not** limited to denial of
+service, and an earlier version of this entry was wrong to say so:
+
+- **Denial of service** — the victim tenant's `source-auth` is replaced with a token that does
+  not authorize its repository, so its Flux source stops reconciling.
+- **Cross-org credential placement** — the writing org's token is deposited **inside the
+  victim org's tenant namespace**, where that tenant's VSO syncs it into a Secret and its
+  workloads can read it. A credential belonging to org A becomes readable by org B. That is a
+  disclosure, not merely an outage.
+
+Two facts bound both impacts, and are recorded so this entry is not read as worse than it is:
+
+- **The deposited credential is narrow and short-lived.** It is a `contents:read` GitHub App
+  installation token scoped to a SINGLE repository, and such tokens expire in about an hour,
+  so the disclosure window is bounded even if nobody notices.
+- **The denial of service is self-healing, not terminal.** The legitimate rotator reruns on
+  its own schedule (hwg `*/45`, nwp `10,55`), so a clobbered leaf is rewritten within roughly
+  45 minutes. The realistic symptom is a tenant whose source fetch FLAPS, not one that stops
+  permanently — which is also why it could persist unnoticed.
+
+It stays **Medium** rather than High because reaching it requires either a compromised minter
+or a misconfiguration *plus* a cross-org repository name collision, and because no
+`nwarila-platform` tenant exists yet.
+
+⚠️ **Point-in-time, and it will rot:** at the time of writing the only bare-name collision
+between the two org families is `.github`, which is not a deploy repository. That is a fact
+about today's repository inventory, not a property of the design — adding repositories can
+create a collision at any time, silently. Do not treat it as a standing mitigation.
+
+One control is weaker than it looks: the minter *sends* a kv-v2 check-and-set on every write
+(`configmap.yaml`), but the ACL grants plain `create`/`update`. CAS is therefore a property of
+**our client**, not an enforced constraint — a compromised principal holding this policy can
+omit `cas` and clobber unconditionally. Enforcing it means setting `cas_required` — either
+mount-wide (affecting every writer) or per-secret via that secret's kv-v2 metadata. Neither
+closes this gap on its own: the policy already grants `secret/metadata/+/provisioned/source-auth`
+read, which hands a deliberate attacker the current version number needed to satisfy CAS
+anyway. CAS is a concurrency control, not an authorization control.
+
+### What closes it
+Any of:
+1. A Vault release whose ACL syntax can express an intra-segment prefix together with a
+   deeper suffix.
+2. Restructuring tenant KV so each org's tenants sit under an org-owned parent segment
+   (e.g. `secret/data/tenants/<prefix>/<tenant>/provisioned/source-auth`), after which
+   `secret/data/tenants/nwp/+/provisioned/source-auth` expresses the intent exactly. This
+   is the preferred route; it is a KV-layout migration touching VSO consumers and the
+   tenant template.
+3. Replacing the shared-wildcard grant with per-tenant policy generation at onboarding,
+   which reintroduces per-tenant Vault toil and is contrary to the zero-manual doctrine.
+
+Option 2 is now the clear preference: an org-parented KV layout makes the cross-org write
+impossible *regardless of `ORG_LABEL`*, closing the accidental trigger structurally rather
+than relying on repository names never colliding.
+
+**Cheap partial mitigation, not yet applied:** the minter could assert that each selected
+tenant namespace carries its own org prefix (derivable from its `VAULT_ROLE`) before minting,
+which would kill the accidental trigger in a few lines without touching the KV layout. It does
+nothing for the compromised-holder trigger, so it complements rather than replaces option 2.
+
+**Both org policies must change together.** Tightening one side leaves the hole open in the
+other direction.
+
+### References
+- `clusters/talos-cluster/apps/vault/vault-config/managed/policy-source-minter-nwp.yaml`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/policy-source-minter-hwg.yaml`
+- [Onboard a new organization](runbooks/onboard-organization.md)
+
+---
+
 [ADR-0010]: decision-records/repo/0010-adopt-kyverno-policy-engine.md
 [ADR-0002]: decision-records/org/0002-adopt-diataxis-documentation-framework.md
 [ADR-0021]: decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md

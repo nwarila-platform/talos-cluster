@@ -147,13 +147,21 @@
 !/clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml
 !/clusters/talos-cluster/apps/source-rotator/
 !/clusters/talos-cluster/apps/source-rotator/ciliumnetworkpolicy.yaml
-!/clusters/talos-cluster/apps/source-rotator/clusterrole.yaml
-!/clusters/talos-cluster/apps/source-rotator/clusterrolebinding.yaml
+# Per-org rotator files. Deliberately enumerated, not globbed: the deny-all above
+# is a secret-prevention control and a */.yaml escape would let a plaintext secret
+# into this directory. Onboarding a new org MUST add its four files here - see
+# docs/runbooks/onboard-organization.md.
+!/clusters/talos-cluster/apps/source-rotator/clusterrole-hwg.yaml
+!/clusters/talos-cluster/apps/source-rotator/clusterrolebinding-hwg.yaml
+!/clusters/talos-cluster/apps/source-rotator/cronjob-hwg.yaml
+!/clusters/talos-cluster/apps/source-rotator/serviceaccount-hwg.yaml
+!/clusters/talos-cluster/apps/source-rotator/clusterrole-nwp.yaml
+!/clusters/talos-cluster/apps/source-rotator/clusterrolebinding-nwp.yaml
+!/clusters/talos-cluster/apps/source-rotator/cronjob-nwp.yaml
+!/clusters/talos-cluster/apps/source-rotator/serviceaccount-nwp.yaml
 !/clusters/talos-cluster/apps/source-rotator/configmap.yaml
-!/clusters/talos-cluster/apps/source-rotator/cronjob.yaml
 !/clusters/talos-cluster/apps/source-rotator/kustomization.yaml
 !/clusters/talos-cluster/apps/source-rotator/namespace.yaml
-!/clusters/talos-cluster/apps/source-rotator/serviceaccount.yaml
 !/clusters/talos-cluster/apps/source-rotator/vault-ingress.yaml
 !/clusters/talos-cluster/apps/gateway-api/
 !/clusters/talos-cluster/apps/gateway-api/gatewayclass.yaml
@@ -409,6 +417,7 @@
 !/docs/runbooks/dr-stage1-backup.md
 !/docs/runbooks/dr-validate-boundary-enforce-hardening.md
 !/docs/runbooks/migrate-first-vso-secret.md
+!/docs/runbooks/onboard-organization.md
 !/docs/runbooks/reprovision-secureboot-node.md
 !/docs/runbooks/restore-drill-backup-dr.md
 !/docs/decision-records/
@@ -449,6 +458,7 @@
 !/docs/decision-records/repo/0027-fail-closed-first-party-image-admission.md
 !/docs/decision-records/repo/0028-vault-config-operator-bootstrap-identity.md
 !/docs/decision-records/repo/0029-mvp-stability-contract-and-security-floor.md
+!/docs/decision-records/repo/0030-per-org-source-token-minter.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/

@@ -23,8 +23,8 @@ GUARD = ROOT / "scripts/check-vault-config-reference-safety.py"
 
 MANAGED = "clusters/talos-cluster/apps/vault/vault-config/managed"
 CAPTURES = "clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles"
-PIN_CRON = "clusters/talos-cluster/apps/source-rotator/cronjob.yaml"
-PIN_CM = "clusters/talos-cluster/apps/source-rotator/configmap.yaml"
+PIN_CRON = "clusters/talos-cluster/apps/source-rotator/cronjob-hwg.yaml"
+PIN_CRON_NWP = "clusters/talos-cluster/apps/source-rotator/cronjob-nwp.yaml"
 PIN_DRILL = "clusters/talos-cluster/apps/vault/restore-drill/s0-restore-generate-root.sh"
 
 
@@ -47,7 +47,7 @@ def write(root: Path, rel: str, content: str) -> None:
 
 def base_fixture(root: Path) -> None:
     """A minimal healthy tree: 2 policies, 1 managed role, 1 capture role,
-    1 mount + 1 PKI role, 1 issuer + 1 certificate, both pinned consumers."""
+    1 mount + 1 PKI role, 1 issuer + 1 certificate, all three pinned consumers."""
     write(root, f"{MANAGED}/policy-source-minter-hwg.yaml", """
         apiVersion: redhatcop.redhat.io/v1alpha1
         kind: Policy
@@ -72,6 +72,21 @@ def base_fixture(root: Path) -> None:
         metadata: {name: source-minter-hwg}
         spec:
           policies: [source-minter-hwg]
+    """)
+    # Second org: proves the pinned-consumer table scales past one org, and that a
+    # per-org CronJob edge resolves to its own policy/role pair rather than hwg's.
+    write(root, f"{MANAGED}/policy-source-minter-nwp.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: Policy
+        metadata: {name: source-minter-nwp}
+        spec: {type: acl, policy: "path \\"x\\" {}"}
+    """)
+    write(root, f"{MANAGED}/role-source-minter-nwp.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: KubernetesAuthEngineRole
+        metadata: {name: source-minter-nwp}
+        spec:
+          policies: [source-minter-nwp]
     """)
     write(root, f"{MANAGED}/role-vault-snapshot-backup.yaml", """
         apiVersion: redhatcop.redhat.io/v1alpha1
@@ -125,7 +140,7 @@ def base_fixture(root: Path) -> None:
           issuerRef: {name: vault-server, kind: ClusterIssuer}
     """)
     write(root, PIN_CRON, "env:\n  - name: VAULT_ROLE\n    value: source-minter-hwg\n")
-    write(root, PIN_CM, 'VAULT_ROLE = os.environ.get("VAULT_ROLE", "source-minter-hwg")\n')
+    write(root, PIN_CRON_NWP, "env:\n  - name: VAULT_ROLE\n    value: source-minter-nwp\n")
     write(root, PIN_DRILL, 'login with {"role": "vault-snapshot-backup", "jwt": j}\n')
 
 
