@@ -69,6 +69,15 @@ spec:
     - apiVersion: redhatcop.redhat.io/v1alpha1
       kind: KubernetesAuthEngineRole
       current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    # AR4a: both JWT kinds use the same condition machinery. Cover the config
+    # now and roles before the first consumer lands; otherwise kstatus can call
+    # a failed reconcile Current.
+    - apiVersion: redhatcop.redhat.io/v1alpha1
+      kind: JWTOIDCAuthEngineConfig
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    - apiVersion: redhatcop.redhat.io/v1alpha1
+      kind: JWTOIDCAuthEngineRole
+      current: has(status.conditions) && status.conditions.exists(c, c.type == 'ReconcileSuccessful' && c.status == 'True' && c.observedGeneration == metadata.generation)
     # CP-4 S5b: the two PKI adoption kinds share the operator's condition
     # machinery (vaultresourcecontroller ManageOutcome), so the same
     # fail-closed expression applies. Without an expr a new kind would fall

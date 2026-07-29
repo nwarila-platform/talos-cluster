@@ -47,7 +47,8 @@ def write(root: Path, rel: str, content: str) -> None:
 
 def base_fixture(root: Path) -> None:
     """A minimal healthy tree: 2 policies, 1 managed role, 1 capture role,
-    1 mount + 1 PKI role, 1 issuer + 1 certificate, all three pinned consumers."""
+    1 JWT role/config pair, 1 mount + 1 PKI role, 1 issuer + 1 certificate,
+    all three pinned consumers."""
     write(root, f"{MANAGED}/policy-source-minter-hwg.yaml", """
         apiVersion: redhatcop.redhat.io/v1alpha1
         kind: Policy
@@ -121,6 +122,27 @@ def base_fixture(root: Path) -> None:
         metadata: {name: issuer-login}
         spec:
           policies: [tenant-read]
+    """)
+    write(root, f"{MANAGED}/jwtoidcauthengineconfig-jwt-github.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: JWTOIDCAuthEngineConfig
+        metadata: {name: jwt-github}
+        spec: {path: jwt-github}
+    """)
+    write(root, f"{MANAGED}/policy-deploy-example.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: Policy
+        metadata: {name: deploy-example}
+        spec: {type: acl, policy: "path \\"secret/data/deploy/example/*\\" {}"}
+    """)
+    write(root, f"{MANAGED}/jwtoidcauthenginerole-deploy-example.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: JWTOIDCAuthEngineRole
+        metadata: {name: deploy-example}
+        spec:
+          name: deploy-example
+          path: jwt-github
+          tokenPolicies: [deploy-example]
     """)
     write(root, "clusters/talos-cluster/apps/vault-tls-cm/clusterissuer.yaml", """
         apiVersion: cert-manager.io/v1
@@ -407,6 +429,84 @@ case(
 )
 
 
+def drop_jwt_policy(root):
+    (root / f"{MANAGED}/policy-deploy-example.yaml").unlink()
+
+
+case(
+    "removing-a-jwt-role-policy-fails",
+    1,
+    drop_jwt_policy,
+    "managed role 'deploy-example' references policy 'deploy-example'",
+)
+
+
+def drop_jwt_config(root):
+    (root / f"{MANAGED}/jwtoidcauthengineconfig-jwt-github.yaml").unlink()
+
+
+case(
+    "removing-the-jwt-config-under-a-role-fails",
+    1,
+    drop_jwt_config,
+    "must resolve to exactly one managed JWTOIDCAuthEngineConfig",
+)
+
+
+def jwt_role_policy_parity_break(root):
+    write(root, f"{MANAGED}/jwtoidcauthenginerole-deploy-example.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: JWTOIDCAuthEngineRole
+        metadata: {name: deploy-example}
+        spec:
+          name: deploy-example
+          path: jwt-github
+          tokenPolicies: [tenant-read]
+    """)
+
+
+case(
+    "jwt-role-policy-name-parity-fails",
+    1,
+    jwt_role_policy_parity_break,
+    "must bind exactly its same-named deploy policy",
+)
+
+
+def duplicate_jwt_policy(root):
+    write(root, f"{MANAGED}/policy-deploy-example-duplicate.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: Policy
+        metadata: {name: deploy-example}
+        spec: {type: acl, policy: "path \\"secret/data/deploy/example/*\\" {}"}
+    """)
+
+
+case(
+    "jwt-role-policy-must-resolve-once",
+    1,
+    duplicate_jwt_policy,
+    "resolves to 2 managed Policy CRs",
+)
+
+
+def unknown_managed_redhatcop_kind(root):
+    write(root, f"{MANAGED}/unknown.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: FuturePrivilegeWriter
+        metadata: {name: surprise}
+        spec: {}
+    """)
+
+
+case(
+    "unknown-managed-redhatcop-kind-fails-closed",
+    2,
+    unknown_managed_redhatcop_kind,
+    "unsupported managed redhatcop kind",
+)
+
+
 def main() -> int:
     failures = 0
     for name, expected_rc, mutate, fragments in CASES:
@@ -416,7 +516,11 @@ def main() -> int:
             mutate(root)
             rc, output = run_guard(root)
             ok = rc == expected_rc and all(f in output for f in fragments)
-            print(f"{'PASS' if ok else 'FAIL'}  {name} (rc={rc}, want {expected_rc})")
+            observed = "PASS" if rc == 0 else "FAIL" if rc == 1 else "ERROR"
+            print(
+                f"{'PASS' if ok else 'FAIL'}  {name} "
+                f"guard={observed}(rc={rc}, want {expected_rc})"
+            )
             if not ok:
                 failures += 1
                 missing = [f for f in fragments if f not in output]

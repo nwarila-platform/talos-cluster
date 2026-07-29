@@ -24,6 +24,9 @@ Runbooks are composite operational how-to documents under ADR-0002.
 - [DR Validate Boundary Enforce Hardening](runbooks/dr-validate-boundary-enforce-hardening.md) -
   promotes the restore-validator Kyverno boundary from Audit/Ignore to
   Enforce/Fail after evidence review.
+- [Enable The GitHub OIDC Vault Auth Mount](runbooks/enable-jwt-github-auth-mount.md) -
+  runs the owner-only, immutable-head ceremony that must precede the JWT
+  foundation PR merge.
 - [Migrate The First VSO Secret](runbooks/migrate-first-vso-secret.md) - plans
   the first tenant Vault Secrets Operator secret migration or demo proof.
 - [Onboard A New Organization](runbooks/onboard-organization.md) - adds a GitHub

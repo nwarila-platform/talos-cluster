@@ -17,6 +17,11 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0009 | First-party image admission enforcement was temporarily non-blocking | Resolved | **High** |
 | TD-0010 | kube-system remains outside the declared PSA floor | Open | **High** |
 | TD-0011 | Tenant image pulls use an org-wide classic PAT that cannot be repo-scoped | Open | **High** |
+| TD-0012 | Source-minter policies permit cross-org tenant-leaf writes | Open | **High** |
+| TD-0013 | Image-verification proof and upstream annotation trust remain incomplete | Open | Medium |
+| TD-0014 | jwt-github bootstrap uses `deploy-*` wildcard grants | Open | Medium |
+| TD-0015 | Vault-config health can retain same-generation success; managed prune comment is stale | Open | Medium |
+| TD-0016 | JWT role guards do not validate the rendered managed inventory | Open | **High** |
 
 ---
 
@@ -710,6 +715,142 @@ to benefit. Digest pinning and merge review remain in front of that path.
 - [kyverno#16336](https://github.com/kyverno/kyverno/issues/16336) — open, milestone 1.19.0
 - [kyverno#16435](https://github.com/kyverno/kyverno/issues/16435) — closed, milestone 1.19.0
 - [ADR-0027]: fail-closed first-party image admission
+
+---
+
+## TD-0014 — jwt-github bootstrap uses `deploy-*` wildcard grants
+
+**Opened:** 2026-07-28 · **Status:** Open (owner-ratified) · **Priority:** Medium ·
+**See:** [ADR-0031](decision-records/repo/0031-adopt-github-oidc-jwt-auth.md)
+
+### Gap
+
+ADR-0028 normally enumerates every managed Vault policy and auth role by exact
+name in the vault-config-operator bootstrap HCL. Automatic CI-consumer
+onboarding deliberately deviates from that rule with:
+
+- `auth/jwt-github/role/deploy-*`;
+- `sys/policies/acl/deploy-*`.
+
+The globs are mount/name-scoped and mechanically pinned to
+create/read/update/delete, but they authorize future `deploy-*` names that are
+not yet present in git. A compromised operator can therefore create, rewrite,
+or delete any role or ACL policy in that prefix, not only an onboarded
+consumer's current pair. Because the operator authors policy content and binds
+policies to roles, this compounds the root-equivalent-in-practice residual
+already owned by ADR-0028.
+
+### Why deferred
+
+Exact enumeration would require an owner-watched bootstrap re-seed for every
+consumer addition and offboarding. That contradicts the ratified D9
+convention-discovery model, whose marginal path is a reviewed, owner-merged
+onboarding PR with no repeated Vault ceremony.
+
+The accepted containment is explicit:
+
+- only the `jwt-github` role subtree and `deploy-*` ACL-policy names match;
+- config uses an exact path and carries no delete;
+- no `list`, `sudo`, broader auth wildcard, or case variant is allowed;
+- the bootstrap guard rejects missing, broader, extra-capability, duplicate,
+  and case-variant grants;
+- the JWT and reference guards require each git-authored role to bind exactly
+  one same-named managed policy and the one managed config.
+
+Those controls constrain git-authored intent. They do not constrain an attacker
+already executing with the operator's live Vault token.
+
+### Exit condition
+
+Close this item only when the two wildcard stanzas are removed from the
+bootstrap HCL and one of these states is proven:
+
+1. every active consumer role/policy path is exact-enumerated and the program
+   has deliberately accepted per-consumer owner re-seeds; or
+2. a Vault enforcement layer independent of the operator (for example
+   Enterprise Sentinel) constrains both allowed names and authored policy/role
+   content strongly enough that future prefix members cannot expand privilege.
+
+The closing change must update ADR-0031, the owner runbook, and the bootstrap
+and self-test fixtures together.
+
+### References
+
+- [ADR-0031](decision-records/repo/0031-adopt-github-oidc-jwt-auth.md)
+- [ADR-0028](decision-records/repo/0028-vault-config-operator-bootstrap-identity.md)
+- `clusters/talos-cluster/apps/vault/vault-config/bootstrap/vault-config-operator.policy.hcl`
+- `scripts/check-vault-config-operator-bootstrap-invariants.py`
+
+---
+
+## TD-0015 — Vault-config health can retain same-generation success; managed prune comment is stale
+
+**Opened:** 2026-07-29 · **Status:** Open · **Priority:** Medium
+
+### Same-generation health residual
+
+All six redhat-cop kinds in the `vault-config-managed` Flux Kustomization use
+an observed-generation-aware CEL expression that requires
+`ReconcileSuccessful=True`. This fails closed on first reconcile and after a
+spec edit because no success for the new generation exists.
+
+The operator's `AddOrReplaceCondition` behavior replaces only a condition with
+the same type. A failure after an earlier success can therefore add
+`ReconcileFailed` while retaining `ReconcileSuccessful=True` for the same
+generation. The existing expression still sees that retained success, so this
+same-generation runtime regression can remain healthy at the Flux layer. The
+residual applies equally to `Policy`, `KubernetesAuthEngineRole`,
+`JWTOIDCAuthEngineConfig`, `JWTOIDCAuthEngineRole`, `SecretEngineMount`, and
+`PKISecretEngineRole`.
+
+Do not add a simple `ReconcileFailed` exclusion: failed conditions can linger
+after a later success, which would make recovered resources permanently
+unhealthy. Closure requires either an upstream condition model that makes the
+latest outcome unambiguous or a source-verified CEL predicate that identifies
+the latest outcome while proving both regression detection and recovery.
+
+### Stale managed-inventory comment
+
+`vault-config/managed/kustomization.yaml` still says `prune: false until S7`,
+but S7 is complete and
+`apps/kustomization-vault-config-managed.yaml` has `prune: true`. Runtime
+behavior is controlled by the Flux Kustomization, so this is documentation
+drift rather than a live configuration mismatch. Remove or rewrite the stale
+comment in a separately reviewed cleanup.
+
+### References
+
+- `clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
+
+---
+
+## TD-0016 — JWT role guards do not validate the rendered managed inventory
+
+**Opened:** 2026-07-29 · **Status:** Open · **Priority:** High
+
+### Gap
+
+The CI guard family inspects only `.yaml` and `.yml` files discovered under
+`clusters/talos-cluster/apps/vault/vault-config/managed/`. A
+`JWTOIDCAuthEngineRole` stored as `.json`, in a file with another or no
+extension, or outside `managed/` and included through a cross-root `resources:`
+entry can therefore render into the prune-armed inventory without being seen by
+those guards.
+
+### Durable fix and closure criteria
+
+Replace filesystem-extension discovery with validation of the rendered
+Kustomize inventory. Close this item only when the guard family consumes that
+rendered inventory and its self-tests prove rejection of `.json`, other/no
+extension, and cross-root `resources:` role fixtures.
+
+### References
+
+- `scripts/check-vault-jwt-github-invariants.py`
+- `scripts/check-vault-config-reference-safety.py`
+- `scripts/check-vault-config-operator-bootstrap-invariants.py`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
 
 ---
 

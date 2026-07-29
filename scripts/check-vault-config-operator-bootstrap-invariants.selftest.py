@@ -25,8 +25,22 @@ def load_guard():
 guard = load_guard()
 s0 = guard._load_s0_guard()
 
-# The managed set the fixtures declare: policy "tenant-read" + role "tenant".
-VALID_POLICY = """\
+# The managed set the fixtures declare: policy "tenant-read", Kubernetes role
+# "tenant", and the shared jwt-github config. The three AR4a stanzas are one
+# indivisible grant set.
+RATIFIED_JWT_GRANTS = """\
+path "auth/jwt-github/config" {
+  capabilities = ["create", "read", "update"]
+}
+path "auth/jwt-github/role/deploy-*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+path "sys/policies/acl/deploy-*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+"""
+
+VALID_POLICY = RATIFIED_JWT_GRANTS + """\
 path "auth/token/renew-self"  { capabilities = ["update"] }
 path "auth/token/lookup-self" { capabilities = ["read"] }
 path "sys/policies/acl/tenant-read" { capabilities = ["create", "read", "update"] }
@@ -61,6 +75,18 @@ def build_valid_tree(root: Path, policy: str = VALID_POLICY) -> None:
           'path "secret/data/x" { capabilities = ["read"] }\n')
     write(paths.cluster_root / "apps/vault/vault-config/auth/kubernetes/roles/tenant.json",
           '{"bound_service_account_names": ["vault-client"]}\n')
+    write(
+        paths.cluster_root
+        / "apps/vault/vault-config/managed/jwtoidcauthengineconfig-jwt-github.yaml",
+        (
+            "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+            "kind: JWTOIDCAuthEngineConfig\n"
+            "metadata:\n"
+            "  name: jwt-github\n"
+            "spec:\n"
+            "  path: jwt-github\n"
+        ),
+    )
 
 
 def case_clean(root: Path) -> None:
@@ -128,7 +154,8 @@ def case_missing_enumeration(root: Path) -> None:
 
 
 def case_delete_on_real_path(root: Path) -> None:
-    # `delete` on a real (non-smoke) managed path — premature prune-arming.
+    # `delete` on an exact-path real object is still forbidden. Only the two
+    # ratified deploy-* offboarding globs may carry it.
     policy = VALID_POLICY.replace(
         'path "sys/policies/acl/tenant-read" { capabilities = ["create", "read", "update"] }',
         'path "sys/policies/acl/tenant-read" { capabilities = ["create", "read", "update", "delete"] }',
@@ -360,8 +387,215 @@ def case_bootstrap_in_kustomization(root: Path) -> None:
     ))
 
 
+def without_stanza(policy: str, stanza: str) -> str:
+    if stanza not in policy:
+        raise AssertionError(f"fixture stanza not found: {stanza!r}")
+    return policy.replace(stanza, "", 1)
+
+
+def case_missing_jwt_config_grant(root: Path) -> None:
+    build_valid_tree(
+        root,
+        without_stanza(
+            VALID_POLICY,
+            'path "auth/jwt-github/config" {\n'
+            '  capabilities = ["create", "read", "update"]\n'
+            "}\n",
+        ),
+    )
+
+
+def case_missing_jwt_role_glob(root: Path) -> None:
+    build_valid_tree(
+        root,
+        without_stanza(
+            VALID_POLICY,
+            'path "auth/jwt-github/role/deploy-*" {\n'
+            '  capabilities = ["create", "read", "update", "delete"]\n'
+            "}\n",
+        ),
+    )
+
+
+def case_missing_deploy_policy_glob(root: Path) -> None:
+    build_valid_tree(
+        root,
+        without_stanza(
+            VALID_POLICY,
+            'path "sys/policies/acl/deploy-*" {\n'
+            '  capabilities = ["create", "read", "update", "delete"]\n'
+            "}\n",
+        ),
+    )
+
+
+def case_jwt_role_glob_over_broad(root: Path) -> None:
+    build_valid_tree(
+        root,
+        VALID_POLICY.replace(
+            'path "auth/jwt-github/role/deploy-*"',
+            'path "auth/jwt-github/role/*"',
+            1,
+        ),
+    )
+
+
+def case_jwt_config_over_capable(root: Path) -> None:
+    build_valid_tree(
+        root,
+        VALID_POLICY.replace(
+            'capabilities = ["create", "read", "update"]',
+            'capabilities = ["create", "read", "update", "delete"]',
+            1,
+        ),
+    )
+
+
+def case_jwt_role_glob_over_capable(root: Path) -> None:
+    build_valid_tree(
+        root,
+        VALID_POLICY.replace(
+            'path "auth/jwt-github/role/deploy-*" {\n'
+            '  capabilities = ["create", "read", "update", "delete"]',
+            'path "auth/jwt-github/role/deploy-*" {\n'
+            '  capabilities = ["create", "read", "update", "delete", "list"]',
+            1,
+        ),
+    )
+
+
+def case_deploy_policy_glob_over_capable(root: Path) -> None:
+    build_valid_tree(
+        root,
+        VALID_POLICY.replace(
+            'path "sys/policies/acl/deploy-*" {\n'
+            '  capabilities = ["create", "read", "update", "delete"]',
+            'path "sys/policies/acl/deploy-*" {\n'
+            '  capabilities = ["create", "read", "update", "delete", "list"]',
+            1,
+        ),
+    )
+
+
+def case_jwt_grant_case_variant(root: Path) -> None:
+    build_valid_tree(
+        root,
+        VALID_POLICY.replace(
+            'path "auth/jwt-github/config"',
+            'path "AUTH/JWT-GITHUB/CONFIG"',
+            1,
+        ),
+    )
+
+
+def case_unratified_exact_deploy_role(root: Path) -> None:
+    build_valid_tree(
+        root,
+        VALID_POLICY
+        + 'path "auth/jwt-github/role/deploy-example" '
+        '{ capabilities = ["create", "read", "update", "delete"] }\n',
+    )
+
+
+def case_jwt_config_path_not_ratified(root: Path) -> None:
+    build_valid_tree(root)
+    managed = (
+        guard.paths_for_root(root).cluster_root
+        / "apps/vault/vault-config/managed/jwtoidcauthengineconfig-jwt-github.yaml"
+    )
+    managed.write_text(
+        managed.read_text(encoding="utf-8").replace(
+            "  path: jwt-github\n", "  path: jwt-other\n", 1
+        ),
+        encoding="utf-8",
+    )
+
+
+def case_clean_with_deploy_role_and_policy(root: Path) -> None:
+    build_valid_tree(root)
+    managed = (
+        guard.paths_for_root(root).cluster_root
+        / "apps/vault/vault-config/managed"
+    )
+    write(
+        managed / "policy-deploy-example.yaml",
+        (
+            "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+            "kind: Policy\n"
+            "metadata:\n"
+            "  name: deploy-example\n"
+            "spec:\n"
+            "  policy: |\n"
+            '    path "secret/data/deploy/example/*" { capabilities = ["read"] }\n'
+        ),
+    )
+    write(
+        managed / "jwtoidcauthenginerole-deploy-example.yaml",
+        (
+            "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+            "kind: JWTOIDCAuthEngineRole\n"
+            "metadata:\n"
+            "  name: deploy-example\n"
+            "spec:\n"
+            "  name: deploy-example\n"
+            "  path: jwt-github\n"
+        ),
+    )
+
+
+def case_jwt_role_outside_ratified_prefix(root: Path) -> None:
+    build_valid_tree(root)
+    managed = (
+        guard.paths_for_root(root).cluster_root
+        / "apps/vault/vault-config/managed"
+    )
+    write(
+        managed / "jwtoidcauthenginerole-admin.yaml",
+        (
+            "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+            "kind: JWTOIDCAuthEngineRole\n"
+            "metadata:\n"
+            "  name: admin\n"
+            "spec:\n"
+            "  name: admin\n"
+            "  path: jwt-github\n"
+        ),
+    )
+
+
+def case_unknown_managed_redhatcop_kind(root: Path) -> None:
+    build_valid_tree(root)
+    managed = (
+        guard.paths_for_root(root).cluster_root
+        / "apps/vault/vault-config/managed/unknown.yaml"
+    )
+    write(
+        managed,
+        (
+            "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+            "kind: FuturePrivilegeWriter\n"
+            "metadata:\n"
+            "  name: surprise\n"
+            "spec: {}\n"
+        ),
+    )
+
+
 CASES = [
     ("clean", case_clean, True),
+    ("missing-jwt-config-grant", case_missing_jwt_config_grant, False),
+    ("missing-jwt-role-glob", case_missing_jwt_role_glob, False),
+    ("missing-deploy-policy-glob", case_missing_deploy_policy_glob, False),
+    ("jwt-role-glob-over-broad", case_jwt_role_glob_over_broad, False),
+    ("jwt-config-over-capable", case_jwt_config_over_capable, False),
+    ("jwt-role-glob-over-capable", case_jwt_role_glob_over_capable, False),
+    ("deploy-policy-glob-over-capable", case_deploy_policy_glob_over_capable, False),
+    ("jwt-grant-case-variant", case_jwt_grant_case_variant, False),
+    ("unratified-exact-deploy-role", case_unratified_exact_deploy_role, False),
+    ("jwt-config-path-not-ratified", case_jwt_config_path_not_ratified, False),
+    ("clean-with-deploy-role-and-policy", case_clean_with_deploy_role_and_policy, True),
+    ("jwt-role-outside-ratified-prefix", case_jwt_role_outside_ratified_prefix, False),
+    ("unknown-managed-redhatcop-kind", case_unknown_managed_redhatcop_kind, False),
     ("missing-bootstrap-policy", case_missing_policy, False),
     ("bootstrap-grants-sudo", case_grants_sudo, False),
     ("bootstrap-wildcard-root-path", case_wildcard_root_path, False),
@@ -400,7 +634,11 @@ def main() -> int:
             findings = guard.evaluate(root, s0)
         ok = (not findings) if expect_clean else bool(findings)
         status = "PASS" if ok else "FAIL"
-        print(f"{status}  {name:<40} findings={len(findings)}")
+        guard_status = "PASS" if not findings else "FAIL"
+        print(
+            f"{status}  {name:<40} "
+            f"guard={guard_status} findings={len(findings)}"
+        )
         if not ok:
             failures.append((name, findings))
     if failures:
