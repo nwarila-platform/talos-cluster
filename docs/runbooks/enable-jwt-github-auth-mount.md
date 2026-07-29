@@ -35,14 +35,16 @@ Do this in one bounded sitting. Stop if any item is false:
 3. Record the SHA-256 of
    `clusters/talos-cluster/apps/vault/vault-config/bootstrap/vault-config-operator.policy.hcl`.
 4. Confirm that parsing every file recursively discovered under `managed/`
-   whose extension case-folds to `.yaml` or `.yml`, then recursively descending
-   `kind: *List` envelopes, yields no mapping with
+   whose name ends case-insensitively in `.yaml` or `.yml` (including files
+   named literally `.yaml` or `.yml`), then recursively descending `kind: *List`
+   envelopes, yields no mapping with
    `kind: JWTOIDCAuthEngineRole`. The check fails closed if `managed/` is
    missing or a discovered file is unreadable, invalid YAML, or contains a
-   non-mapping top-level document. Files with other or no extensions (including
-   `.json`) and files outside `managed/` reached through cross-root
-   `resources:` are not parsed by this precondition; those surfaces are booked
-   under `AR4a-FOLLOWUP-guard-surface`. AR4a is foundation only.
+   non-mapping top-level document. Files whose names do not end
+   case-insensitively in `.yaml` or `.yml` (including extensionless names and
+   `.json`) and files outside `managed/` reached through cross-root `resources:`
+   are not parsed by this precondition; those surfaces are tracked in TD-0016.
+   AR4a is foundation only.
 5. Use a short-TTL admin token. Never use or print a standing root token.
 
 ```bash
@@ -86,7 +88,7 @@ if not managed.is_dir():
 paths = sorted(
     path
     for path in managed.rglob("*")
-    if path.suffix.casefold() in {".yaml", ".yml"} and path.is_file()
+    if path.name.casefold().endswith((".yaml", ".yml")) and path.is_file()
 )
 for path in paths:
     try:

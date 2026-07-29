@@ -21,6 +21,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0013 | Image-verification proof and upstream annotation trust remain incomplete | Open | Medium |
 | TD-0014 | jwt-github bootstrap uses `deploy-*` wildcard grants | Open | Medium |
 | TD-0015 | Vault-config health can retain same-generation success; managed prune comment is stale | Open | Medium |
+| TD-0016 | JWT role guards do not validate the rendered managed inventory | Open | **High** |
 
 ---
 
@@ -820,6 +821,35 @@ comment in a separately reviewed cleanup.
 ### References
 
 - `clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
+
+---
+
+## TD-0016 — JWT role guards do not validate the rendered managed inventory
+
+**Opened:** 2026-07-29 · **Status:** Open · **Priority:** High
+
+### Gap
+
+The CI guard family inspects only `.yaml` and `.yml` files discovered under
+`clusters/talos-cluster/apps/vault/vault-config/managed/`. A
+`JWTOIDCAuthEngineRole` stored as `.json`, in a file with another or no
+extension, or outside `managed/` and included through a cross-root `resources:`
+entry can therefore render into the prune-armed inventory without being seen by
+those guards.
+
+### Durable fix and closure criteria
+
+Replace filesystem-extension discovery with validation of the rendered
+Kustomize inventory. Close this item only when the guard family consumes that
+rendered inventory and its self-tests prove rejection of `.json`, other/no
+extension, and cross-root `resources:` role fixtures.
+
+### References
+
+- `scripts/check-vault-jwt-github-invariants.py`
+- `scripts/check-vault-config-reference-safety.py`
+- `scripts/check-vault-config-operator-bootstrap-invariants.py`
 - `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
 
 ---
