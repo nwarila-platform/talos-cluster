@@ -12,8 +12,15 @@ spec:
     matchLabels:
       actions.github.com/scale-set-name: nwarila-talos-arc-ci
   egress:
+    # WHY: The daily CIS scan installs checksum-pinned kubectl from dl.k8s.io.
+    # This belongs in the platform policy because kubectl supports platform-only
+    # kube-apiserver checks; sharing it would widen tenant runner egress.
+    # The DNS-proxy rule is in the shared arc.nwarila.io/role: runner CNP, while
+    # this FQDN rule selects actions.github.com/scale-set-name. They work together
+    # only because platform runner pods carry both labels; preserve that coupling.
     - toFQDNs:
         - matchName: awscli.amazonaws.com
+        - matchName: dl.k8s.io
         - matchName: sts.amazonaws.com
         - matchPattern: "sts.*.amazonaws.com"
         - matchPattern: "s3.*.amazonaws.com"

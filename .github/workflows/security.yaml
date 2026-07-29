@@ -53,10 +53,13 @@ jobs:
       # after the source-file checks pass), so this scheduled run needs kubectl.
       # Version + sha256 are pinned as literals rather than fetched: pulling the
       # checksum from the same host as the binary would add no integrity.
-      # Egress-resilience flags mirror #339 - the runner began timing out (5 min)
-      # fetching from dl.k8s.io (Fastly) on 2026-07-17 while github.com/AWS
-      # downloads kept working, so force IPv4 (defeats an IPv6 blackhole to the
-      # CDN), retry, and fail a bad connect in 20s instead of hanging.
+      # Download-resilience flags mirror #339: force IPv4, retry, and fail a bad
+      # connect in 20s instead of hanging. This ubuntu-latest job was not affected
+      # by the ARC runner's Cilium policy. On ARC, the timeout was consistent
+      # with a policy drop; the manifest boundary plus successful downloads from
+      # allowlisted hosts makes that the best-supported explanation, not proof
+      # without a Hubble drop verdict. These flags are independent hardening, not
+      # evidence that an IPv6 path caused or fixed the ARC timeout.
       - name: Install kubectl (pinned + checksum-verified)
         run: |
           set -euo pipefail
