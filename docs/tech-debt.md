@@ -20,6 +20,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0012 | Source-minter policies permit cross-org tenant-leaf writes | Open | **High** |
 | TD-0013 | Image-verification proof and upstream annotation trust remain incomplete | Open | Medium |
 | TD-0014 | jwt-github bootstrap uses `deploy-*` wildcard grants | Open | Medium |
+| TD-0015 | Vault-config health can retain same-generation success; managed prune comment is stale | Open | Medium |
 
 ---
 
@@ -778,6 +779,48 @@ and self-test fixtures together.
 - [ADR-0028](decision-records/repo/0028-vault-config-operator-bootstrap-identity.md)
 - `clusters/talos-cluster/apps/vault/vault-config/bootstrap/vault-config-operator.policy.hcl`
 - `scripts/check-vault-config-operator-bootstrap-invariants.py`
+
+---
+
+## TD-0015 — Vault-config health can retain same-generation success; managed prune comment is stale
+
+**Opened:** 2026-07-29 · **Status:** Open · **Priority:** Medium
+
+### Same-generation health residual
+
+All six redhat-cop kinds in the `vault-config-managed` Flux Kustomization use
+an observed-generation-aware CEL expression that requires
+`ReconcileSuccessful=True`. This fails closed on first reconcile and after a
+spec edit because no success for the new generation exists.
+
+The operator's `AddOrReplaceCondition` behavior replaces only a condition with
+the same type. A failure after an earlier success can therefore add
+`ReconcileFailed` while retaining `ReconcileSuccessful=True` for the same
+generation. The existing expression still sees that retained success, so this
+same-generation runtime regression can remain healthy at the Flux layer. The
+residual applies equally to `Policy`, `KubernetesAuthEngineRole`,
+`JWTOIDCAuthEngineConfig`, `JWTOIDCAuthEngineRole`, `SecretEngineMount`, and
+`PKISecretEngineRole`.
+
+Do not add a simple `ReconcileFailed` exclusion: failed conditions can linger
+after a later success, which would make recovered resources permanently
+unhealthy. Closure requires either an upstream condition model that makes the
+latest outcome unambiguous or a source-verified CEL predicate that identifies
+the latest outcome while proving both regression detection and recovery.
+
+### Stale managed-inventory comment
+
+`vault-config/managed/kustomization.yaml` still says `prune: false until S7`,
+but S7 is complete and
+`apps/kustomization-vault-config-managed.yaml` has `prune: true`. Runtime
+behavior is controlled by the Flux Kustomization, so this is documentation
+drift rather than a live configuration mismatch. Remove or rewrite the stale
+comment in a separately reviewed cleanup.
+
+### References
+
+- `clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
 
 ---
 

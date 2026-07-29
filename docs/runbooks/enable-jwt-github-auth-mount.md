@@ -54,8 +54,13 @@ BOOTSTRAP_HCL_SHA256="$(sha256sum "${BOOTSTRAP_HCL}" | awk '{print $1}')"
 printf 'PR head: %s\nPrior main: %s\nBootstrap HCL SHA-256: %s\n' \
   "${PR_HEAD_SHA}" "${PRIOR_MAIN_SHA}" "${BOOTSTRAP_HCL_SHA256}"
 
-test -z "$(find clusters/talos-cluster/apps/vault/vault-config/managed \
-  -maxdepth 1 -type f -name 'jwtoidcauthenginerole-*.yaml' -print -quit)"
+test -z "$(
+  find clusters/talos-cluster/apps/vault/vault-config/managed \
+    -type f \( -name '*.yaml' -o -name '*.yml' \) \
+    -exec awk \
+      '$1 == "kind:" && $2 == "JWTOIDCAuthEngineRole" { print FILENAME; exit }' \
+      {} +
+)"
 ```
 
 Save those three identifiers in the ceremony record before proceeding. The

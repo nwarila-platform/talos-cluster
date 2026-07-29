@@ -105,8 +105,8 @@ make this safe:
   delete is confined to ratified offboarding globs and smoke paths, and the
   bootstrap is never Flux-applied.
 - `scripts/check-vault-jwt-github-invariants.py` — the v0.8.49 config fields,
-  generation-aware health, exact-host CNP, and every future consumer role's
-  claim/token contract.
+  generation-aware health, exact-host CNP, and every recursively discovered
+  managed consumer role's claim/token contract.
 
 ## S4b — the 3 selector roles (pending owner decision)
 

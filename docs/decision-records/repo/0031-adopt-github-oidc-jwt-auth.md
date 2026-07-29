@@ -76,8 +76,9 @@ the same `deploy-<repo>` name. The role binds:
   than 900 seconds, and no max-TTL field greater than that TTL;
 - exactly its one same-named policy.
 
-CI guards fail closed on every field and on role→policy→config reference
-integrity before a role can enter the prune-armed managed inventory.
+CI guards validate every field of each role recursively discovered in the
+prune-armed managed YAML inventory and enforce role→policy→config reference
+integrity before merge.
 
 ### One owner ceremony, one combined grant set
 
@@ -115,8 +116,9 @@ enumeration.
 
 - GitHub Actions identity and Kubernetes workload identity remain separate and
   auditable instead of overloading a ServiceAccount boundary.
-- A failed config or role reconcile cannot present healthy: current-generation
-  `ReconcileSuccessful=True` is mandatory.
+- A failed first config or role reconcile cannot satisfy the merge-time Flux
+  health gate because no current-generation `ReconcileSuccessful=True` exists.
+  The same-generation post-success residual is tracked in TD-0015.
 - A compromised vault-config-operator can create, rewrite, or delete any
   `deploy-*` JWT role or ACL policy, not only currently onboarded names. This is
   the bounded but real expansion recorded in TD-0014.

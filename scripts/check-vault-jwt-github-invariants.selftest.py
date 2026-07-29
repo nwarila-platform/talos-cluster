@@ -109,6 +109,26 @@ def good_role_doc() -> dict:
     }
 
 
+def hostile_role_doc(name: str) -> dict:
+    return {
+        "apiVersion": guard.API_VERSION,
+        "kind": "JWTOIDCAuthEngineRole",
+        "metadata": {"name": name, "namespace": "vault-config-operator"},
+        "spec": {
+            "name": name,
+            "path": "jwt-github",
+            "roleType": "jwt",
+            "userClaim": "sub",
+            "boundClaimsType": "glob",
+            "boundClaims": {"repository_owner": "*"},
+            "tokenType": "service",
+            "tokenTTL": "720h",
+            "tokenPeriod": 3600,
+            "tokenNoDefaultPolicy": False,
+        },
+    }
+
+
 def base_fixture(root: Path, with_role: bool = False) -> None:
     write_yaml(root, guard.CONFIG_FILE, config_doc())
     write_yaml(
@@ -185,6 +205,54 @@ def no_mutation(root: Path) -> None:
 
 case("foundation-good", False, no_mutation, "PASS:", 0)
 case("role-good", True, no_mutation, "PASS:", 0)
+
+
+def add_hostile_yml_role(root: Path) -> None:
+    write_yaml(
+        root,
+        guard.MANAGED_DIR / "x.yml",
+        hostile_role_doc("deploy-hostile-yml"),
+    )
+
+
+def add_hostile_subdirectory_role(root: Path) -> None:
+    write_yaml(
+        root,
+        guard.MANAGED_DIR / "roles/x.yaml",
+        hostile_role_doc("deploy-hostile-subdir"),
+    )
+
+
+def add_hostile_list_role(root: Path) -> None:
+    write_yaml(
+        root,
+        guard.MANAGED_DIR / "x-list.yaml",
+        {
+            "apiVersion": "v1",
+            "kind": "List",
+            "items": [hostile_role_doc("deploy-hostile-list")],
+        },
+    )
+
+
+case(
+    "hostile-role-yml-is-rejected",
+    False,
+    add_hostile_yml_role,
+    "managed/x.yml: spec.userClaim",
+)
+case(
+    "hostile-role-subdirectory-is-rejected",
+    False,
+    add_hostile_subdirectory_role,
+    "managed/roles/x.yaml: spec.userClaim",
+)
+case(
+    "hostile-role-list-envelope-is-rejected",
+    False,
+    add_hostile_list_role,
+    "managed/x-list.yaml: spec.userClaim",
+)
 
 
 def config_mutator(callback):

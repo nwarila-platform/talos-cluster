@@ -8,8 +8,9 @@ This offline guard pins four security-bearing shapes:
 2. Both JWT operator kinds have the repository's observed-generation-aware
    Flux health expression.
 3. Vault's GitHub OIDC egress is one exact-host DNS + TCP/443 CNP.
-4. Every future JWTOIDCAuthEngineRole matches the ratified D9 contract,
-   including exact claims and strictly bounded Go-duration token lifetimes.
+4. Every JWTOIDCAuthEngineRole recursively discovered in the prune-armed
+   managed YAML inventory matches the ratified D9 contract, including exact
+   claims and strictly bounded Go-duration token lifetimes.
 
 No role CR exists in AR4a; role validation is deliberately vacuous until the
 first consumer is authored, while the self-test proves every field rejects a
@@ -147,6 +148,19 @@ def load_one(path: Path) -> dict:
     if len(docs) != 1:
         raise fail_usage(f"{path} must contain exactly one YAML document")
     return docs[0]
+
+
+def _flatten_docs(docs):
+    """Descend kind:List envelopes recursively (#312 audit lesson)."""
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        kind = doc.get("kind")
+        items = doc.get("items")
+        if isinstance(kind, str) and kind.endswith("List") and isinstance(items, list):
+            yield from _flatten_docs(items)
+            continue
+        yield doc
 
 
 def parse_go_duration(value: str) -> Decimal:
@@ -463,8 +477,13 @@ def check_roles(repo: Path, findings: list[str]) -> int:
     if not managed.is_dir():
         raise fail_usage(f"managed directory is missing: {managed}")
     count = 0
-    for path in sorted(managed.glob("*.yaml")):
-        for doc in load_yaml_documents(path):
+    paths = sorted(
+        path
+        for path in managed.rglob("*")
+        if path.suffix in {".yaml", ".yml"} and path.is_file()
+    )
+    for path in paths:
+        for doc in _flatten_docs(load_yaml_documents(path)):
             if (
                 doc.get("apiVersion") == API_VERSION
                 and doc.get("kind") == "JWTOIDCAuthEngineRole"
