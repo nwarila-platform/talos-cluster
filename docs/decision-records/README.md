@@ -16,7 +16,7 @@ Talos-cluster-specific decisions.
 
 The three scopes use independent four-digit numbering namespaces and the same MADR 4.0-aligned format. See [ADR-0001](org/0001-use-architecture-decision-records.md) for the authoritative model.
 
-ADRs may begin as `Proposed` while a decision is being discussed. Once accepted, an ADR becomes part of the repository's permanent historical record and remains editable as a living record for the same `Decision-subject`. Same-subject changes are made in place, and every substantive change MUST add a new Changelog row. When the active decision text changes, the prior text MUST remain recoverable in the Changelog row or in a `Previous decisions` subsection. Supersession is reserved for a different-subject ADR that replaces this one; obsolescence is reserved for a subject that is no longer applicable and has no replacement.
+ADRs may begin as `Proposed` while a decision is being discussed. Once accepted, an ADR becomes part of the repository's permanent historical record and remains editable as a living record for the same decision subject. Same-subject changes are made in place, and every substantive change MUST add a new Changelog row. When the active decision text changes, the prior text MUST remain recoverable in the Changelog row or in a `Previous decisions` subsection. Supersession is reserved for a different-subject ADR that replaces this one; obsolescence is reserved for a subject that is no longer applicable and has no replacement.
 
 ## What is an ADR?
 
@@ -96,13 +96,13 @@ An ADR moves through the following statuses. Every ADR in the Index above shows 
 - **Obsolete.** The decision subject is no longer applicable and has no replacement. The ADR remains in the repository and its body freezes except for archival link maintenance.
 - **Deprecated.** The ADR is still in force but no longer recommended for new work. This status should be rare and should usually lead to an in-place Accepted update, a Superseded status, or an Obsolete status.
 
-An Accepted ADR may receive substantive same-subject updates in place. Every substantive edit to Context, Decision Outcome, Consequences, metadata, or review posture MUST add a new Changelog row. A `Last reviewed` bump with no body change still requires a Changelog row that says the ADR was re-reviewed and remains valid.
+An Accepted ADR may receive substantive same-subject updates in place. Every substantive edit to Context, Decision Outcome, Consequences, metadata, or review posture MUST add a new Changelog row.
 
 ## Editing Decision Tree
 
 Use this decision tree before changing an ADR:
 
-1. If the same `Decision-subject` still exists and the answer, rationale, consequences, review date, or implementation evidence changed, edit the existing ADR in place and add a new Changelog row.
+1. If the same decision subject still exists and the answer, rationale, consequences, review date, or implementation evidence changed, edit the existing ADR in place and add a new Changelog row.
 2. If a different decision subject replaces this one, create a new ADR, set the old ADR to `Superseded by ADR-NNNN`, and add reciprocal `Supersedes` / `Superseded by` links.
 3. If the subject is no longer applicable and has no replacement, set the ADR to `Obsolete`, add a new Changelog row, and freeze the body.
 4. If only a typo, broken link, or formatting issue changed, make the editorial correction and add a new Changelog row when the change could affect interpretation.
