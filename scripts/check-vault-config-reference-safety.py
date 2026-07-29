@@ -13,6 +13,12 @@ a consumer.
 
 Reference edges checked (consumers -> providers):
   1. managed KubernetesAuthEngineRole CR spec.policies[]       -> managed Policy CR names
+  1b. managed JWTOIDCAuthEngineRole CR spec.tokenPolicies[]    -> exactly one managed
+                                                                  Policy with role/policy/
+                                                                  repo-name parity
+  1c. managed JWTOIDCAuthEngineRole CR spec.path               -> exactly one managed
+                                                                  JWTOIDCAuthEngineConfig
+                                                                  for that auth path
   2. capture-only role JSONs token_policies (str|list)         -> managed Policy CR names
   3. VaultAuth spec.kubernetes.role                            -> managed KubernetesAuthEngineRole names
                                                                   or capture-only role names
@@ -53,6 +59,7 @@ Exit codes: 0 = all references resolve; 1 = a broken/dangling reference
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import re
 import sys
@@ -68,6 +75,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANAGED_DIR = Path("clusters/talos-cluster/apps/vault/vault-config/managed")
 CAPTURE_ROLE_DIR = Path("clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles")
 CLUSTERS_DIR = Path("clusters")
+SUPPORTED_MANAGED_REDHATCOP_KINDS = {
+    "Policy",
+    "KubernetesAuthEngineRole",
+    "SecretEngineMount",
+    "PKISecretEngineRole",
+    "JWTOIDCAuthEngineConfig",
+    "JWTOIDCAuthEngineRole",
+}
 
 # The consumers whose Vault-role references live in unstructured content.
 # (path, expected substring, role name it references)
@@ -144,9 +159,11 @@ def norm_policy(name: str) -> str:
 
 def load_providers(repo: Path):
     managed_policies: set[str] = set()
+    managed_policy_counts: Counter[str] = Counter()
     managed_roles: set[str] = set()
     managed_mounts: set[str] = set()
     managed_pki_roles: set[str] = set()
+    managed_jwt_configs: Counter[str] = Counter()
 
     managed_root = repo / MANAGED_DIR
     if not managed_root.is_dir():
@@ -158,15 +175,30 @@ def load_providers(repo: Path):
         if not api.startswith("redhatcop.redhat.io/"):
             continue
         kind = doc.get("kind")
+        if kind not in SUPPORTED_MANAGED_REDHATCOP_KINDS:
+            raise fail_usage(
+                f"{path.relative_to(repo)}: unsupported managed redhatcop kind "
+                f"{kind!r}; add explicit reference semantics before the kind "
+                "can enter the prune-armed inventory"
+            )
         if kind == "Policy":
-            managed_policies.add(norm_policy(effective_name(doc)))
+            name = norm_policy(effective_name(doc))
+            managed_policies.add(name)
+            managed_policy_counts[name] += 1
         elif kind == "KubernetesAuthEngineRole":
             managed_roles.add(effective_name(doc))
         elif kind == "SecretEngineMount":
             managed_mounts.add(effective_name(doc))
         elif kind == "PKISecretEngineRole":
             managed_pki_roles.add(effective_name(doc))
-        # unknown redhatcop kinds are the parity guard's problem, not ours
+        elif kind == "JWTOIDCAuthEngineConfig":
+            mount = (doc.get("spec") or {}).get("path")
+            if not isinstance(mount, str) or not mount:
+                raise fail_usage(
+                    f"{path.relative_to(repo)}: JWTOIDCAuthEngineConfig has no "
+                    "string spec.path"
+                )
+            managed_jwt_configs[mount] += 1
 
     capture_roles: set[str] = set()
     capture_dir = repo / CAPTURE_ROLE_DIR
@@ -174,7 +206,15 @@ def load_providers(repo: Path):
         for path in sorted(capture_dir.glob("*.json")):
             capture_roles.add(path.stem)
 
-    return managed_policies, managed_roles, managed_mounts, managed_pki_roles, capture_roles
+    return (
+        managed_policies,
+        managed_policy_counts,
+        managed_roles,
+        managed_mounts,
+        managed_pki_roles,
+        managed_jwt_configs,
+        capture_roles,
+    )
 
 
 def token_policies_of(raw) -> list[str]:
@@ -218,26 +258,71 @@ def main() -> int:
 
     (
         managed_policies,
+        managed_policy_counts,
         managed_roles,
         managed_mounts,
         managed_pki_roles,
+        managed_jwt_configs,
         capture_roles,
     ) = load_providers(repo)
     role_providers = managed_roles | capture_roles
 
-    # Edge 1: managed role CRs -> policies
+    # Edges 1/1b/1c: managed role CRs -> policies and JWT config.
     for path, doc in iter_yaml_docs(repo / MANAGED_DIR):
-        if not isinstance(doc, dict) or doc.get("kind") != "KubernetesAuthEngineRole":
+        if not isinstance(doc, dict):
+            continue
+        kind = doc.get("kind")
+        if kind not in {"KubernetesAuthEngineRole", "JWTOIDCAuthEngineRole"}:
             continue
         name = effective_name(doc)
-        for pol in (doc.get("spec") or {}).get("policies") or []:
+        spec = doc.get("spec") or {}
+        if kind == "KubernetesAuthEngineRole":
+            policies = spec.get("policies") or []
+        else:
+            policies = token_policies_of(spec.get("tokenPolicies"))
+            metadata_name = (doc.get("metadata") or {}).get("name")
+            spec_name = spec.get("name")
+            if (
+                not isinstance(metadata_name, str)
+                or not metadata_name.startswith("deploy-")
+                or spec_name != metadata_name
+            ):
+                findings.append(
+                    f"{path.relative_to(repo)}: JWT role metadata/spec name "
+                    "parity must be deploy-<repo>"
+                )
+            if policies != [name]:
+                findings.append(
+                    f"{path.relative_to(repo)}: JWT role {name!r} must bind "
+                    f"exactly its same-named deploy policy; found {policies!r}"
+                )
+            mount = spec.get("path")
             edges += 1
-            if norm_policy(pol) not in managed_policies:
+            if not isinstance(mount, str) or managed_jwt_configs[mount] != 1:
+                findings.append(
+                    f"{path.relative_to(repo)}: JWT role {name!r} targets auth "
+                    f"path {mount!r}, which must resolve to exactly one managed "
+                    "JWTOIDCAuthEngineConfig"
+                )
+        for pol in policies:
+            edges += 1
+            normalized_policy = norm_policy(pol)
+            if normalized_policy not in managed_policies:
                 findings.append(
                     f"{path.relative_to(repo)}: managed role {name!r} references "
                     f"policy {pol!r} which is not a managed Policy CR — removing "
                     "the policy while the role binds it would break every login "
                     "on that role"
+                )
+            elif (
+                kind == "JWTOIDCAuthEngineRole"
+                and managed_policy_counts[normalized_policy] != 1
+            ):
+                findings.append(
+                    f"{path.relative_to(repo)}: JWT role {name!r} references "
+                    f"policy {pol!r}, which resolves to "
+                    f"{managed_policy_counts[normalized_policy]} managed Policy "
+                    "CRs; exactly one provider is required"
                 )
 
     # Edge 2: capture-only role JSONs -> policies
@@ -399,7 +484,9 @@ def main() -> int:
         f"edge(s); every consumer resolves to an in-git provider "
         f"({len(managed_policies)} policies, {len(managed_roles)}+"
         f"{len(capture_roles)} roles, {len(managed_mounts)} mount(s), "
-        f"{len(managed_pki_roles)} PKI role(s), {len(cluster_issuers)} "
+        f"{len(managed_pki_roles)} PKI role(s), "
+        f"{sum(managed_jwt_configs.values())} JWT config(s), "
+        f"{len(cluster_issuers)} "
         f"issuer(s))."
     )
     return 0

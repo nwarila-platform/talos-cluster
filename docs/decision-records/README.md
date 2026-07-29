@@ -73,6 +73,10 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0025](repo/0025-deliberate-transparency-public-repo.md) | Publish the Public Repository with Full Topology | Accepted | 2026-07-10 | Accept public publication of the real homelab topology as a portfolio trade, treating topology as reconnaissance rather than authority and requiring no-secret, boundary-first controls. |
 | [0026](repo/0026-in-cluster-etcd-snapshot-pipeline.md) | In-Cluster etcd Snapshot Pipeline to Stage-1 | Accepted | 2026-07-11 | Capture etcd snapshots via an in-cluster Flux CronJob (scoped os:etcd:backup role, whole-file age encryption with off-cluster key escrow) shipped to the Stage-1 Synology target; retire the never-successful ADR-0006 GitHub Actions S3 workflow. |
 | [0027](repo/0027-fail-closed-first-party-image-admission.md) | Fail Closed for First-Party Image Admission | Accepted | 2026-07-13 | Split first-party Kyverno image verification into a dedicated fail-closed, CEL-scoped policy while keeping third-party image families Audit-only. |
+| [0028](repo/0028-vault-config-operator-bootstrap-identity.md) | vault-config-operator Bootstrap Identity | Accepted | 2026-07-15 | Keep the operator's own Vault role and policy as an owner-seeded, out-of-band exception that the operator can never self-manage. |
+| [0029](repo/0029-mvp-stability-contract-and-security-floor.md) | Define the MVP Stability Contract and Security Floor | Accepted | 2026-07-17 | Define the minimum platform invariants, evidence gates, and named residuals required before the cluster MVP can be called stable. |
+| [0030](repo/0030-per-org-source-token-minter.md) | Per-Org Source-Token Minter — Shared Script, Per-Org Identity | Accepted | 2026-07-20 | Give each GitHub organization its own minter identity and envelope while sharing one env-driven credential-minting script. |
+| [0031](repo/0031-adopt-github-oidc-jwt-auth.md) | Adopt GitHub OIDC JWT Authentication for CI | Accepted | 2026-07-28 | Add a CI-only jwt-github auth mount alongside Kubernetes auth, exact role contracts, and a logged mount-scoped deploy-* bootstrap deviation. |
 
 ### Imported Vault ADRs
 

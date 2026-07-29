@@ -14,17 +14,18 @@
 # manage it → self-manage → self-escalate). See ADR-0028.
 #
 # Scope discipline (design control 3): exact-path enumeration per managed object
-# for auditability. The management-plane privilege itself is root-equivalent in
-# OSS Vault and cannot be bounded by ACL (only Enterprise Sentinel can); it is
-# bounded by defense-in-depth — short-TTL k8s-auth (no standing token), a
-# restricted-PSA egress-to-Vault-only pod, and the S0 guard on the CONTENT of
-# every managed policy — with the residual recorded honestly in ADR-0028.
+# for auditability, except the two mount-scoped deploy-* grants ratified in
+# ADR-0031 and tracked as TD-0014. Those bounded globs allow convention-driven
+# consumer onboarding and offboarding without repeating this owner ceremony.
+# The management-plane privilege itself is root-equivalent in OSS Vault and
+# cannot be bounded by ACL (only Enterprise Sentinel can); it is bounded by
+# defense-in-depth — short-TTL k8s-auth (no standing token), a restricted-PSA
+# egress-to-Vault-only pod, and the S0 guard on the CONTENT of every managed
+# policy — with the residual recorded honestly in ADR-0028.
 #
-# Capability discipline: real managed objects get [create, read, update] ONLY —
-# NO delete until prune is deliberately armed (CP-4 S7, gated on the S6b
-# reference-safety guard). Only the throwaway *-smoke objects carry delete, so
-# the S3 smoke test can prove the full create/adopt/delete lifecycle without ever
-# being able to delete a live object.
+# Capability discipline: real exact-path objects get [create, read, update].
+# Delete is confined to the two ratified deploy-* offboarding globs and the
+# throwaway *-smoke objects; the config path deliberately has no delete.
 #
 # NOTE (validated in S3): the exact path set the operator writes is confirmed +
 # tightened by the owner-present S3 smoke test against live Vault. If the
@@ -34,6 +35,17 @@
 # --- token lifecycle (token_no_default_policy roles 403 without these) ---
 path "auth/token/renew-self"  { capabilities = ["update"] }
 path "auth/token/lookup-self" { capabilities = ["read"] }
+
+# --- GitHub OIDC auth: one combined owner-seeded grant set (ADR-0031) ---
+path "auth/jwt-github/config" {
+  capabilities = ["create", "read", "update"]
+}
+path "auth/jwt-github/role/deploy-*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+path "sys/policies/acl/deploy-*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
 
 # --- managed ACL policies: sys/policies/acl/<name> (S4 adopt + S5 vault-server) ---
 path "sys/policies/acl/tenant-read"           { capabilities = ["create", "read", "update"] }

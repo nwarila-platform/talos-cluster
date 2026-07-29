@@ -1,0 +1,23 @@
+# AR4a — shared GitHub Actions OIDC discovery configuration for future
+# per-consumer deploy-* JWT roles. The auth mount is deliberately owner-enabled
+# before this CR can merge; the operator configures it but cannot create it.
+#
+# v0.8.49 field spellings are case-sensitive. OIDC discovery is the sole key
+# source: no JWKSURL, JWTValidationPubKeys, or defaultRole is declared. Every
+# login must name its consumer-scoped role explicitly.
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: JWTOIDCAuthEngineConfig
+metadata:
+  name: jwt-github
+  namespace: vault-config-operator
+spec:
+  path: jwt-github
+  authentication:
+    path: kubernetes
+    role: vault-config-operator
+    serviceAccount:
+      name: vault-config-operator-vault
+  OIDCDiscoveryURL: https://token.actions.githubusercontent.com
+  boundIssuer: https://token.actions.githubusercontent.com
+  JWTSupportedAlgs:
+    - RS256

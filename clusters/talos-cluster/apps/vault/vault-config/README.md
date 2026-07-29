@@ -18,6 +18,7 @@ runs `vault write` for a managed object (zero-manual / everything-in-band).
 | `managed/role-*.yaml` | **reconciled** | redhatcop `KubernetesAuthEngineRole` CRs converging `auth/kubernetes/role/<name>` |
 | `managed/secretenginemount-*.yaml` | **reconciled** (S5b) | redhatcop `SecretEngineMount` CR pinning the `pki-int-tcn` mount tune (existing mount → tune-only; the operator has NO delete capability on it, so it can never unmount) |
 | `managed/pkirole-*.yaml` | **reconciled** (S5b) | redhatcop `PKISecretEngineRole` CRs converging `pki-int-tcn/roles/<name>` (`vault-server`, `tcn-server`, `tcn-client`) |
+| `managed/jwtoidcauthengineconfig-jwt-github.yaml` | **reconciled** (AR4a, CREATE-class config) | redhatcop `JWTOIDCAuthEngineConfig` pins GitHub Actions discovery/issuer/RS256 on the owner-enabled `jwt-github` auth mount; it creates no consumer role and is non-deletable in v0.8.49 |
 | `managed/policy-vault-server.yaml` + `managed/role-vault-server.yaml` | **reconciled** (CP-5, CREATE-class) | the cert-manager ClusterIssuer identity: sign-only policy (`pki-int-tcn/sign/vault-server`) + k8s-auth role bound to the dedicated `cert-manager-vault-issuer` SA with `audience: vault://vault-server`. NOT an adoption — the operator's first reconcile CREATES the live objects (forward-declared in the bootstrap policy since S2b), so pre-merge parity 404s on them by design and the post-reconcile parity run is their proof |
 | `auth/kubernetes/roles/*.json` | capture-only (S4b pending) | the 3 namespace-**selector** roles the operator CRD cannot express (below) |
 | `bootstrap/` | out-of-band exception | the operator's own policy+role (ADR-0028); NEVER GitOps-applied |
@@ -33,19 +34,23 @@ live, and again after the first reconcile).
 Reconciliation wiring: the `vault-config-managed` Flux Kustomization
 (`apps/kustomization-vault-config-managed.yaml`) applies `managed/` with
 `prune: true` (ARMED in S7 — see the section below), `dependsOn` vault +
-vault-config-operator, and CEL health checks on `ReconcileSuccessful`.
+vault-config-operator, and generation-aware CEL health checks on
+`ReconcileSuccessful`.
 
 ## Prune (ARMED in S7) and the #133 finalizer runbook
 
 `vault-config-managed` runs with `prune: true` since S7: removing a managed CR
-file from git deletes the CR, and the operator's finalizer then deletes the
-LIVE Vault object. The controls that make this safe:
+file from git deletes the CR. For deletable kinds the operator's finalizer then
+deletes the LIVE Vault object. The v0.8.49 `JWTOIDCAuthEngineConfig` is the
+explicit exception (`IsDeletable() == false`): pruning its CR retains the
+Vault-side config until the owner disables the auth mount. The controls that
+make this safe:
 
 1. **Reference-safety guard (S6b, CI):** `scripts/check-vault-config-reference-safety.py`
-   fails any PR that removes a provider (policy/role/mount/PKI role/issuer)
-   still referenced by a consumer in git — the delete-under-a-consumer class
-   cannot reach main. The intended retirement flow is consumers-first, then
-   the provider.
+   fails any PR that removes a provider (policy/role/JWT config/mount/PKI
+   role/issuer) still referenced by a consumer in git — the
+   delete-under-a-consumer class cannot reach main. The intended retirement
+   flow is consumers-first, then the provider.
 2. **Don't-prune-while-Vault-is-down (structural):** the Kustomization
    `dependsOn` vault (+ vault-config-operator). While the vault Kustomization
    is NotReady, vault-config-managed does not reconcile at all — including
@@ -96,7 +101,12 @@ LIVE Vault object. The controls that make this safe:
 - `scripts/check-vault-config-operator-bootstrap-invariants.py` — the
   bootstrap-paradox invariants: the operator identity is never managed, the
   bootstrap grants enumerate exactly the managed set (CR-derived + captured),
-  no delete on non-smoke paths, bootstrap never Flux-applied.
+  the exact combined jwt-github grant set is neither missing nor broadened,
+  delete is confined to ratified offboarding globs and smoke paths, and the
+  bootstrap is never Flux-applied.
+- `scripts/check-vault-jwt-github-invariants.py` — the v0.8.49 config fields,
+  generation-aware health, exact-host CNP, and every future consumer role's
+  claim/token contract.
 
 ## S4b — the 3 selector roles (pending owner decision)
 
@@ -127,9 +137,10 @@ parity, not by an absent write.
 
 ## DR / rebuild
 
-On a cluster rebuild the managed set self-restores: seed the bootstrap
-identity (`bootstrap/README.md`), let Flux install the operator, and the CRs
-re-create every managed policy/role. The `{{identity.entity.aliases.…}}`
+On a cluster rebuild the managed set self-restores after the owner enables the
+`jwt-github` auth mount and seeds the bootstrap identity
+(`bootstrap/README.md`): Flux installs the operator, and the CRs re-create every
+managed policy/role/config. The `{{identity.entity.aliases.…}}`
 templates in tenant policies embed the **live k8s-auth mount accessor**
 (`auth_kubernetes_fc0d86cb`) — on a rebuilt Vault the accessor differs and the
 CR content must be re-pointed (booked follow-up: the operator's

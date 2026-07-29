@@ -2,11 +2,13 @@
 # vault-config-managed Flux Kustomization (prune: false until S7 — see
 # apps/kustomization-vault-config-managed.yaml). Every CR here is an ADOPTION
 # of a pre-existing live object (adopt-before-prune, the crown-jewel care) —
-# EXCEPT two CREATE-class pairs, whose first reconcile WRITES a new live object
-# (forward-declared in the bootstrap policy), so post-reconcile parity is their
-# proof rather than adoption fidelity:
+# EXCEPT the CREATE-class resources below, whose first reconcile WRITES a new
+# live object/config (forward-declared in the bootstrap policy), so
+# post-reconcile parity is their proof rather than adoption fidelity:
 #   - the CP-5 vault-server policy/role pair (since S2b)
 #   - the B5 source-minter-nwp policy/role pair (nwarila-platform onboarding)
+#   - the AR4a jwt-github config (the owner enables the empty mount before
+#     merge; the config CR then authors its discovery settings)
 #
 # NOT here (deliberately):
 # - bootstrap/ — the operator's OWN identity; never GitOps-applied (ADR-0028,
@@ -21,6 +23,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: vault-config-operator
 resources:
+  - jwtoidcauthengineconfig-jwt-github.yaml
   - policy-source-minter-hwg.yaml
   - policy-source-minter-nwp.yaml
   - policy-tenant-read.yaml
