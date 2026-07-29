@@ -11,13 +11,27 @@
 | Reversibility  | Medium                                    |
 | Review-by      | 2026-12-02 (cert-manager re-evaluation)   |
 
+> **Correction (2026-07-29):** The originally accepted `serve`/IMDSv2
+> credential-delivery mechanism did not work with Vault 2.0.1's AWS SDK Go v1.
+> The active decision is the `aws_signing_helper update` shared-file mechanism
+> documented below and in Vault
+> [ADR-0011](vault/0011-credential-delivery-shared-file-not-imds.md). The helper
+> refreshes the file and Vault is pointed at it, but the SDK may cache a loaded
+> credential in-process: the demonstrated guarantee is a fresh credential at
+> start or restart, while later KMS use beyond one STS TTL may require a Vault
+> restart.
+
 ## TL;DR
 
 `deploy-vault` adopts AWS KMS auto-unseal (deploy-vault ADR-0008). Because the
 cluster is self-hosted Talos (no IRSA / EC2 instance profile / Pod Identity),
 the Vault seal principal gets AWS credentials from **IAM Roles Anywhere** using
-an `aws_signing_helper` **serve-mode** sidecar (an IMDSv2 shim on
-`127.0.0.1:9911`). `talos-cluster` owns three pieces of the wiring: the
+an `aws_signing_helper` **`update`-mode** sidecar that refreshes a shared,
+memory-backed credentials file. Vault is pointed at
+`/aws/creds/credentials` through `AWS_SHARED_CREDENTIALS_FILE`. AWS SDK Go v1
+may cache a loaded credential in-process, so the accepted guarantee is that
+start or restart reads a fresh file; later KMS use beyond one STS TTL may
+require a Vault restart. `talos-cluster` owns three pieces of the wiring: the
 **AWS egress** allowance, the **SOPS-encrypted workload certificate**, and the
 acceptance of the **dedicated single-purpose CMK** model. The recovery/root
 bundle is never in Git; it lives only in SSM Parameter Store under that CMK.
@@ -40,8 +54,9 @@ weakening any of those constraints, and why the key model is a dedicated CMK.
 1. **No long-lived AWS access key in Git** (org deny-all + secret hygiene).
 2. **No modification to the frozen, signed UBI9-micro Vault image** (no shell,
    no aws-cli, read-only rootfs, restricted PSS).
-3. **Credentials must auto-refresh** so a long-running unsealed Vault does not
-   break when short-lived STS credentials expire (~1h).
+3. **Fresh credentials at start or restart** — the helper must keep the shared
+   file current so a restarted Vault does not read an expired STS credential.
+   In-process caching by AWS SDK Go v1 is an accepted limit for later KMS calls.
 4. **Least privilege + auditability** across the seal principal, the one-time
    escrow writer, and the human break-glass reader.
 5. **~$1/month** recurring cost target.
@@ -55,10 +70,11 @@ weakening any of those constraints, and why the key model is a dedicated CMK.
    `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`.
 2. **Roles Anywhere + `credential_process`** — signing-helper binary on an
    `emptyDir` (init container), referenced from `AWS_CONFIG_FILE`.
-3. **Roles Anywhere + `serve` mode sidecar** — IMDSv2 shim; Vault uses
+3. **Roles Anywhere + `serve` mode sidecar** — the former IMDSv2-shim decision;
+   rejected because Vault 2.0.1's AWS SDK Go v1 does not honor
    `AWS_EC2_METADATA_SERVICE_ENDPOINT`.
-4. **Roles Anywhere + static `AWS_SHARED_CREDENTIALS_FILE`** written by a
-   sidecar.
+4. **Roles Anywhere + `update` mode sidecar** — refresh a shared credentials
+   file and point Vault at it with `AWS_SHARED_CREDENTIALS_FILE` (chosen).
 
 ### Key model
 A. **One dedicated single-purpose CMK** for Vault (seal-wrap + escrow).
@@ -67,14 +83,18 @@ C. **Two CMKs** (separate seal and escrow keys).
 
 ## Decision Outcome
 
-**Credential delivery: Option 3 (serve-mode sidecar).** The `aws_signing_helper`
-runs as a sidecar, presents the workload certificate, and vends credentials via
-a local IMDSv2-compatible endpoint that it refreshes **five minutes before
-expiry**. Vault's AWS SDK discovers it through
-`AWS_EC2_METADATA_SERVICE_ENDPOINT=http://127.0.0.1:9911` (no trailing slash).
-This is the only option that (a) auto-refreshes independent of Vault's KMS call
-cadence, (b) keeps the certificate/key out of the Vault container, and (c) needs
-nothing executable inside the scratch image.
+**Credential delivery: Option 4 (`update`-mode shared-file sidecar).** The
+`aws_signing_helper` sidecar presents the workload certificate and refreshes
+short-lived STS credentials in the memory-backed
+`/aws/creds/credentials` file. A run-once bootstrap init container writes that
+file before Vault starts, and Vault is pointed at it through
+`AWS_SHARED_CREDENTIALS_FILE`. This keeps the certificate/key out of the Vault
+container and requires nothing executable inside the shell-free image.
+
+AWS SDK Go v1 may cache a credential after loading it from the file. The
+demonstrated guarantee is therefore that Vault start or restart reads a fresh
+file; a later KMS operation more than one STS TTL after start may require a
+Vault restart.
 
 - Option 1 (static key) is **rejected**: the AWS SDK static-credentials provider
   never refreshes or expires, and a standing AWS key in the SOPS layer is a
@@ -83,9 +103,36 @@ nothing executable inside the scratch image.
 - Option 2 (`credential_process`) is the **fallback**: it also auto-refreshes,
   but it requires the helper binary to be exec-able from inside the Vault
   container's mount namespace and (on older SDKs) `AWS_SDK_LOAD_CONFIG=1`.
-- Option 4 (static credentials file) is **rejected**: the SDK caches the file as
-  static credentials and does **not** refresh, so Vault silently loses KMS
-  access ~1h after any reschedule.
+- Option 3 (`serve` mode) is **rejected**: Vault 2.0.1's AWS SDK Go v1 did not
+  query the configured IMDSv2 endpoint, so the helper received no requests and
+  Vault failed with `NoCredentialProviders`.
+
+### Previous decision (2026-06-02)
+
+The prior, no-longer-active credential-delivery decision and its rationale are
+preserved verbatim:
+
+> **Credential delivery: Option 3 (serve-mode sidecar).** The
+> `aws_signing_helper` runs as a sidecar, presents the workload certificate,
+> and vends credentials via a local IMDSv2-compatible endpoint that it
+> refreshes **five minutes before expiry**. Vault's AWS SDK discovers it
+> through
+> `AWS_EC2_METADATA_SERVICE_ENDPOINT=http://127.0.0.1:9911` (no trailing
+> slash). This is the only option that (a) auto-refreshes independent of
+> Vault's KMS call cadence, (b) keeps the certificate/key out of the Vault
+> container, and (c) needs nothing executable inside the scratch image.
+>
+> - Option 1 (static key) is **rejected**: the AWS SDK static-credentials
+>   provider never refreshes or expires, and a standing AWS key in the SOPS
+>   layer is a larger blast radius than a certificate that can only mint
+>   short-lived, CN-scoped STS sessions.
+> - Option 2 (`credential_process`) is the **fallback**: it also auto-refreshes,
+>   but it requires the helper binary to be exec-able from inside the Vault
+>   container's mount namespace and (on older SDKs)
+>   `AWS_SDK_LOAD_CONFIG=1`.
+> - Option 4 (static credentials file) is **rejected**: the SDK caches the file
+>   as static credentials and does **not** refresh, so Vault silently loses KMS
+>   access ~1h after any reschedule.
 
 **Key model: Option A (one dedicated CMK).** `alias/vault-unseal-talos` is used
 only by Vault — for seal-wrap *and* to encrypt the SSM escrow parameter — with
@@ -152,10 +199,14 @@ live account (`793496711039`, `us-east-1`):
 4. The signing-helper Linux binary (v1.8.2, sha256 `7addb6eb…`) is dynamically
    linked against glibc, so the sidecar uses a glibc base, not `scratch`.
 
-It is fully confirmed on-cluster when: all three Vault pods report
-`type=awskms`, `recovery_seal=true`, `sealed=false` after auto-unseal; a deleted
-follower pod re-unseals with no human; and a node left idle past one STS TTL
-still unseals on restart (serve-mode proactive refresh).
+The credential-delivery wiring is confirmed on-cluster by the
+`aws_signing_helper` sidecar running `update`, the Vault container carrying
+`AWS_SHARED_CREDENTIALS_FILE=/aws/creds/credentials` with no
+`AWS_EC2_METADATA_SERVICE_ENDPOINT`, and the live `vault.hcl` identifying the
+helper-refreshed file. The accepted operational guarantee is that start or
+restart reads a fresh file. Because AWS SDK Go v1 may cache a loaded credential
+in-process, this does not confirm arbitrary later KMS use beyond one STS TTL
+without a Vault restart.
 
 ## Consequences
 
@@ -184,8 +235,10 @@ still unseals on restart (serve-mode proactive refresh).
 
 1. The cluster's Cilium has the DNS proxy / `toFQDNs` enabled. If not, AWS egress
    falls back to `toCIDRSet` from the AWS `ip-ranges.json` with a refresh owner.
-2. The Vault 2.0.1 build's `go-kms-wrapping/awskms` wrapper resolves credentials
-   via the standard AWS SDK chain (serve-mode IMDS works under SDK v1 and v2).
+2. The Vault 2.0.1 build's `go-kms-wrapping/awskms` wrapper resolves
+   `AWS_SHARED_CREDENTIALS_FILE` at start or restart. AWS SDK Go v1 may cache
+   that loaded credential in-process, so later KMS use beyond one STS TTL may
+   require a Vault restart.
 3. The offline CA private key is stored securely outside Git and is used only to
    re-issue the workload leaf on rotation.
 
@@ -203,6 +256,9 @@ None (current).
 - [ADR-0010](0010-adopt-kyverno-policy-engine.md) — image-verification substrate.
 - [ADR-0011](0011-auto-discover-deploy-repositories.md) — the `deploy-*`
   convention this wiring lives alongside.
+- Vault [ADR-0011](vault/0011-credential-delivery-shared-file-not-imds.md) —
+  replaces the failed `serve`/IMDS shim with the active shared-file mechanism
+  and records the AWS SDK Go v1 caching limitation.
 - `deploy-vault` ADR-0008 (auto-unseal) and ADR-0009 (escrow + ceremony).
 
 ## Compliance Notes
@@ -213,3 +269,9 @@ None (current).
 | NIST SP 800-53 Rev. 5 | IA-5, AU-2 | No static credentials; certificate-based short-lived sessions; CloudTrail on KMS/SSM. |
 | NIST SP 800-190 | 4.1, 4.4 | Image left unmodified/hardened; secret material delivered via SOPS, never baked or committed. |
 | SSDF | PS.1, PO.5 | Recovery material escrowed out-of-band; environment hardening preserved. |
+
+## Changelog
+
+| Date       | Change | Reason | Author/Role | Body-diff? |
+| ---------- | ------ | ------ | ----------- | ---------- |
+| 2026-07-29 | Replaced the active `serve`/IMDS credential-delivery decision with the `update`-mode shared-file mechanism; preserved the former decision under Previous decision. | Align the Accepted ADR with the live cluster and Vault ADR-0011 without overclaiming continuous in-process credential reload. | Nick Warila / sole portfolio maintainer | Yes |
