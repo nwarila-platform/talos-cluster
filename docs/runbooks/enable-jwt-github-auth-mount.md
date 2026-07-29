@@ -34,8 +34,15 @@ Do this in one bounded sitting. Stop if any item is false:
    is the rollback tree.
 3. Record the SHA-256 of
    `clusters/talos-cluster/apps/vault/vault-config/bootstrap/vault-config-operator.policy.hcl`.
-4. Confirm the head contains no `JWTOIDCAuthEngineRole`; AR4a is foundation
-   only.
+4. Confirm that parsing every file recursively discovered under `managed/`
+   whose extension case-folds to `.yaml` or `.yml`, then recursively descending
+   `kind: *List` envelopes, yields no mapping with
+   `kind: JWTOIDCAuthEngineRole`. The check fails closed if `managed/` is
+   missing or a discovered file is unreadable, invalid YAML, or contains a
+   non-mapping top-level document. Files with other or no extensions (including
+   `.json`) and files outside `managed/` reached through cross-root
+   `resources:` are not parsed by this precondition; those surfaces are booked
+   under `AR4a-FOLLOWUP-guard-surface`. AR4a is foundation only.
 5. Use a short-TTL admin token. Never use or print a standing root token.
 
 ```bash
@@ -54,13 +61,46 @@ BOOTSTRAP_HCL_SHA256="$(sha256sum "${BOOTSTRAP_HCL}" | awk '{print $1}')"
 printf 'PR head: %s\nPrior main: %s\nBootstrap HCL SHA-256: %s\n' \
   "${PR_HEAD_SHA}" "${PRIOR_MAIN_SHA}" "${BOOTSTRAP_HCL_SHA256}"
 
-test -z "$(
-  find clusters/talos-cluster/apps/vault/vault-config/managed \
-    -type f \( -name '*.yaml' -o -name '*.yml' \) \
-    -exec awk \
-      '$1 == "kind:" && $2 == "JWTOIDCAuthEngineRole" { print FILENAME; exit }' \
-      {} +
-)"
+python3 - <<'PY'
+from pathlib import Path
+
+import yaml
+
+
+def _flatten_docs(docs):
+    """Descend kind:List envelopes recursively."""
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        kind = doc.get("kind")
+        items = doc.get("items")
+        if isinstance(kind, str) and kind.endswith("List") and isinstance(items, list):
+            yield from _flatten_docs(items)
+            continue
+        yield doc
+
+
+managed = Path("clusters/talos-cluster/apps/vault/vault-config/managed")
+if not managed.is_dir():
+    raise SystemExit(f"precondition failed: managed directory is missing: {managed}")
+paths = sorted(
+    path
+    for path in managed.rglob("*")
+    if path.suffix.casefold() in {".yaml", ".yml"} and path.is_file()
+)
+for path in paths:
+    try:
+        raw = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise SystemExit(f"precondition failed: cannot parse {path}: {exc}")
+    if any(doc is not None and not isinstance(doc, dict) for doc in raw):
+        raise SystemExit(f"precondition failed: {path} contains a non-mapping YAML document")
+    if any(
+        doc.get("kind") == "JWTOIDCAuthEngineRole"
+        for doc in _flatten_docs(raw)
+    ):
+        raise SystemExit(f"precondition failed: {path} contains JWTOIDCAuthEngineRole")
+PY
 ```
 
 Save those three identifiers in the ceremony record before proceeding. The
