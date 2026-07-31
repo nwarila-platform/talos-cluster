@@ -105,7 +105,7 @@ def _display(path: Path, repo: Path) -> str:
 
 
 def rendered_document_label(doc: dict) -> str:
-    """Return a stable diagnostic label without making origin authoritative."""
+    """Return a stable diagnostic label derived from rendered kind and name."""
     metadata = doc.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}

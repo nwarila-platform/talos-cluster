@@ -37,11 +37,14 @@ Reconciliation wiring: the `vault-config-managed` Flux Kustomization
 vault-config-operator, and generation-aware CEL health checks on
 `ReconcileSuccessful`.
 
-The prune-armed `managed/` directory follows a flat manifest-only policy. It
-contains `kustomization.yaml` plus enumerated resource manifests only: no
-subdirectories or separate patch/build-input files, and every other file must
-appear exactly once in `resources:`. This is a repository policy for this
-managed directory, not a general restriction on Kustomize layouts.
+The prune-armed `managed/` directory follows a flat manifest-only policy.
+Locally, it contains `kustomization.yaml` plus enumerated resource manifests
+only: no subdirectories or separate patch/build-input files, and every local
+file other than `kustomization.yaml` must appear exactly once in `resources:`.
+The filesystem containment lint cannot constrain remote `resources:` entries,
+which can render into the applied set without a corresponding local file. This
+is a repository policy for this managed directory, not a general restriction
+on Kustomize layouts.
 
 ## Prune (ARMED in S7) and the #133 finalizer runbook
 

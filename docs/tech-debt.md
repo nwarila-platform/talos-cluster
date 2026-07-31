@@ -870,11 +870,16 @@ through TD-0020.
 
 - `scripts/rendered-inventory.selftest.py` exercises the helper's reachable
   fail-closed branches and flat manifest-only containment policy.
-- The three guard self-tests reject managed roles authored as `.json`, with
-  another or no extension, and through a cross-root `resources:` reference.
+- The guard family rejects every listed managed-role discovery evasion: each
+  `.json`, alternate- or absent-extension, and cross-root `resources:` fixture
+  is rejected by at least one guard with a field-specific finding that
+  identifies the rendered object's kind and name. Every guard's own
+  managed-object discovery is sourced from the rendered inventory.
 - Focused fixtures also reject patches that rewrite the JWT discovery URL,
   health expressions, or role policy bindings, plus duplicate effective policy
-  providers.
+  providers, with findings labelled from the rendered object's kind and name.
+- The helper self-test proves that an object-supplied annotation cannot
+  influence that object's finding label.
 - CI runs the helper self-test before the three guards and their self-tests.
 
 ### References
@@ -1071,9 +1076,10 @@ Disable outbound network or DNS resolution and run any of:
 - `scripts/check-vault-config-reference-safety.py`;
 - `scripts/check-vault-config-operator-bootstrap-invariants.py`.
 
-The root Kustomize render cannot fetch the Gateway API base, the helper cannot
-establish the applied inventory, and the guard fails closed with exit 2. It
-does not fall back to authored-file discovery.
+Under those conditions, all three guards have been observed to fail closed with
+exit 2: the root Kustomize render cannot fetch the pinned Gateway API base, so
+the helper cannot establish the applied inventory. None falls back to
+authored-file discovery.
 
 ### Impact
 
