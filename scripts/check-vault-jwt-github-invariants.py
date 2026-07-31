@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Fail-closed AR4a invariants for the shared GitHub-OIDC Vault foundation.
 
-This offline guard pins four security-bearing shapes:
+The guard selects the effective ``vault-config-managed`` Flux Kustomization
+from the cluster-root render and validates its rendered applied inventory with
+Flux-compatible unrestricted load semantics. The root includes a remote
+Gateway API base, so this guard requires network access and fails closed when
+the render cannot be reproduced (TD-0020).
+
+It pins four security-bearing shapes:
 
 1. The v0.8.49 JWTOIDCAuthEngineConfig uses the exact jwt-github discovery
    contract and no mutually exclusive key source/default role.
@@ -134,7 +140,10 @@ rendered_inventory = _load_rendered_inventory_helper()
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate the offline jwt-github Vault foundation contract."
+        description=(
+            "Validate the jwt-github Vault foundation contract against the "
+            "Flux-rendered managed inventory."
+        )
     )
     parser.add_argument(
         "--root",

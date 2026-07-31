@@ -37,6 +37,12 @@ Reconciliation wiring: the `vault-config-managed` Flux Kustomization
 vault-config-operator, and generation-aware CEL health checks on
 `ReconcileSuccessful`.
 
+The prune-armed `managed/` directory follows a flat manifest-only policy. It
+contains `kustomization.yaml` plus enumerated resource manifests only: no
+subdirectories or separate patch/build-input files, and every other file must
+appear exactly once in `resources:`. This is a repository policy for this
+managed directory, not a general restriction on Kustomize layouts.
+
 ## Prune (ARMED in S7) and the #133 finalizer runbook
 
 `vault-config-managed` runs with `prune: true` since S7: removing a managed CR
@@ -96,8 +102,8 @@ make this safe:
   `clusters/talos-cluster/`** (the guard's scan root). Known residual: a CR
   placed outside that root and pulled in via a cross-root kustomize
   `resources:` reference would evade the scan (Flux builds with
-  LoadRestrictionsNone) — widening the scan to the whole repo is a booked
-  hardening (S4a audit finding R1; pre-existing scope, not introduced here).
+  LoadRestrictionsNone) — tracked as the next queued hardening in
+  [TD-0017](../../../../../docs/tech-debt.md#td-0017--vault-policy-escalation-guard-misses-cross-root-rendered-policy-crs).
 - `scripts/check-vault-config-operator-bootstrap-invariants.py` — the
   bootstrap-paradox invariants: the operator identity is never managed, the
   bootstrap grants enumerate exactly the managed set (CR-derived + captured),
@@ -105,8 +111,9 @@ make this safe:
   delete is confined to ratified offboarding globs and smoke paths, and the
   bootstrap is never Flux-applied.
 - `scripts/check-vault-jwt-github-invariants.py` — the v0.8.49 config fields,
-  generation-aware health, exact-host CNP, and every recursively discovered
-  managed consumer role's claim/token contract.
+  generation-aware health, exact-host CNP, and the claim/token contract of
+  every managed consumer role in the rendered Flux-applied prune-armed
+  inventory.
 
 ## S4b — the 3 selector roles (pending owner decision)
 

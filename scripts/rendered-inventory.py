@@ -5,6 +5,10 @@ The ROOT render is the authority for selecting the Flux Kustomization.  Its
 validated ``spec.path`` is then rendered with the same unrestricted loader
 that Flux uses.  Consumers must not recover from ``InventoryError`` by
 falling back to an authored-file scan.
+
+The production ROOT contains a remote Gateway API base, so loading its
+inventory requires network access until TD-0020 is closed with a pinned local
+mirror.
 """
 
 from __future__ import annotations

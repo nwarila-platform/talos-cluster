@@ -17,12 +17,21 @@ This guard is fail-closed and asserts:
    HCL tokenizer.
 3. The exact three-stanza GitHub-OIDC grant set is present with no broader
    path or capability, and every managed JWT config/role path is covered.
-4. The operator's own identity is never a MANAGED object: no
-   redhatcop.redhat.io/v1alpha1 `Policy` or `KubernetesAuthEngineRole` CR named
-   `vault-config-operator`, and no managed policy HCL named
-   `vault-config-operator.hcl` under the managed policy dir.
+4. Within the target render and cluster-wide authored-file scan, the operator's
+   own identity is not a MANAGED object: no redhatcop.redhat.io/v1alpha1
+   `Policy` or `KubernetesAuthEngineRole` CR named `vault-config-operator`, and
+   no managed policy HCL named `vault-config-operator.hcl` under the managed
+   policy dir.
 5. Nothing under the bootstrap dir is referenced by any kustomization.yaml
    `resources`/`components`/`bases` list (so Flux/kustomize can never apply it).
+
+Managed JWT paths come from the rendered applied ``vault-config-managed``
+inventory. Managed-name allow sets and protected-identity prohibitions use that
+render unioned with their wider filesystem inputs; the never-applied assertion
+remains filesystem-wide. Residual authored-value coverage outside the target
+render is tracked in TD-0019. The cluster-root render includes a remote Gateway
+API base, so this guard requires network access and fails closed when the
+render cannot be reproduced (TD-0020).
 """
 
 from __future__ import annotations

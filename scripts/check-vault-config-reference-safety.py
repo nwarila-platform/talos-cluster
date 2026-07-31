@@ -5,11 +5,11 @@ THE CONTROL THIS IMPLEMENTS (design decision #3, [[feedback_reliability_zero
 compromises]]): before Flux prune is armed (S7), deleting a managed CR file
 must not be able to cascade into a live break. The S0 escalation guard cannot
 catch a deletion (removing a file is not "bad content"), so THIS guard proves
-REFERENTIAL INTEGRITY of the whole tree on every CI run: every Vault-object
-reference in git must resolve to an existing in-git provider. Removing a
-still-referenced policy/role/mount/issuer therefore FAILS CI at the PR that
-removes it — before prune (or a reconcile) can delete the live object under
-a consumer.
+REFERENTIAL INTEGRITY across the rendered managed inventory and the enumerated
+filesystem inputs below: each covered Vault-object reference must resolve to an
+existing in-git provider. Removing a provider that one of those inputs still
+references therefore FAILS CI at the PR that removes it — before prune (or a
+reconcile) can delete the live object under a covered consumer.
 
 Reference edges checked (consumers -> providers):
   1. managed KubernetesAuthEngineRole CR spec.policies[]       -> managed Policy CR names
@@ -33,6 +33,14 @@ Reference edges checked (consumers -> providers):
   6. Certificate spec.issuerRef (kind ClusterIssuer)           -> ClusterIssuer names
   7. managed PKISecretEngineRole/SecretEngineMount consistency: every PKI role's
      implicit mount (pki-int-tcn today) must exist as a managed SecretEngineMount.
+
+Managed providers and managed-role edges come from the rendered applied
+``vault-config-managed`` inventory. Capture-only JSON roles, cluster-wide
+structured consumers, and pinned unstructured consumers retain their
+filesystem sources; their remaining coverage and authored-value gaps are
+tracked in TD-0018 and TD-0019. The cluster-root render includes a remote
+Gateway API base, so this guard requires network access and fails closed when
+the render cannot be reproduced (TD-0020).
 
 Design notes:
   - Tree-integrity formulation (no diff base needed): the guard runs on any
@@ -247,8 +255,8 @@ def token_policies_of(raw) -> list[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify every Vault-object reference in the tree resolves to an "
-            "in-git provider (the S6b prune-safety property)."
+            "Verify rendered managed and filesystem-discovered Vault-object "
+            "references resolve to in-git providers (S6b prune safety)."
         )
     )
     parser.add_argument(
