@@ -7,6 +7,8 @@ import contextlib
 import copy
 import importlib.util
 import io
+import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -63,6 +65,15 @@ def flux_doc() -> dict:
         "kind": "Kustomization",
         "metadata": {"name": "vault-config-managed", "namespace": "flux-system"},
         "spec": {
+            "interval": "10m",
+            "path": "./clusters/talos-cluster/apps/vault/vault-config/managed",
+            "prune": True,
+            "wait": True,
+            "dependsOn": [
+                {"name": "vault-config-operator"},
+                {"name": "vault"},
+            ],
+            "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
             "healthCheckExprs": [
                 {
                     "apiVersion": guard.API_VERSION,
@@ -119,25 +130,49 @@ def hostile_role_doc(name: str) -> dict:
             "path": "jwt-github",
             "roleType": "jwt",
             "userClaim": "sub",
+            "boundAudiences": ["anything"],
             "boundClaimsType": "glob",
             "boundClaims": {"repository_owner": "*"},
             "tokenType": "service",
             "tokenTTL": "720h",
             "tokenPeriod": 3600,
             "tokenNoDefaultPolicy": False,
+            "tokenPolicies": ["vault-admin"],
         },
     }
 
 
+def annotate_source(doc: dict, rel: Path | str) -> dict:
+    annotated = copy.deepcopy(doc)
+    metadata = annotated.setdefault("metadata", {})
+    annotations = metadata.setdefault("annotations", {})
+    annotations[guard.rendered_inventory.SOURCE_PATH_ANNOTATION] = str(rel)
+    return annotated
+
+
+def add_managed_resource(root: Path, resource: str) -> None:
+    mutate_doc(
+        root,
+        guard.MANAGED_KUSTOMIZATION,
+        lambda doc: doc["resources"].append(resource),
+    )
+
+
 def base_fixture(root: Path, with_role: bool = False) -> None:
     write_yaml(root, guard.CONFIG_FILE, config_doc())
+    resources = [guard.CONFIG_FILE.name]
+    if with_role:
+        role_path = guard.MANAGED_DIR / "jwtoidcauthenginerole-deploy-example.yaml"
+        write_yaml(root, role_path, good_role_doc())
+        resources.append(role_path.name)
     write_yaml(
         root,
         guard.MANAGED_KUSTOMIZATION,
         {
             "apiVersion": "kustomize.config.k8s.io/v1beta1",
             "kind": "Kustomization",
-            "resources": [guard.CONFIG_FILE.name],
+            "namespace": "vault-config-operator",
+            "resources": resources,
         },
     )
     write_yaml(root, guard.CNP_FILE, guard.expected_cnp())
@@ -151,12 +186,24 @@ def base_fixture(root: Path, with_role: bool = False) -> None:
         },
     )
     write_yaml(root, guard.FLUX_KUSTOMIZATION, flux_doc())
-    if with_role:
-        write_yaml(
-            root,
-            guard.MANAGED_DIR / "jwtoidcauthenginerole-deploy-example.yaml",
-            good_role_doc(),
-        )
+    write_yaml(
+        root,
+        Path("clusters/talos-cluster/apps/kustomization.yaml"),
+        {
+            "apiVersion": "kustomize.config.k8s.io/v1beta1",
+            "kind": "Kustomization",
+            "resources": [guard.FLUX_KUSTOMIZATION.name],
+        },
+    )
+    write_yaml(
+        root,
+        Path("clusters/talos-cluster/kustomization.yaml"),
+        {
+            "apiVersion": "kustomize.config.k8s.io/v1beta1",
+            "kind": "Kustomization",
+            "resources": ["apps"],
+        },
+    )
 
 
 def load_doc(root: Path, rel: Path) -> dict:
@@ -208,31 +255,39 @@ case("role-good", True, no_mutation, "PASS:", 0)
 
 
 def add_hostile_yml_role(root: Path) -> None:
+    rel = guard.MANAGED_DIR / "x.yml"
     write_yaml(
         root,
-        guard.MANAGED_DIR / "x.yml",
-        hostile_role_doc("deploy-hostile-yml"),
+        rel,
+        annotate_source(hostile_role_doc("deploy-hostile-yml"), rel),
     )
+    add_managed_resource(root, rel.name)
 
 
 def add_hostile_subdirectory_role(root: Path) -> None:
+    rel = guard.MANAGED_DIR / "roles/x.yaml"
     write_yaml(
         root,
-        guard.MANAGED_DIR / "roles/x.yaml",
-        hostile_role_doc("deploy-hostile-subdir"),
+        rel,
+        annotate_source(hostile_role_doc("deploy-hostile-subdir"), rel),
     )
+    add_managed_resource(root, "roles/x.yaml")
 
 
 def add_hostile_list_role(root: Path) -> None:
+    rel = guard.MANAGED_DIR / "x-list.yaml"
     write_yaml(
         root,
-        guard.MANAGED_DIR / "x-list.yaml",
+        rel,
         {
             "apiVersion": "v1",
             "kind": "List",
-            "items": [hostile_role_doc("deploy-hostile-list")],
+            "items": [
+                annotate_source(hostile_role_doc("deploy-hostile-list"), rel)
+            ],
         },
     )
+    add_managed_resource(root, rel.name)
 
 
 case(
@@ -252,6 +307,168 @@ case(
     False,
     add_hostile_list_role,
     "managed/x-list.yaml: spec.userClaim",
+)
+
+
+def add_hostile_json_role(root: Path) -> None:
+    rel = guard.MANAGED_DIR / "hostile-role.json"
+    path = root / rel
+    path.write_text(
+        json.dumps(
+            annotate_source(hostile_role_doc("deploy-hostile-json"), rel)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    add_managed_resource(root, rel.name)
+
+
+def add_hostile_extensionless_role(root: Path) -> None:
+    rel = guard.MANAGED_DIR / "hostile-role"
+    write_yaml(
+        root,
+        rel,
+        annotate_source(hostile_role_doc("deploy-hostile-extensionless"), rel),
+    )
+    add_managed_resource(root, rel.name)
+
+
+def add_hostile_cross_root_role(root: Path) -> None:
+    rel = Path("clusters/talos-cluster/apps/vault/vault-config/cross-root-role.yaml")
+    write_yaml(
+        root,
+        rel,
+        annotate_source(hostile_role_doc("deploy-hostile-cross-root"), rel),
+    )
+    add_managed_resource(root, "../cross-root-role.yaml")
+
+
+def add_deploy_evil(root: Path) -> None:
+    rel = guard.MANAGED_DIR / "deploy-evil.yaml"
+    write_yaml(root, rel, annotate_source(hostile_role_doc("deploy-evil"), rel))
+    add_managed_resource(root, rel.name)
+
+
+case(
+    "hostile-role-json-is-rendered-and-rejected",
+    False,
+    add_hostile_json_role,
+    "hostile-role.json: spec.userClaim must equal 'repository_id'",
+)
+case(
+    "hostile-role-extensionless-is-rendered-and-rejected",
+    False,
+    add_hostile_extensionless_role,
+    "hostile-role: spec.userClaim must equal 'repository_id'",
+)
+case(
+    "hostile-role-cross-root-is-rendered-and-rejected",
+    False,
+    add_hostile_cross_root_role,
+    "cross-root-role.yaml: spec.userClaim must equal 'repository_id'",
+)
+case(
+    "deploy-evil-is-rendered-and-rejected",
+    False,
+    add_deploy_evil,
+    "deploy-evil.yaml: spec.userClaim must equal 'repository_id'",
+)
+
+
+def patch_config_discovery(root: Path) -> None:
+    mutate_doc(
+        root,
+        guard.MANAGED_KUSTOMIZATION,
+        lambda doc: doc.__setitem__(
+            "patches",
+            [
+                {
+                    "target": {
+                        "group": "redhatcop.redhat.io",
+                        "version": "v1alpha1",
+                        "kind": "JWTOIDCAuthEngineConfig",
+                        "name": "jwt-github",
+                    },
+                    "patch": (
+                        "- op: replace\n"
+                        "  path: /spec/OIDCDiscoveryURL\n"
+                        "  value: https://evil.attacker.example"
+                    ),
+                }
+            ],
+        ),
+    )
+
+
+def patch_root_health_empty(root: Path) -> None:
+    mutate_doc(
+        root,
+        Path("clusters/talos-cluster/kustomization.yaml"),
+        lambda doc: doc.__setitem__(
+            "patches",
+            [
+                {
+                    "target": {
+                        "group": "kustomize.toolkit.fluxcd.io",
+                        "version": "v1",
+                        "kind": "Kustomization",
+                        "name": "vault-config-managed",
+                        "namespace": "flux-system",
+                    },
+                    "patch": (
+                        "- op: replace\n"
+                        "  path: /spec/healthCheckExprs\n"
+                        "  value: []"
+                    ),
+                }
+            ],
+        ),
+    )
+
+
+def patch_role_token_policies(root: Path) -> None:
+    mutate_doc(
+        root,
+        guard.MANAGED_KUSTOMIZATION,
+        lambda doc: doc.__setitem__(
+            "patches",
+            [
+                {
+                    "target": {
+                        "group": "redhatcop.redhat.io",
+                        "version": "v1alpha1",
+                        "kind": "JWTOIDCAuthEngineRole",
+                        "name": "deploy-example",
+                    },
+                    "patch": (
+                        "- op: replace\n"
+                        "  path: /spec/tokenPolicies\n"
+                        "  value: [vault-admin]"
+                    ),
+                }
+            ],
+        ),
+    )
+
+
+case(
+    "inline-patch-rewriting-config-discovery-is-rejected",
+    False,
+    patch_config_discovery,
+    "spec.OIDCDiscoveryURL must equal 'https://token.actions.githubusercontent.com'",
+)
+case(
+    "root-patch-emptying-health-expressions-fails-closed",
+    False,
+    patch_root_health_empty,
+    "JWTOIDCAuthEngineConfig entry",
+    1,
+)
+case(
+    "inline-patch-rewriting-role-policy-is-rejected",
+    True,
+    patch_role_token_policies,
+    "tokenPolicies must contain exactly one entry equal to metadata.name",
 )
 
 
@@ -590,10 +807,18 @@ def main() -> int:
             mutate(root)
             rc, output = run_guard(root)
         ok = rc == expected_rc and fragment in output
+        object_report = ""
+        if expected_rc == 0:
+            match = re.search(r"across (\d+) rendered managed object", output)
+            if match is None or int(match.group(1)) == 0:
+                ok = False
+            object_report = (
+                f" rendered_objects={match.group(1)}" if match is not None else ""
+            )
         observed = "PASS" if rc == 0 else "FAIL" if rc == 1 else "ERROR"
         print(
             f"{'PASS' if ok else 'FAIL'}  {name:<48} "
-            f"guard={observed}(rc={rc})"
+            f"guard={observed}(rc={rc}){object_report}"
         )
         if not ok:
             failures += 1

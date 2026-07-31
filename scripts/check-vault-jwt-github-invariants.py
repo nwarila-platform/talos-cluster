@@ -8,9 +8,9 @@ This offline guard pins four security-bearing shapes:
 2. Both JWT operator kinds have the repository's observed-generation-aware
    Flux health expression.
 3. Vault's GitHub OIDC egress is one exact-host DNS + TCP/443 CNP.
-4. Every JWTOIDCAuthEngineRole recursively discovered in the prune-armed
-   managed YAML inventory matches the ratified D9 contract, including exact
-   claims and strictly bounded Go-duration token lifetimes.
+4. Every JWTOIDCAuthEngineRole in the rendered, Flux-applied prune-armed
+   inventory matches the ratified D9 contract, including exact claims and
+   strictly bounded Go-duration token lifetimes.
 
 No role CR exists in AR4a; role validation is deliberately vacuous until the
 first consumer is authored, while the self-test proves every field rejects a
@@ -20,6 +20,7 @@ focused malformed fixture.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import sys
 from decimal import Decimal, InvalidOperation
@@ -112,9 +113,23 @@ DURATION_UNITS_NS = {
 MAX_TOKEN_TTL_NS = Decimal(900_000_000_000)
 
 
+def _load_rendered_inventory_helper():
+    helper_path = REPO_ROOT / "scripts/rendered-inventory.py"
+    spec = importlib.util.spec_from_file_location("_rendered_inventory", helper_path)
+    if spec is None or spec.loader is None:
+        raise fail_usage(f"cannot load rendered-inventory helper: {helper_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def fail_usage(message: str) -> SystemExit:
     print(f"ERROR: {message}", file=sys.stderr)
     return SystemExit(2)
+
+
+rendered_inventory = _load_rendered_inventory_helper()
 
 
 def parse_args() -> argparse.Namespace:
@@ -213,70 +228,71 @@ def check_kustomization_reference(
         )
 
 
-def check_config(repo: Path, findings: list[str]) -> None:
-    path = repo / CONFIG_FILE
-    doc = load_one(path)
-    check_exact(doc.get("apiVersion"), API_VERSION, f"{CONFIG_FILE}: apiVersion", findings)
-    check_exact(doc.get("kind"), "JWTOIDCAuthEngineConfig", f"{CONFIG_FILE}: kind", findings)
+def check_config(inventory, findings: list[str]) -> None:
+    configs = [
+        doc
+        for doc in inventory.documents
+        if doc.get("apiVersion") == API_VERSION
+        and doc.get("kind") == "JWTOIDCAuthEngineConfig"
+    ]
+    if len(configs) != 1:
+        return  # applied_inventory_findings reports the ratified cardinality
+    doc = configs[0]
+    label = rendered_inventory.rendered_document_label(doc)
+    check_exact(doc.get("apiVersion"), API_VERSION, f"{label}: apiVersion", findings)
+    check_exact(doc.get("kind"), "JWTOIDCAuthEngineConfig", f"{label}: kind", findings)
     metadata = doc.get("metadata") or {}
-    check_exact(metadata.get("name"), "jwt-github", f"{CONFIG_FILE}: metadata.name", findings)
+    check_exact(metadata.get("name"), "jwt-github", f"{label}: metadata.name", findings)
     check_exact(
         metadata.get("namespace"),
         "vault-config-operator",
-        f"{CONFIG_FILE}: metadata.namespace",
+        f"{label}: metadata.namespace",
         findings,
     )
     spec = doc.get("spec")
     if not isinstance(spec, dict):
-        findings.append(f"{CONFIG_FILE}: spec must be a mapping")
+        findings.append(f"{label}: spec must be a mapping")
         return
     if set(spec) != CONFIG_SPEC_KEYS:
         findings.append(
-            f"{CONFIG_FILE}: spec keys must be exactly "
+            f"{label}: spec keys must be exactly "
             f"{sorted(CONFIG_SPEC_KEYS)!r}; found {sorted(spec)!r}"
         )
-    check_exact(spec.get("path"), "jwt-github", f"{CONFIG_FILE}: spec.path", findings)
+    check_exact(spec.get("path"), "jwt-github", f"{label}: spec.path", findings)
     check_exact(
         spec.get("authentication"),
         AUTHENTICATION,
-        f"{CONFIG_FILE}: spec.authentication",
+        f"{label}: spec.authentication",
         findings,
     )
     check_exact(
         spec.get("OIDCDiscoveryURL"),
         OIDC_URL,
-        f"{CONFIG_FILE}: spec.OIDCDiscoveryURL",
+        f"{label}: spec.OIDCDiscoveryURL",
         findings,
     )
     check_exact(
         spec.get("boundIssuer"),
         OIDC_URL,
-        f"{CONFIG_FILE}: spec.boundIssuer",
+        f"{label}: spec.boundIssuer",
         findings,
     )
     check_exact(
         spec.get("JWTSupportedAlgs"),
         ["RS256"],
-        f"{CONFIG_FILE}: spec.JWTSupportedAlgs",
+        f"{label}: spec.JWTSupportedAlgs",
         findings,
     )
     for forbidden in ("JWKSURL", "JWTValidationPubKeys", "defaultRole"):
         if forbidden in spec:
             findings.append(
-                f"{CONFIG_FILE}: mutually exclusive/default field "
+                f"{label}: mutually exclusive/default field "
                 f"{forbidden!r} must be absent"
             )
 
-    check_kustomization_reference(
-        repo / MANAGED_KUSTOMIZATION,
-        CONFIG_FILE.name,
-        str(MANAGED_KUSTOMIZATION),
-        findings,
-    )
 
-
-def check_health(repo: Path, findings: list[str]) -> None:
-    doc = load_one(repo / FLUX_KUSTOMIZATION)
+def check_health(flux_kustomization: dict, findings: list[str]) -> None:
+    doc = flux_kustomization
     expressions = ((doc.get("spec") or {}).get("healthCheckExprs"))
     if not isinstance(expressions, list):
         findings.append(f"{FLUX_KUSTOMIZATION}: spec.healthCheckExprs must be a list")
@@ -364,8 +380,7 @@ def duration_value(spec: dict, field: str, findings: list[str]) -> Decimal | Non
         return None
 
 
-def check_role(path: Path, doc: dict, repo: Path, findings: list[str]) -> None:
-    label = str(path.relative_to(repo))
+def check_role(label: str, doc: dict, findings: list[str]) -> None:
     if doc.get("apiVersion") != API_VERSION:
         findings.append(f"{label}: apiVersion must be {API_VERSION!r}")
     metadata = doc.get("metadata") or {}
@@ -472,41 +487,49 @@ def check_role(path: Path, doc: dict, repo: Path, findings: list[str]) -> None:
             findings.append(f"{label}: {field} must be no greater than tokenTTL")
 
 
-def check_roles(repo: Path, findings: list[str]) -> int:
-    managed = repo / MANAGED_DIR
-    if not managed.is_dir():
-        raise fail_usage(f"managed directory is missing: {managed}")
+def check_roles(inventory, findings: list[str]) -> int:
     count = 0
-    paths = sorted(
-        path
-        for path in managed.rglob("*")
-        if path.suffix in {".yaml", ".yml"} and path.is_file()
-    )
-    for path in paths:
-        for doc in _flatten_docs(load_yaml_documents(path)):
-            if (
-                doc.get("apiVersion") == API_VERSION
-                and doc.get("kind") == "JWTOIDCAuthEngineRole"
-            ):
-                count += 1
-                check_role(path, doc, repo, findings)
+    for doc in inventory.documents:
+        if (
+            doc.get("apiVersion") == API_VERSION
+            and doc.get("kind") == "JWTOIDCAuthEngineRole"
+        ):
+            count += 1
+            check_role(
+                rendered_inventory.rendered_document_label(doc),
+                doc,
+                findings,
+            )
     return count
 
 
-def evaluate(repo: Path) -> tuple[list[str], int]:
-    findings: list[str] = []
-    check_config(repo, findings)
-    check_health(repo, findings)
+def evaluate(repo: Path) -> tuple[list[str], int, int]:
+    try:
+        inventory = rendered_inventory.load_rendered_inventory(repo)
+    except rendered_inventory.InventoryError as exc:
+        raise fail_usage(f"cannot determine rendered inventory: {exc}")
+    findings = list(inventory.flux_findings)
+    findings.extend(inventory.containment_findings)
+    findings.extend(rendered_inventory.applied_inventory_findings(inventory))
+    check_config(inventory, findings)
+    check_health(inventory.flux_kustomization, findings)
     check_cnp(repo, findings)
-    roles = check_roles(repo, findings)
-    return findings, roles
+    roles = check_roles(inventory, findings)
+    supported = sum(
+        1
+        for doc in inventory.documents
+        if doc.get("apiVersion") == API_VERSION
+        and doc.get("kind")
+        in rendered_inventory.SUPPORTED_MANAGED_REDHATCOP_KINDS
+    )
+    return findings, roles, supported
 
 
 def main() -> int:
     repo = parse_args().root.resolve()
     if not repo.is_dir():
         raise fail_usage(f"--root does not exist: {repo}")
-    findings, roles = evaluate(repo)
+    findings, roles, supported = evaluate(repo)
     if findings:
         print("FAIL: jwt-github foundation invariant guard:", file=sys.stderr)
         for finding in findings:
@@ -514,7 +537,8 @@ def main() -> int:
         return 1
     print(
         "PASS: jwt-github config, generation-aware health, exact-host CNP, "
-        f"and {roles} JWT role contract(s) satisfy the ratified AR4a shape."
+        f"and {roles} JWT role contract(s) across {supported} rendered managed "
+        "object(s) satisfy the ratified AR4a shape."
     )
     return 0
 
