@@ -80,7 +80,6 @@ BUILD_CONTENT_KEYS = {
 }
 APPLY_TARGET_KEYS = {"kubeConfig"}
 DRIFT_KEYS = {"ignore"}
-SOURCE_PATH_ANNOTATION = "trust-root.nwarila.dev/source-path"
 
 
 class InventoryError(RuntimeError):
@@ -110,11 +109,6 @@ def rendered_document_label(doc: dict) -> str:
     metadata = doc.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
-    annotations = metadata.get("annotations")
-    if isinstance(annotations, dict):
-        source = annotations.get(SOURCE_PATH_ANNOTATION)
-        if isinstance(source, str) and source:
-            return source
     return (
         f"managed render {doc.get('kind')!r}/"
         f"{metadata.get('name')!r}"

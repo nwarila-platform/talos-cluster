@@ -142,14 +142,6 @@ def hostile_role_doc(name: str) -> dict:
     }
 
 
-def annotate_source(doc: dict, rel: Path | str) -> dict:
-    annotated = copy.deepcopy(doc)
-    metadata = annotated.setdefault("metadata", {})
-    annotations = metadata.setdefault("annotations", {})
-    annotations[guard.rendered_inventory.SOURCE_PATH_ANNOTATION] = str(rel)
-    return annotated
-
-
 def add_managed_resource(root: Path, resource: str) -> None:
     mutate_doc(
         root,
@@ -259,7 +251,7 @@ def add_hostile_yml_role(root: Path) -> None:
     write_yaml(
         root,
         rel,
-        annotate_source(hostile_role_doc("deploy-hostile-yml"), rel),
+        hostile_role_doc("deploy-hostile-yml"),
     )
     add_managed_resource(root, rel.name)
 
@@ -269,7 +261,7 @@ def add_hostile_subdirectory_role(root: Path) -> None:
     write_yaml(
         root,
         rel,
-        annotate_source(hostile_role_doc("deploy-hostile-subdir"), rel),
+        hostile_role_doc("deploy-hostile-subdir"),
     )
     add_managed_resource(root, "roles/x.yaml")
 
@@ -282,9 +274,7 @@ def add_hostile_list_role(root: Path) -> None:
         {
             "apiVersion": "v1",
             "kind": "List",
-            "items": [
-                annotate_source(hostile_role_doc("deploy-hostile-list"), rel)
-            ],
+            "items": [hostile_role_doc("deploy-hostile-list")],
         },
     )
     add_managed_resource(root, rel.name)
@@ -294,19 +284,19 @@ case(
     "hostile-role-yml-is-rejected",
     False,
     add_hostile_yml_role,
-    "managed/x.yml: spec.userClaim",
+    "managed render 'JWTOIDCAuthEngineRole'/'deploy-hostile-yml': spec.userClaim",
 )
 case(
     "hostile-role-subdirectory-is-rejected",
     False,
     add_hostile_subdirectory_role,
-    "managed/roles/x.yaml: spec.userClaim",
+    "managed render 'JWTOIDCAuthEngineRole'/'deploy-hostile-subdir': spec.userClaim",
 )
 case(
     "hostile-role-list-envelope-is-rejected",
     False,
     add_hostile_list_role,
-    "managed/x-list.yaml: spec.userClaim",
+    "managed render 'JWTOIDCAuthEngineRole'/'deploy-hostile-list': spec.userClaim",
 )
 
 
@@ -314,9 +304,7 @@ def add_hostile_json_role(root: Path) -> None:
     rel = guard.MANAGED_DIR / "hostile-role.json"
     path = root / rel
     path.write_text(
-        json.dumps(
-            annotate_source(hostile_role_doc("deploy-hostile-json"), rel)
-        )
+        json.dumps(hostile_role_doc("deploy-hostile-json"))
         + "\n",
         encoding="utf-8",
     )
@@ -328,7 +316,7 @@ def add_hostile_extensionless_role(root: Path) -> None:
     write_yaml(
         root,
         rel,
-        annotate_source(hostile_role_doc("deploy-hostile-extensionless"), rel),
+        hostile_role_doc("deploy-hostile-extensionless"),
     )
     add_managed_resource(root, rel.name)
 
@@ -338,14 +326,14 @@ def add_hostile_cross_root_role(root: Path) -> None:
     write_yaml(
         root,
         rel,
-        annotate_source(hostile_role_doc("deploy-hostile-cross-root"), rel),
+        hostile_role_doc("deploy-hostile-cross-root"),
     )
     add_managed_resource(root, "../cross-root-role.yaml")
 
 
 def add_deploy_evil(root: Path) -> None:
     rel = guard.MANAGED_DIR / "deploy-evil.yaml"
-    write_yaml(root, rel, annotate_source(hostile_role_doc("deploy-evil"), rel))
+    write_yaml(root, rel, hostile_role_doc("deploy-evil"))
     add_managed_resource(root, rel.name)
 
 
@@ -353,25 +341,25 @@ case(
     "hostile-role-json-is-rendered-and-rejected",
     False,
     add_hostile_json_role,
-    "hostile-role.json: spec.userClaim must equal 'repository_id'",
+    "managed render 'JWTOIDCAuthEngineRole'/'deploy-hostile-json': spec.userClaim must equal 'repository_id'",
 )
 case(
     "hostile-role-extensionless-is-rendered-and-rejected",
     False,
     add_hostile_extensionless_role,
-    "hostile-role: spec.userClaim must equal 'repository_id'",
+    "managed render 'JWTOIDCAuthEngineRole'/'deploy-hostile-extensionless': spec.userClaim must equal 'repository_id'",
 )
 case(
     "hostile-role-cross-root-is-rendered-and-rejected",
     False,
     add_hostile_cross_root_role,
-    "cross-root-role.yaml: spec.userClaim must equal 'repository_id'",
+    "managed render 'JWTOIDCAuthEngineRole'/'deploy-hostile-cross-root': spec.userClaim must equal 'repository_id'",
 )
 case(
     "deploy-evil-is-rendered-and-rejected",
     False,
     add_deploy_evil,
-    "deploy-evil.yaml: spec.userClaim must equal 'repository_id'",
+    "managed render 'JWTOIDCAuthEngineRole'/'deploy-evil': spec.userClaim must equal 'repository_id'",
 )
 
 
@@ -462,6 +450,13 @@ case(
     False,
     patch_root_health_empty,
     "JWTOIDCAuthEngineConfig entry",
+    1,
+)
+case(
+    "root-patch-health-finding-uses-rendered-object-label",
+    False,
+    patch_root_health_empty,
+    "managed render 'Kustomization'/'vault-config-managed': JWTOIDCAuthEngineConfig health entry",
     1,
 )
 case(

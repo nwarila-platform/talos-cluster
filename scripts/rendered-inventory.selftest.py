@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import importlib.util
+import io
 import subprocess
 import sys
 import tempfile
@@ -172,6 +174,35 @@ def expect_error(callback, fragment: str) -> None:
         raise AssertionError(f"expected InventoryError containing {fragment!r}")
 
 
+def expect_main_error(root: Path, loader, fragment: str) -> None:
+    original_loader = helper.load_rendered_inventory
+    original_argv = sys.argv
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    def injected_loader(requested: Path):
+        helper.load_rendered_inventory = original_loader
+        try:
+            return loader(requested)
+        finally:
+            helper.load_rendered_inventory = injected_loader
+
+    helper.load_rendered_inventory = injected_loader
+    sys.argv = ["rendered-inventory", "--root", str(root)]
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = helper.main()
+    finally:
+        helper.load_rendered_inventory = original_loader
+        sys.argv = original_argv
+    output = (stdout.getvalue() + stderr.getvalue()).strip()
+    if rc != 2:
+        raise AssertionError(f"expected exit 2, got {rc}: {output!r}")
+    if fragment not in output:
+        raise AssertionError(
+            f"expected error fragment {fragment!r}, got {output!r}"
+        )
+
+
 @case("success-uses-flux-load-restrictor-on-both-renders")
 def success_flags(repo: Path) -> None:
     inventory, runner = fake_load(repo)
@@ -183,6 +214,18 @@ def success_flags(repo: Path) -> None:
         expected = ["kustomize", "--load-restrictor", "LoadRestrictionsNone"]
         if command[1:4] != expected:
             raise AssertionError(f"Flux load restrictor missing: {command!r}")
+
+
+@case("diagnostic-label-ignores-object-annotations")
+def diagnostic_label_ignores_annotations(repo: Path) -> None:
+    doc = config_doc()
+    doc["metadata"]["annotations"] = {
+        "trust-root.nwarila.dev/source-path": "attacker-selected-label"
+    }
+    label = helper.rendered_document_label(doc)
+    expected = "managed render 'JWTOIDCAuthEngineConfig'/'jwt-github'"
+    if label != expected:
+        raise AssertionError(f"expected {expected!r}, got {label!r}")
 
 
 @case("success-with-real-kubectl")
@@ -523,6 +566,74 @@ def containment_unparseable_kustomization(repo: Path) -> None:
         "resources: [unterminated", encoding="utf-8"
     )
     expect_error(lambda: fake_load(repo), "failed to parse managed kustomization")
+
+
+@case("containment-kustomization-multiple-documents-exits-2")
+def containment_multiple_kustomization_documents(repo: Path) -> None:
+    kustomization = {
+        "apiVersion": "kustomize.config.k8s.io/v1beta1",
+        "kind": "Kustomization",
+        "resources": ["config.yaml"],
+    }
+    (repo / "managed/kustomization.yaml").write_text(
+        yaml_stream(kustomization, copy.deepcopy(kustomization)),
+        encoding="utf-8",
+    )
+    expect_main_error(
+        repo,
+        lambda root: fake_load(root)[0],
+        "must contain exactly one mapping document",
+    )
+
+
+@case("containment-resource-resolution-error-exits-2")
+def containment_resource_resolution_error(repo: Path) -> None:
+    (repo / "managed/loop").symlink_to("loop")
+    write_yaml(
+        repo / "managed/kustomization.yaml",
+        {
+            "apiVersion": "kustomize.config.k8s.io/v1beta1",
+            "kind": "Kustomization",
+            "resources": ["loop"],
+        },
+    )
+    expect_main_error(
+        repo,
+        lambda root: fake_load(root)[0],
+        "could not resolve managed build input 'loop'",
+    )
+
+
+@case("containment-managed-file-resolution-error-exits-2")
+def containment_managed_file_resolution_error(repo: Path) -> None:
+    (repo / "managed/dangling.yaml").symlink_to("absent.yaml")
+    expect_main_error(
+        repo,
+        lambda root: fake_load(root)[0],
+        "could not resolve managed file",
+    )
+
+
+@case("repository-root-resolution-error-exits-2")
+def repository_root_resolution_error(repo: Path) -> None:
+    root = repo / "root-loop"
+    root.symlink_to("root-loop")
+    expect_main_error(
+        root,
+        lambda requested: fake_load(requested)[0],
+        "could not resolve repository root",
+    )
+
+
+@case("repository-root-not-directory-exits-2")
+def repository_root_not_directory(repo: Path) -> None:
+    root = repo / "root-file"
+    root.write_text("not a directory\n", encoding="utf-8")
+    expect_main_error(
+        root,
+        lambda requested: fake_load(requested)[0],
+        "repository root is not a directory",
+    )
 
 
 @case("containment-resources-not-list")

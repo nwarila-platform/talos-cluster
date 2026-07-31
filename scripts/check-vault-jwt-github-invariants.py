@@ -174,19 +174,6 @@ def load_one(path: Path) -> dict:
     return docs[0]
 
 
-def _flatten_docs(docs):
-    """Descend kind:List envelopes recursively (#312 audit lesson)."""
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        kind = doc.get("kind")
-        items = doc.get("items")
-        if isinstance(kind, str) and kind.endswith("List") and isinstance(items, list):
-            yield from _flatten_docs(items)
-            continue
-        yield doc
-
-
 def parse_go_duration(value: str) -> Decimal:
     """Parse Go time.ParseDuration syntax into nanoseconds.
 
@@ -302,9 +289,10 @@ def check_config(inventory, findings: list[str]) -> None:
 
 def check_health(flux_kustomization: dict, findings: list[str]) -> None:
     doc = flux_kustomization
+    label = rendered_inventory.rendered_document_label(doc)
     expressions = ((doc.get("spec") or {}).get("healthCheckExprs"))
     if not isinstance(expressions, list):
-        findings.append(f"{FLUX_KUSTOMIZATION}: spec.healthCheckExprs must be a list")
+        findings.append(f"{label}: spec.healthCheckExprs must be a list")
         return
     for kind in ("JWTOIDCAuthEngineConfig", "JWTOIDCAuthEngineRole"):
         expected = {
@@ -315,7 +303,7 @@ def check_health(flux_kustomization: dict, findings: list[str]) -> None:
         matches = [entry for entry in expressions if isinstance(entry, dict) and entry.get("kind") == kind]
         if matches != [expected]:
             findings.append(
-                f"{FLUX_KUSTOMIZATION}: {kind} health entry must occur exactly "
+                f"{label}: {kind} health entry must occur exactly "
                 f"once with the observed-generation expression; found {matches!r}"
             )
 
