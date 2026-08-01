@@ -1121,6 +1121,68 @@ def register_indeterminable_api_version_cases() -> None:
 register_indeterminable_api_version_cases()
 
 
+def register_indeterminable_api_group_cases() -> None:
+    api_versions = {
+        "empty": "",
+        "whitespace-only": "   ",
+        "leading-slash": "/v1",
+    }
+    for suffix, api_version in api_versions.items():
+        def run(repo: Path, suffix=suffix, api_version=api_version) -> None:
+            make_render_path(repo, "api-group-valid-path")
+            owner = desired_owner(
+                f"api-group-{suffix}",
+                "./api-group-valid-path",
+            )
+            owner["apiVersion"] = api_version
+            runner = FakeRunner(Result(stdout=yaml_stream(owner)))
+            expect_error(
+                lambda: desired_load(repo, runner=runner),
+                "ROOT bootstrap render document 1 "
+                f"flux-system/api-group-{suffix} apiVersion {api_version!r} "
+                "has indeterminable API group",
+            )
+            if len(runner.commands) != 1:
+                raise AssertionError(
+                    f"indeterminable API group owner was rendered: {runner.commands!r}"
+                )
+
+        CASES.append((f"all-paths-api-group-{suffix}-is-indeterminable", run))
+
+
+register_indeterminable_api_group_cases()
+
+
+def register_determinable_non_flux_group_cases() -> None:
+    api_versions = {
+        "core-v1": "v1",
+        "apps-v1": "apps/v1",
+    }
+    for suffix, api_version in api_versions.items():
+        def run(repo: Path, suffix=suffix, api_version=api_version) -> None:
+            make_render_path(repo, "foreign-group-valid-path")
+            document = desired_owner(
+                f"foreign-group-{suffix}",
+                "./foreign-group-valid-path",
+            )
+            document["apiVersion"] = api_version
+            inventory, runner = desired_load(
+                repo,
+                Result(stdout=yaml_stream(document)),
+            )
+            if inventory.root_documents != (document,):
+                raise AssertionError(inventory.root_documents)
+            if inventory.owners or inventory.documents or inventory.reach_limits:
+                raise AssertionError(inventory)
+            if len(runner.commands) != 1:
+                raise AssertionError(runner.commands)
+
+        CASES.append((f"all-paths-{suffix}-document-is-not-owner", run))
+
+
+register_determinable_non_flux_group_cases()
+
+
 @case("all-paths-kustomize-config-document-is-not-owner")
 def all_paths_kustomize_config_not_owner(repo: Path) -> None:
     kustomization = {

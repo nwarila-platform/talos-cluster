@@ -10,10 +10,10 @@ the same unrestricted loader that Flux uses.
 not applied or live cluster state.  Discovery starts from the raw ROOT render
 and expands every discovered in-repository, unmodified owner to a fixed point;
 it is complete over that reachable unmodified subset only.  A document with
-``kind: Kustomization`` is an owner candidate only when its string
-``apiVersion`` determines the Flux API group; an absent, null, or non-string
-value fails closed, while a determinable other-group Kustomization remains an
-ordinary document.  Every discovered owner is classified as unmodified,
+``kind: Kustomization`` is an owner candidate only when its ``apiVersion``
+determines a non-empty API group; any indeterminable group fails closed, while
+a determinable other-group Kustomization remains an ordinary document.  Every
+discovered owner is classified as unmodified,
 modified, or external and is excluded from owner-build expansion unless it is
 unmodified.  A modified owner is named as partially searched in
 ``reach_limits`` whenever its resolved path was rendered during the run,
@@ -831,6 +831,10 @@ def _flux_owner_from_document(
     if not isinstance(api_version, str):
         raise InventoryError(f"{context} apiVersion must be a string")
     api_group = api_version.split("/", 1)[0]
+    if not api_group.strip():
+        raise InventoryError(
+            f"{context} apiVersion {api_version!r} has indeterminable API group"
+        )
     if api_group != "kustomize.toolkit.fluxcd.io":
         return None
     if api_version != FLUX_API_VERSION:
