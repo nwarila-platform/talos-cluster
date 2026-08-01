@@ -903,7 +903,7 @@ def load_desired_build_inventory(
     """
     try:
         repo = repo_root.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         raise InventoryError(f"could not resolve repository root {repo_root}: {exc}") from exc
     if not repo.is_dir():
         raise InventoryError(f"repository root is not a directory: {repo}")

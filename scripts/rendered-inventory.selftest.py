@@ -844,6 +844,24 @@ def all_paths_repository_root_resolution_error(repo: Path) -> None:
         raise AssertionError(f"invalid repository root was rendered: {runner.commands!r}")
 
 
+@case("all-paths-repository-root-embedded-nul-is-inventory-error")
+def all_paths_repository_root_embedded_nul(repo: Path) -> None:
+    root = Path(f"{repo}\x00suffix")
+    runner = FakeRunner()
+    fragment = f"could not resolve repository root {root}"
+    expect_error(
+        lambda: desired_load(root, runner=runner),
+        fragment,
+    )
+    expect_all_paths_main_error(
+        root,
+        lambda requested: desired_load(requested, runner=runner)[0],
+        f"ERROR: cannot determine desired-build inventory: {fragment}",
+    )
+    if runner.commands:
+        raise AssertionError(f"embedded-NUL repository root was rendered: {runner.commands!r}")
+
+
 @case("all-paths-repository-root-not-directory")
 def all_paths_repository_root_not_directory(repo: Path) -> None:
     root = repo / "root-file"
