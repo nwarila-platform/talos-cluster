@@ -1152,13 +1152,13 @@ live-cluster operation:
    The CNP appears in its authored exact-host form, without `toEntities`; this
    directory render does not demonstrate Flux-level patch application.
 3. For the transformed pass, create a temporary Kustomization with
-   `resources` naming the absolute path to the source directory
-   `clusters/talos-cluster/apps/vault`, not serialized output from the first
-   pass. Set `namespace: deploy-vault`, copy the four existing patches from the
-   owning Flux Kustomization, and add the JSON-6902 patch above. Build the
-   temporary Kustomization with
-   `kubectl kustomize <temporary-directory> --load-restrictor=LoadRestrictionsNone`
-   and assert exit zero.
+   `resources` naming the source directory
+   `clusters/talos-cluster/apps/vault` by a path relative to the temporary
+   directory. Kustomize rejects an absolute root. Use the source directory, not
+   serialized output from the first pass. Set `namespace: deploy-vault`, copy
+   the four existing patches from the owning Flux Kustomization, and add the
+   JSON-6902 patch above. Build the temporary Kustomization with
+   `kubectl kustomize <temporary-directory>` and assert exit zero.
 4. The transformed CNP contains `spec.egress[1].toEntities: [world]`. With the
    authored file unchanged,
    `python3 scripts/check-vault-jwt-github-invariants.py` still passes when the
