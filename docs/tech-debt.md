@@ -26,6 +26,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0018 | Vault reference-safety consumer discovery is filesystem-only | Open | Medium |
 | TD-0019 | Vault guards 2 and 3 retain authored-file-derived assertions | Open | **High** |
 | TD-0020 | Render-anchored Vault guards are not runnable offline | Open | Low |
+| TD-0021 | Vault guard 1 CNP assertion does not consume owning Flux transforms | Open | **High** |
 
 ---
 
@@ -863,8 +864,8 @@ Sourcing is deliberately per semantic rather than a blanket replacement:
 
 This closes the managed-inventory discovery and patch-divergence scope assigned
 to TD-0016. It does not claim to close the separate S0, consumer-discovery,
-residual authored-assertion, or offline-execution gaps now tracked as TD-0017
-through TD-0020.
+residual authored-assertion, or offline-execution gaps tracked separately in
+this register.
 
 ### Closure evidence
 
@@ -1102,6 +1103,99 @@ to the pinned upstream release.
 - `scripts/rendered-inventory.py`
 - `clusters/talos-cluster/apps/gateway-api/kustomization.yaml`
 - `.github/workflows/validate.yaml`
+
+---
+
+## TD-0021 — Vault guard 1 CNP assertion does not consume owning Flux transforms
+
+**Opened:** 2026-08-01 · **Status:** Open · **Priority:** High
+
+### Guards and defect class
+
+Guard 1, `scripts/check-vault-jwt-github-invariants.py`, checks the CNP in
+`check_cnp()` at lines 352-365 by reading
+`clusters/talos-cluster/apps/vault/base/ciliumnetworkpolicy-egress-github-oidc.yaml`
+directly. That object is absent from the cluster ROOT render. It belongs to Flux
+Kustomization `vault`, whose tracked definition is
+`clusters/talos-cluster/apps/vault-kustomization.yaml`: `spec.path` selects
+`clusters/talos-cluster/apps/vault`, `spec.targetNamespace` is `deploy-vault`,
+and `spec.patches` contains four existing prune-annotation patches.
+
+The directory build does not consume those outer `targetNamespace` and
+`patches` transforms. The code defect is therefore present: the exact-host CNP
+assertion can disagree with the effective rendered value under its owning Flux
+path.
+
+### Concrete reproduction
+
+Use this two-pass contrast procedure in a disposable checkout; it performs no
+live-cluster operation:
+
+1. As the input, model one additional entry in
+   `clusters/talos-cluster/apps/vault-kustomization.yaml` under `spec.patches`:
+
+   ```yaml
+   - target:
+       group: cilium.io
+       version: v2
+       kind: CiliumNetworkPolicy
+       name: vault-egress-github-oidc
+     patch: |-
+       - op: add
+         path: /spec/egress/1/toEntities
+         value:
+           - world
+   ```
+
+2. For the contrast pass, run
+   `kubectl kustomize clusters/talos-cluster/apps/vault` and assert exit zero.
+   The CNP appears in its authored exact-host form, without `toEntities`; this
+   directory render does not demonstrate Flux-level patch application.
+3. For the transformed pass, create a temporary Kustomization with
+   `resources` naming the absolute path to the source directory
+   `clusters/talos-cluster/apps/vault`, not serialized output from the first
+   pass. Set `namespace: deploy-vault`, copy the four existing patches from the
+   owning Flux Kustomization, and add the JSON-6902 patch above. Build the
+   temporary Kustomization with
+   `kubectl kustomize <temporary-directory> --load-restrictor=LoadRestrictionsNone`
+   and assert exit zero.
+4. The transformed CNP contains `spec.egress[1].toEntities: [world]`. With the
+   authored file unchanged,
+   `python3 scripts/check-vault-jwt-github-invariants.py` still passes when the
+   prerequisite ROOT render is available, because `check_cnp()` compares that
+   unmodified authored file rather than the transformed CNP.
+5. This procedure is an approximation of the controller's post-build patch
+   application, offered only to exhibit divergent effective configuration. It
+   is not a faithful emulation of kustomize-controller and does not prove its
+   internal transformation ordering. The demonstration does not depend on that
+   ordering because the CNP has a stable, non-generated name. The repository
+   presently has no faithful offline renderer for a Flux owner whose build is
+   modified by `patches` and `targetNamespace`.
+
+### Impact
+
+A divergent effective configuration can broaden the CNP while the guard still
+accepts the authored exact-host policy. No divergent CNP patch is present in
+the current repository, and this latent reproduction does not establish a
+current effective-object difference or an outage.
+
+### Closure criteria
+
+Close when the assertion consumes the CNP's effective rendered value under its
+owning Flux path, and a negative test proves that a divergent CNP patch is
+rejected. Closure depends on `scripts/rendered-inventory.py` being able to
+expand a Flux owner whose build is modified by `patches` and
+`targetNamespace`; the helper presently reports such an owner as a reach
+limit. Keep an authored-file assertion only if the asserted property is
+explicitly about source content.
+
+### References
+
+- `scripts/check-vault-jwt-github-invariants.py`
+- `scripts/rendered-inventory.py`
+- `clusters/talos-cluster/apps/vault/base/ciliumnetworkpolicy-egress-github-oidc.yaml`
+- `clusters/talos-cluster/apps/vault-kustomization.yaml`
+- `clusters/talos-cluster/kustomization.yaml`
 
 ---
 
