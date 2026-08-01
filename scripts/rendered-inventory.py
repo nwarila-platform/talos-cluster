@@ -1,19 +1,44 @@
 #!/usr/bin/env python3
-"""Render the Flux-applied vault-config-managed inventory, fail closed.
+"""Render fail-closed inventories from the repository's Flux configuration.
 
-The ROOT render is the authority for selecting the Flux Kustomization.  Its
-validated ``spec.path`` is then rendered with the same unrestricted loader
-that Flux uses.  Consumers must not recover from ``InventoryError`` by
-falling back to an authored-file scan.
+The default mode preserves the single-target, Flux-applied
+``vault-config-managed`` inventory used by the Vault guards.  The ROOT render
+selects that Flux Kustomization, whose validated ``spec.path`` is rendered with
+the same unrestricted loader that Flux uses.
 
-The production ROOT contains a remote Gateway API base, so loading its
-inventory requires network access until TD-0020 is closed with a pinned local
-mirror.
+``--all-paths`` instead reports a desired-build inventory of this repository,
+not applied or live cluster state.  Discovery starts from the raw ROOT render
+and expands every discovered in-repository, unmodified owner to a fixed point;
+it is complete over that reachable unmodified subset only.  A document with
+``kind: Kustomization`` is an owner candidate only when its ``apiVersion``
+determines a non-empty API group; any indeterminable group fails closed, while
+a determinable other-group Kustomization remains an ordinary document.  Every
+discovered owner is classified as unmodified,
+modified, or external and is excluded from owner-build expansion unless it is
+unmodified.  A modified owner is named as partially searched in
+``reach_limits`` whenever its resolved path was rendered during the run,
+whether as the ROOT bootstrap or through an unmodified owner; the remaining
+modified and external owners are named as wholly unsearched.  Only unmodified
+owner builds contribute documents.  Desired-build renders reject explicit
+null documents, while the default single-target mode retains its established
+parser and still skips them.  ``apply_semantics`` surface state-affecting
+fields without claiming that the desired build models whether objects are
+applied or what survives in the cluster.
+
+Faithful Flux build emulation, external-owner RBAC confinement,
+``LoadRestrictionsNone`` input provenance, and a coverage ratchet remain
+deferred to q1b-1c, q1b-1d, q1b-1e, and q1b-1f respectively.
+
+Consumers must not recover from ``InventoryError`` by falling back to an
+authored-file scan.  The production ROOT contains a remote Gateway API base,
+so loading either inventory requires network access until TD-0020 is closed
+with a pinned local mirror.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -80,10 +105,64 @@ BUILD_CONTENT_KEYS = {
 }
 APPLY_TARGET_KEYS = {"kubeConfig"}
 DRIFT_KEYS = {"ignore"}
+DESIRED_BUILD_AFFECTING_KEYS = {
+    "patches",
+    "images",
+    "components",
+    "ignoreMissingComponents",
+    "targetNamespace",
+    "namePrefix",
+    "nameSuffix",
+    "commonMetadata",
+    "postBuild",
+    "decryption",
+    "buildMetadata",
+}
+DESIRED_BUILD_ROUTING_KEYS = {"path", "sourceRef"}
+DESIRED_BUILD_NEUTRAL_KEYS = {
+    "interval",
+    "retryInterval",
+    "timeout",
+    "prune",
+    "wait",
+    "force",
+    "dependsOn",
+    "healthChecks",
+    "healthCheckExprs",
+    "serviceAccountName",
+    "deletionPolicy",
+    "suspend",
+}
+DESIRED_BUILD_APPLY_SEMANTICS_KEYS = (
+    "prune",
+    "force",
+    "deletionPolicy",
+    "suspend",
+    "serviceAccountName",
+)
+DESIRED_BUILD_BOOLEAN_KEYS = ("prune", "wait", "force", "suspend")
+MAX_DISCOVERED_OWNERS = 100
+ROOT_PARTIALLY_SEARCHED_REASON = (
+    "partially searched: raw bootstrap scanned, but the modified owner build "
+    "was not expanded; nested owners requiring its build semantics may be undiscovered"
+)
+MODIFIED_PARTIALLY_SEARCHED_REASON = (
+    "partially searched: path was rendered through an unmodified owner, but the "
+    "modified owner build was not expanded; nested owners requiring its build "
+    "semantics may be undiscovered"
+)
+MODIFIED_WHOLELY_UNSEARCHED_REASON = (
+    "wholly unsearched: modified owner build was not expanded; nested owners "
+    "may be undiscovered"
+)
+EXTERNAL_WHOLELY_UNSEARCHED_REASON = (
+    "wholly unsearched: external source is not available in this repository; "
+    "nested owners may be undiscovered"
+)
 
 
 class InventoryError(RuntimeError):
-    """The applied inventory could not be determined safely."""
+    """The requested inventory could not be determined safely."""
 
 
 @dataclass(frozen=True)
@@ -95,6 +174,65 @@ class RenderedInventory:
     documents: tuple[dict, ...]
     flux_findings: tuple[str, ...]
     containment_findings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DesiredBuildOwner:
+    """A discovered Flux owner and its total desired-build classification."""
+
+    namespace: str
+    name: str
+    spec: dict
+    raw_path: str
+    resolved_path: Path | None
+    source_kind: str
+    source_namespace: str
+    source_name: str
+    classification: str
+    build_affecting_keys: tuple[str, ...]
+    apply_semantics: dict[str, object]
+
+    @property
+    def identity(self) -> tuple[str, str]:
+        return self.namespace, self.name
+
+
+@dataclass(frozen=True)
+class DesiredBuildDocument:
+    """A desired-build document attributed to the owner that emits it."""
+
+    owner_namespace: str
+    owner_name: str
+    document: dict
+
+    @property
+    def owner_identity(self) -> tuple[str, str]:
+        return self.owner_namespace, self.owner_name
+
+
+@dataclass(frozen=True)
+class ReachLimit:
+    """A discovered owner whose descendants the closure cannot fully search."""
+
+    owner_namespace: str
+    owner_name: str
+    classification: str
+    reason: str
+
+    @property
+    def owner_identity(self) -> tuple[str, str]:
+        return self.owner_namespace, self.owner_name
+
+
+@dataclass(frozen=True)
+class DesiredBuildInventory:
+    """Desired repository build output, not an inventory of live state."""
+
+    repo_root: Path
+    root_documents: tuple[dict, ...]
+    owners: tuple[DesiredBuildOwner, ...]
+    documents: tuple[DesiredBuildDocument, ...]
+    reach_limits: tuple[ReachLimit, ...]
 
 
 def _display(path: Path, repo: Path) -> str:
@@ -112,6 +250,19 @@ def rendered_document_label(doc: dict) -> str:
     return (
         f"managed render {doc.get('kind')!r}/"
         f"{metadata.get('name')!r}"
+    )
+
+
+def desired_build_document_label(
+    doc: dict, owner_namespace: str, owner_name: str
+) -> str:
+    """Label a desired-build document using only render and owner identity."""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return (
+        f"owner {owner_namespace}/{owner_name} render "
+        f"{doc.get('kind')!r}/{metadata.get('name')!r}"
     )
 
 
@@ -134,6 +285,25 @@ def _parse_rendered_yaml(stdout: object, label: str) -> tuple[dict, ...]:
     return tuple(documents)
 
 
+def _parse_desired_build_yaml(stdout: object, label: str) -> tuple[dict, ...]:
+    """Parse desired-build output, skipping empty but rejecting explicit-null documents."""
+    if isinstance(stdout, str):
+        try:
+            nodes = list(yaml.compose_all(stdout))
+        except yaml.YAMLError:
+            # Preserve the established parser's diagnostic for malformed YAML.
+            return _parse_rendered_yaml(stdout, label)
+        for index, node in enumerate(nodes, start=1):
+            if (
+                node.tag == "tag:yaml.org,2002:null"
+                and node.start_mark.index != node.end_mark.index
+            ):
+                raise InventoryError(
+                    f"{label} render document {index} is explicit null, not a mapping"
+                )
+    return _parse_rendered_yaml(stdout, label)
+
+
 def _render(
     kubectl: str,
     target: Path,
@@ -141,6 +311,7 @@ def _render(
     *,
     runner: Callable[..., object],
     timeout_seconds: int,
+    parser: Callable[[object, str], tuple[dict, ...]] = _parse_rendered_yaml,
 ) -> tuple[dict, ...]:
     command = [
         kubectl,
@@ -172,7 +343,7 @@ def _render(
         raise InventoryError(
             f"{label} render failed with exit {returncode}: {detail or 'no stderr'}"
         )
-    return _parse_rendered_yaml(getattr(result, "stdout", None), label)
+    return parser(getattr(result, "stdout", None), label)
 
 
 def _select_flux_kustomization(documents: Iterable[dict]) -> dict:
@@ -516,16 +687,421 @@ def load_rendered_inventory(
     )
 
 
+def _owner_document_context(label: str, index: int, doc: dict) -> str:
+    metadata = doc.get("metadata")
+    if isinstance(metadata, dict):
+        namespace = metadata.get("namespace")
+        name = metadata.get("name")
+        if isinstance(namespace, str) and namespace and isinstance(name, str) and name:
+            return f"{label} document {index} {namespace}/{name}"
+        if isinstance(name, str) and name:
+            return f"{label} document {index} {name}"
+    return f"{label} document {index}"
+
+
+def _required_non_empty_string(value: object, field: str, context: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise InventoryError(f"{context} {field} must be a non-empty string")
+    return value
+
+
+def _desired_build_owner(
+    repo: Path,
+    doc: dict,
+    *,
+    context: str,
+) -> DesiredBuildOwner:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict):
+        raise InventoryError(f"{context} metadata must be a mapping")
+    name = _required_non_empty_string(metadata.get("name"), "metadata.name", context)
+    namespace = _required_non_empty_string(
+        metadata.get("namespace"), "metadata.namespace", context
+    )
+    owner_context = f"owner {namespace}/{name}"
+
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise InventoryError(f"{owner_context} spec must be a mapping")
+
+    if "kubeConfig" in spec:
+        raise InventoryError(
+            f"{owner_context} has unsupported spec key 'kubeConfig'"
+        )
+    recognised = (
+        DESIRED_BUILD_AFFECTING_KEYS
+        | DESIRED_BUILD_ROUTING_KEYS
+        | DESIRED_BUILD_NEUTRAL_KEYS
+    )
+    unrecognised = [key for key in spec if key not in recognised]
+    if unrecognised:
+        ordered = sorted(unrecognised, key=repr)
+        raise InventoryError(
+            f"{owner_context} has unrecognised spec key(s): {ordered!r}"
+        )
+
+    raw_path = _required_non_empty_string(
+        spec.get("path"), "spec.path", owner_context
+    )
+    source_ref = spec.get("sourceRef")
+    if not isinstance(source_ref, dict):
+        raise InventoryError(f"{owner_context} spec.sourceRef must be a mapping")
+    source_kind = _required_non_empty_string(
+        source_ref.get("kind"), "spec.sourceRef.kind", owner_context
+    )
+    source_name = _required_non_empty_string(
+        source_ref.get("name"), "spec.sourceRef.name", owner_context
+    )
+    if "namespace" in source_ref:
+        source_namespace = _required_non_empty_string(
+            source_ref.get("namespace"),
+            "spec.sourceRef.namespace",
+            owner_context,
+        )
+    else:
+        source_namespace = namespace
+
+    for field in ("serviceAccountName", "targetNamespace"):
+        if field in spec:
+            _required_non_empty_string(spec.get(field), f"spec.{field}", owner_context)
+    for field in DESIRED_BUILD_BOOLEAN_KEYS:
+        if field in spec and not isinstance(spec.get(field), bool):
+            raise InventoryError(f"{owner_context} spec.{field} must be boolean")
+
+    build_affecting_keys = tuple(
+        sorted(key for key in DESIRED_BUILD_AFFECTING_KEYS if key in spec)
+    )
+    in_repository = (
+        source_kind == "GitRepository"
+        and source_namespace == FLUX_NAMESPACE
+        and source_name == "flux-system"
+    )
+    if not in_repository:
+        classification = "external"
+        resolved_path = None
+        apply_semantics: dict[str, object] = {}
+    else:
+        classification = "modified" if build_affecting_keys else "unmodified"
+        try:
+            resolved_path = _resolve_managed_path(repo, raw_path)
+        except InventoryError as exc:
+            raise InventoryError(
+                f"{owner_context} spec.path {raw_path!r}: {exc}"
+            ) from exc
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise InventoryError(
+                f"{owner_context} spec.path {raw_path!r} could not be resolved: {exc}"
+            ) from exc
+        apply_semantics = (
+            {
+                key: spec[key]
+                for key in DESIRED_BUILD_APPLY_SEMANTICS_KEYS
+                if key in spec
+            }
+            if classification == "unmodified"
+            else {}
+        )
+
+    return DesiredBuildOwner(
+        namespace=namespace,
+        name=name,
+        spec=spec,
+        raw_path=raw_path,
+        resolved_path=resolved_path,
+        source_kind=source_kind,
+        source_namespace=source_namespace,
+        source_name=source_name,
+        classification=classification,
+        build_affecting_keys=build_affecting_keys,
+        apply_semantics=apply_semantics,
+    )
+
+
+def _flux_owner_from_document(
+    repo: Path,
+    doc: dict,
+    *,
+    label: str,
+    index: int,
+) -> DesiredBuildOwner | None:
+    if doc.get("kind") != FLUX_KIND:
+        return None
+    context = _owner_document_context(label, index, doc)
+    api_version = doc.get("apiVersion")
+    if not isinstance(api_version, str):
+        raise InventoryError(f"{context} apiVersion must be a string")
+    api_group = api_version.split("/", 1)[0]
+    if not api_group.strip():
+        raise InventoryError(
+            f"{context} apiVersion {api_version!r} has indeterminable API group"
+        )
+    if api_group != "kustomize.toolkit.fluxcd.io":
+        return None
+    if api_version != FLUX_API_VERSION:
+        raise InventoryError(
+            f"{context} uses unsupported Flux apiVersion {api_version!r}; "
+            f"supported version is {FLUX_API_VERSION!r}"
+        )
+    return _desired_build_owner(repo, doc, context=context)
+
+
+def _type_strict_equal(left: object, right: object) -> bool:
+    """Compare parsed YAML values without Python's cross-type coercion."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if len(left) != len(right):
+            return False
+        unmatched = list(right.items())
+        for left_key, left_value in left.items():
+            for index, (right_key, right_value) in enumerate(unmatched):
+                if _type_strict_equal(left_key, right_key) and _type_strict_equal(
+                    left_value, right_value
+                ):
+                    unmatched.pop(index)
+                    break
+            else:
+                return False
+        return True
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(
+            _type_strict_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    if isinstance(left, (set, frozenset)):
+        unmatched = list(right)
+        for left_item in left:
+            for index, right_item in enumerate(unmatched):
+                if _type_strict_equal(left_item, right_item):
+                    unmatched.pop(index)
+                    break
+            else:
+                return False
+        return True
+    return left == right
+
+
+def load_desired_build_inventory(
+    repo_root: Path,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    runner: Callable[..., object] = subprocess.run,
+    timeout_seconds: int = RENDER_TIMEOUT_SECONDS,
+    directory_entries: Callable[[Path], Iterable[Path]] = Path.iterdir,
+    max_discovered_owners: int = MAX_DISCOVERED_OWNERS,
+) -> DesiredBuildInventory:
+    """Discover and render the unmodified Flux-owner desired-build closure.
+
+    The raw ROOT build is an unconditional discovery bootstrap.  Only owners
+    classified as unmodified are expanded, so discovery is complete only over
+    the reachable unmodified subset.  ``reach_limits`` identifies every
+    discovered modified or external frontier where nested owners may remain
+    undiscovered; a modified owner is partially searched whenever its resolved
+    path was rendered during this run.  Apply-semantics values are surfaced,
+    but the returned documents describe desired repository output rather than
+    live state.
+    """
+    try:
+        repo = repo_root.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise InventoryError(f"could not resolve repository root {repo_root}: {exc}") from exc
+    if not repo.is_dir():
+        raise InventoryError(f"repository root is not a directory: {repo}")
+    kubectl = which("kubectl")
+    if not kubectl:
+        raise InventoryError("kubectl was not found on PATH")
+    if (
+        not isinstance(max_discovered_owners, int)
+        or isinstance(max_discovered_owners, bool)
+        or max_discovered_owners < 1
+    ):
+        raise InventoryError("maximum unique discovered owners must be a positive integer")
+
+    # This retained seam keeps hermetic callers aligned with the existing
+    # loader even though desired-build discovery does not inspect directory
+    # contents outside kubectl's render.
+    _ = directory_entries
+
+    root_target = (repo / ROOT_KUSTOMIZATION).resolve(strict=False)
+    root_documents = _render(
+        kubectl,
+        root_target,
+        "ROOT bootstrap",
+        runner=runner,
+        timeout_seconds=timeout_seconds,
+        parser=_parse_desired_build_yaml,
+    )
+    render_cache: dict[Path, tuple[dict, ...]] = {root_target: root_documents}
+    owners: dict[tuple[str, str], DesiredBuildOwner] = {}
+    pending: set[tuple[str, str]] = set()
+    expanded: set[tuple[str, str]] = set()
+    desired_documents: list[DesiredBuildDocument] = []
+
+    def discover(documents: tuple[dict, ...], label: str) -> None:
+        candidates: list[DesiredBuildOwner] = []
+        for index, document in enumerate(documents, start=1):
+            candidate = _flux_owner_from_document(
+                repo,
+                document,
+                label=label,
+                index=index,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+
+        for candidate in candidates:
+            identity = candidate.identity
+            previous = owners.get(identity)
+            if previous is not None:
+                if not _type_strict_equal(previous.spec, candidate.spec):
+                    raise InventoryError(
+                        f"duplicate owner {identity[0]}/{identity[1]} has differing specs"
+                    )
+                continue
+            reached = len(owners) + 1
+            if reached > max_discovered_owners:
+                raise InventoryError(
+                    "discovery limit exceeded: maximum unique discovered owners "
+                    f"is {max_discovered_owners}; count reached {reached}"
+                )
+            owners[identity] = candidate
+            if candidate.classification == "unmodified":
+                pending.add(identity)
+
+    discover(root_documents, "ROOT bootstrap render")
+    while pending:
+        identity = min(pending)
+        pending.remove(identity)
+        if identity in expanded:
+            continue
+        owner = owners[identity]
+        expanded.add(identity)
+        if owner.resolved_path is None:  # pragma: no cover - class invariant
+            raise InventoryError(
+                f"owner {owner.namespace}/{owner.name} has no resolved in-repository path"
+            )
+        documents = render_cache.get(owner.resolved_path)
+        if documents is None:
+            documents = _render(
+                kubectl,
+                owner.resolved_path,
+                f"owner {owner.namespace}/{owner.name} path {owner.raw_path!r}",
+                runner=runner,
+                timeout_seconds=timeout_seconds,
+                parser=_parse_desired_build_yaml,
+            )
+            render_cache[owner.resolved_path] = documents
+        desired_documents.extend(
+            DesiredBuildDocument(owner.namespace, owner.name, document)
+            for document in documents
+        )
+        discover(documents, f"owner {owner.namespace}/{owner.name} render")
+
+    ordered_owners = tuple(owners[key] for key in sorted(owners))
+    reach_limits: list[ReachLimit] = []
+    for owner in ordered_owners:
+        if owner.classification == "unmodified":
+            continue
+        if owner.classification == "modified" and owner.resolved_path == root_target:
+            reason = ROOT_PARTIALLY_SEARCHED_REASON
+        elif owner.classification == "modified" and owner.resolved_path in render_cache:
+            reason = MODIFIED_PARTIALLY_SEARCHED_REASON
+        elif owner.classification == "modified":
+            reason = MODIFIED_WHOLELY_UNSEARCHED_REASON
+        else:
+            reason = EXTERNAL_WHOLELY_UNSEARCHED_REASON
+        reach_limits.append(
+            ReachLimit(
+                owner_namespace=owner.namespace,
+                owner_name=owner.name,
+                classification=owner.classification,
+                reason=reason,
+            )
+        )
+
+    return DesiredBuildInventory(
+        repo_root=repo,
+        root_documents=root_documents,
+        owners=ordered_owners,
+        documents=tuple(desired_documents),
+        reach_limits=tuple(reach_limits),
+    )
+
+
+def _print_desired_build_inventory(inventory: DesiredBuildInventory) -> None:
+    print("Desired-build inventory (repository output, not live state)")
+    for classification in ("unmodified", "modified", "external"):
+        members = [
+            owner
+            for owner in inventory.owners
+            if owner.classification == classification
+        ]
+        print(f"{classification} ({len(members)}):")
+        for owner in members:
+            identity = f"{owner.namespace}/{owner.name}"
+            if classification == "unmodified":
+                semantics = json.dumps(owner.apply_semantics, sort_keys=True)
+                print(
+                    f"  - {identity}: path={owner.raw_path!r}; "
+                    f"apply_semantics={semantics}"
+                )
+            elif classification == "modified":
+                print(
+                    f"  - {identity}: path={owner.raw_path!r}; "
+                    f"build_affecting_keys={list(owner.build_affecting_keys)!r}"
+                )
+            else:
+                source = (
+                    f"{owner.source_kind} "
+                    f"{owner.source_namespace}/{owner.source_name}"
+                )
+                print(
+                    f"  - {identity}: source={source}; path={owner.raw_path!r}"
+                )
+    print(f"reach_limits ({len(inventory.reach_limits)}):")
+    for limit in inventory.reach_limits:
+        print(
+            f"  - {limit.owner_namespace}/{limit.owner_name} "
+            f"[{limit.classification}]: {limit.reason}"
+        )
+
+
+def _all_paths_main(root: Path) -> int:
+    try:
+        inventory = load_desired_build_inventory(root)
+    except InventoryError as exc:
+        print(
+            f"ERROR: cannot determine desired-build inventory: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001 - unexpected tooling errors fail closed
+        print(f"ERROR: desired-build inventory tooling failure: {exc!r}", file=sys.stderr)
+        return 2
+    _print_desired_build_inventory(inventory)
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render the validated Flux-applied vault-config-managed inventory."
+        description=(
+            "Render the validated single-target inventory or report desired-build "
+            "owner discovery."
+        )
     )
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--all-paths",
+        action="store_true",
+        help="report the Flux-owner desired-build discovery closure",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.all_paths:
+        return _all_paths_main(args.root)
     try:
         inventory = load_rendered_inventory(args.root)
     except InventoryError as exc:
