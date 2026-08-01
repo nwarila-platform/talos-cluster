@@ -6,14 +6,21 @@ The default mode preserves the single-target, Flux-applied
 selects that Flux Kustomization, whose validated ``spec.path`` is rendered with
 the same unrestricted loader that Flux uses.
 
-``--all-paths`` instead reports a desired-build inventory.  It discovers Flux
-owners through the raw ROOT render and every in-repository, unmodified owner,
-classifies owners as unmodified, modified, or external, and publishes the
-resulting ``reach_limits``.  It renders only unmodified owners and records
-apply-semantics metadata; the result describes desired build output, not live
-state.  Faithful modified-owner builds, external-owner RBAC confinement, input
-provenance, and a coverage ratchet remain deferred to q1b-1c, q1b-1d, q1b-1e,
-and q1b-1f respectively.
+``--all-paths`` instead reports a desired-build inventory of this repository,
+not applied or live cluster state.  Discovery starts from the raw ROOT render
+and expands every discovered in-repository, unmodified owner to a fixed point;
+it is complete over that unmodified subset only.  Every discovered owner is
+classified as unmodified, modified, or external.  Modified and external owners
+are named in ``reach_limits`` and excluded from owner-build expansion; the ROOT
+owner is partially searched because its raw bootstrap output is scanned even
+though its modified owner build is not expanded.  Only unmodified owner builds
+contribute documents.  Their ``apply_semantics`` surface state-affecting fields
+without claiming that the desired build models whether objects are applied or
+what survives in the cluster.
+
+Faithful Flux build emulation, external-owner RBAC confinement,
+``LoadRestrictionsNone`` input provenance, and a coverage ratchet remain
+deferred to q1b-1c, q1b-1d, q1b-1e, and q1b-1f respectively.
 
 Consumers must not recover from ``InventoryError`` by falling back to an
 authored-file scan.  The production ROOT contains a remote Gateway API base,
