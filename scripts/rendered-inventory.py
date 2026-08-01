@@ -139,6 +139,11 @@ ROOT_PARTIALLY_SEARCHED_REASON = (
     "partially searched: raw bootstrap scanned, but the modified owner build "
     "was not expanded; nested owners requiring its build semantics may be undiscovered"
 )
+MODIFIED_PARTIALLY_SEARCHED_REASON = (
+    "partially searched: path was rendered through an unmodified owner, but the "
+    "modified owner build was not expanded; nested owners requiring its build "
+    "semantics may be undiscovered"
+)
 MODIFIED_WHOLELY_UNSEARCHED_REASON = (
     "wholly unsearched: modified owner build was not expanded; nested owners "
     "may be undiscovered"
@@ -273,6 +278,25 @@ def _parse_rendered_yaml(stdout: object, label: str) -> tuple[dict, ...]:
     return tuple(documents)
 
 
+def _parse_desired_build_yaml(stdout: object, label: str) -> tuple[dict, ...]:
+    """Parse desired-build output while distinguishing empty and null documents."""
+    if isinstance(stdout, str):
+        try:
+            nodes = list(yaml.compose_all(stdout))
+        except yaml.YAMLError:
+            # Preserve the established parser's diagnostic for malformed YAML.
+            return _parse_rendered_yaml(stdout, label)
+        for index, node in enumerate(nodes, start=1):
+            if (
+                node.tag == "tag:yaml.org,2002:null"
+                and node.start_mark.index != node.end_mark.index
+            ):
+                raise InventoryError(
+                    f"{label} render document {index} is explicit null, not a mapping"
+                )
+    return _parse_rendered_yaml(stdout, label)
+
+
 def _render(
     kubectl: str,
     target: Path,
@@ -280,6 +304,7 @@ def _render(
     *,
     runner: Callable[..., object],
     timeout_seconds: int,
+    parser: Callable[[object, str], tuple[dict, ...]] = _parse_rendered_yaml,
 ) -> tuple[dict, ...]:
     command = [
         kubectl,
@@ -311,7 +336,7 @@ def _render(
         raise InventoryError(
             f"{label} render failed with exit {returncode}: {detail or 'no stderr'}"
         )
-    return _parse_rendered_yaml(getattr(result, "stdout", None), label)
+    return parser(getattr(result, "stdout", None), label)
 
 
 def _select_flux_kustomization(documents: Iterable[dict]) -> dict:
@@ -753,7 +778,13 @@ def _desired_build_owner(
         try:
             resolved_path = _resolve_managed_path(repo, raw_path)
         except InventoryError as exc:
-            raise InventoryError(f"{owner_context}: {exc}") from exc
+            raise InventoryError(
+                f"{owner_context} spec.path {raw_path!r}: {exc}"
+            ) from exc
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise InventoryError(
+                f"{owner_context} spec.path {raw_path!r} could not be resolved: {exc}"
+            ) from exc
         apply_semantics = (
             {
                 key: spec[key]
@@ -788,19 +819,55 @@ def _flux_owner_from_document(
 ) -> DesiredBuildOwner | None:
     if doc.get("kind") != FLUX_KIND:
         return None
+    context = _owner_document_context(label, index, doc)
     api_version = doc.get("apiVersion")
     if not isinstance(api_version, str):
-        return None
+        raise InventoryError(f"{context} apiVersion must be a string")
     api_group = api_version.split("/", 1)[0]
     if api_group != "kustomize.toolkit.fluxcd.io":
         return None
-    context = _owner_document_context(label, index, doc)
     if api_version != FLUX_API_VERSION:
         raise InventoryError(
             f"{context} uses unsupported Flux apiVersion {api_version!r}; "
             f"supported version is {FLUX_API_VERSION!r}"
         )
     return _desired_build_owner(repo, doc, context=context)
+
+
+def _type_strict_equal(left: object, right: object) -> bool:
+    """Compare parsed YAML values without Python's cross-type coercion."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if len(left) != len(right):
+            return False
+        unmatched = list(right.items())
+        for left_key, left_value in left.items():
+            for index, (right_key, right_value) in enumerate(unmatched):
+                if _type_strict_equal(left_key, right_key) and _type_strict_equal(
+                    left_value, right_value
+                ):
+                    unmatched.pop(index)
+                    break
+            else:
+                return False
+        return True
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(
+            _type_strict_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    if isinstance(left, (set, frozenset)):
+        unmatched = list(right)
+        for left_item in left:
+            for index, right_item in enumerate(unmatched):
+                if _type_strict_equal(left_item, right_item):
+                    unmatched.pop(index)
+                    break
+            else:
+                return False
+        return True
+    return left == right
 
 
 def load_desired_build_inventory(
@@ -848,6 +915,7 @@ def load_desired_build_inventory(
         "ROOT bootstrap",
         runner=runner,
         timeout_seconds=timeout_seconds,
+        parser=_parse_desired_build_yaml,
     )
     render_cache: dict[Path, tuple[dict, ...]] = {root_target: root_documents}
     owners: dict[tuple[str, str], DesiredBuildOwner] = {}
@@ -871,7 +939,7 @@ def load_desired_build_inventory(
             identity = candidate.identity
             previous = owners.get(identity)
             if previous is not None:
-                if previous.spec != candidate.spec:
+                if not _type_strict_equal(previous.spec, candidate.spec):
                     raise InventoryError(
                         f"duplicate owner {identity[0]}/{identity[1]} has differing specs"
                     )
@@ -906,6 +974,7 @@ def load_desired_build_inventory(
                 f"owner {owner.namespace}/{owner.name} path {owner.raw_path!r}",
                 runner=runner,
                 timeout_seconds=timeout_seconds,
+                parser=_parse_desired_build_yaml,
             )
             render_cache[owner.resolved_path] = documents
         desired_documents.extend(
@@ -921,6 +990,8 @@ def load_desired_build_inventory(
             continue
         if owner.classification == "modified" and owner.resolved_path == root_target:
             reason = ROOT_PARTIALLY_SEARCHED_REASON
+        elif owner.classification == "modified" and owner.resolved_path in render_cache:
+            reason = MODIFIED_PARTIALLY_SEARCHED_REASON
         elif owner.classification == "modified":
             reason = MODIFIED_WHOLELY_UNSEARCHED_REASON
         else:

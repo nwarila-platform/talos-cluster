@@ -269,6 +269,35 @@ def expect_main_error(root: Path, loader, fragment: str) -> None:
         )
 
 
+def expect_all_paths_main_error(root: Path, loader, fragment: str) -> None:
+    original_loader = helper.load_desired_build_inventory
+    original_argv = sys.argv
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    def injected_loader(requested: Path):
+        helper.load_desired_build_inventory = original_loader
+        try:
+            return loader(requested)
+        finally:
+            helper.load_desired_build_inventory = injected_loader
+
+    helper.load_desired_build_inventory = injected_loader
+    sys.argv = ["rendered-inventory", "--root", str(root), "--all-paths"]
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = helper.main()
+    finally:
+        helper.load_desired_build_inventory = original_loader
+        sys.argv = original_argv
+    output = (stdout.getvalue() + stderr.getvalue()).strip()
+    if rc != 2:
+        raise AssertionError(f"expected exit 2, got {rc}: {output!r}")
+    if fragment not in output:
+        raise AssertionError(
+            f"expected error fragment {fragment!r}, got {output!r}"
+        )
+
+
 @case("success-uses-flux-load-restrictor-on-both-renders")
 def success_flags(repo: Path) -> None:
     inventory, runner = fake_load(repo)
@@ -802,6 +831,54 @@ def all_paths_nested_discovery(repo: Path) -> None:
         raise AssertionError(f"expected ROOT plus two owner renders: {runner.commands!r}")
 
 
+@case("all-paths-repository-root-resolution-error")
+def all_paths_repository_root_resolution_error(repo: Path) -> None:
+    root = repo / "root-loop"
+    root.symlink_to("root-loop")
+    runner = FakeRunner(Result(stdout=yaml_stream(desired_owner("valid", "./managed"))))
+    expect_error(
+        lambda: desired_load(root, runner=runner),
+        "could not resolve repository root",
+    )
+    if runner.commands:
+        raise AssertionError(f"invalid repository root was rendered: {runner.commands!r}")
+
+
+@case("all-paths-repository-root-not-directory")
+def all_paths_repository_root_not_directory(repo: Path) -> None:
+    root = repo / "root-file"
+    root.write_text("not a directory\n", encoding="utf-8")
+    runner = FakeRunner(Result(stdout=yaml_stream(desired_owner("valid", "./managed"))))
+    expect_error(
+        lambda: desired_load(root, runner=runner),
+        "repository root is not a directory",
+    )
+    if runner.commands:
+        raise AssertionError(f"non-directory repository root was rendered: {runner.commands!r}")
+
+
+@case("all-paths-kubectl-absent")
+def all_paths_kubectl_absent(repo: Path) -> None:
+    runner = FakeRunner(Result(stdout=yaml_stream(desired_owner("valid", "./managed"))))
+    expect_error(
+        lambda: desired_load(repo, runner=runner, which=lambda _: None),
+        "kubectl was not found on PATH",
+    )
+    if runner.commands:
+        raise AssertionError(f"missing kubectl reached render: {runner.commands!r}")
+
+
+@case("all-paths-invalid-maximum-discovered-owners")
+def all_paths_invalid_maximum_discovered_owners(repo: Path) -> None:
+    runner = FakeRunner(Result(stdout=yaml_stream(desired_owner("valid", "./managed"))))
+    expect_error(
+        lambda: desired_load(repo, runner=runner, max_discovered_owners=0),
+        "maximum unique discovered owners must be a positive integer",
+    )
+    if runner.commands:
+        raise AssertionError(f"invalid discovery limit reached render: {runner.commands!r}")
+
+
 @case("all-paths-root-self-reference-converges")
 def all_paths_root_self_reference(repo: Path) -> None:
     make_render_path(repo, str(helper.ROOT_KUSTOMIZATION))
@@ -904,6 +981,28 @@ def all_paths_duplicate_differing_specs(repo: Path) -> None:
         raise AssertionError(f"differing owner path was rendered: {runner.commands!r}")
 
 
+@case("all-paths-duplicate-owner-type-distinct-specs-before-owner-render")
+def all_paths_duplicate_type_distinct_specs(repo: Path) -> None:
+    make_render_path(repo, "duplicate-typed")
+    first = desired_owner(
+        "duplicate-typed",
+        "./duplicate-typed",
+        spec_updates={"interval": True},
+    )
+    second = desired_owner(
+        "duplicate-typed",
+        "./duplicate-typed",
+        spec_updates={"interval": 1},
+    )
+    runner = FakeRunner(Result(stdout=yaml_stream(first, second)))
+    expect_error(
+        lambda: desired_load(repo, runner=runner),
+        "duplicate owner flux-system/duplicate-typed has differing specs",
+    )
+    if len(runner.commands) != 1:
+        raise AssertionError(f"type-distinct owner was rendered: {runner.commands!r}")
+
+
 @case("all-paths-modified-root-owner-reuses-bootstrap-with-partial-reach")
 def all_paths_modified_root_owner(repo: Path) -> None:
     make_render_path(repo, str(helper.ROOT_KUSTOMIZATION))
@@ -955,15 +1054,71 @@ def all_paths_wholly_unsearched_reach_limits(repo: Path) -> None:
         raise AssertionError(reasons)
 
 
+@case("all-paths-modified-shared-rendered-path-is-partially-searched")
+def all_paths_modified_shared_rendered_path(repo: Path) -> None:
+    make_render_path(repo, "shared-rendered-path")
+    unmodified = desired_owner("shared-builder", "./shared-rendered-path")
+    modified = desired_owner(
+        "shared-modified",
+        "./shared-rendered-path",
+        spec_updates={"targetNamespace": "target"},
+    )
+    inventory, runner = desired_load(
+        repo,
+        Result(stdout=yaml_stream(unmodified, modified)),
+        Result(stdout=yaml_stream(ordinary_doc("ConfigMap", "shared-output"))),
+    )
+    if len(runner.commands) != 2:
+        raise AssertionError(f"shared path render count was wrong: {runner.commands!r}")
+    limits = {limit.owner_identity: limit for limit in inventory.reach_limits}
+    limit = limits[owner_identity(modified)]
+    if limit.reason != helper.MODIFIED_PARTIALLY_SEARCHED_REASON:
+        raise AssertionError(limit)
+    if limit.reason == helper.ROOT_PARTIALLY_SEARCHED_REASON:
+        raise AssertionError("non-ROOT modified owner received the ROOT reason")
+
+
 @case("all-paths-rejects-unsupported-flux-api-version")
 def all_paths_unsupported_flux_version(repo: Path) -> None:
-    owner = desired_owner("future-owner", "./unused")
+    make_render_path(repo, "future-owner")
+    owner = desired_owner("future-owner", "./future-owner")
     owner["apiVersion"] = "kustomize.toolkit.fluxcd.io/v1beta2"
     expect_error(
         lambda: desired_load(repo, Result(stdout=yaml_stream(owner))),
         "flux-system/future-owner uses unsupported Flux apiVersion "
         "'kustomize.toolkit.fluxcd.io/v1beta2'",
     )
+
+
+def register_indeterminable_api_version_cases() -> None:
+    mutations = {
+        "absent": lambda doc: doc.pop("apiVersion"),
+        "null": lambda doc: doc.__setitem__("apiVersion", None),
+        "non-string": lambda doc: doc.__setitem__("apiVersion", 1),
+    }
+    for suffix, mutate in mutations.items():
+        def run(repo: Path, suffix=suffix, mutate=mutate) -> None:
+            make_render_path(repo, "api-version-valid-path")
+            owner = desired_owner(
+                f"api-version-{suffix}",
+                "./api-version-valid-path",
+            )
+            mutate(owner)
+            runner = FakeRunner(Result(stdout=yaml_stream(owner)))
+            expect_error(
+                lambda: desired_load(repo, runner=runner),
+                "ROOT bootstrap render document 1 "
+                f"flux-system/api-version-{suffix} apiVersion must be a string",
+            )
+            if len(runner.commands) != 1:
+                raise AssertionError(
+                    f"indeterminable apiVersion owner was rendered: {runner.commands!r}"
+                )
+
+        CASES.append((f"all-paths-api-version-{suffix}-is-indeterminable", run))
+
+
+register_indeterminable_api_version_cases()
 
 
 @case("all-paths-kustomize-config-document-is-not-owner")
@@ -1240,6 +1395,24 @@ def all_paths_path_not_directory(repo: Path) -> None:
     )
 
 
+@case("all-paths-path-embedded-nul-has-owner-context-exits-2")
+def all_paths_path_embedded_nul(repo: Path) -> None:
+    raw_path = "./managed\x00suffix"
+    owner = desired_owner("nul-path-owner", raw_path)
+    runner = FakeRunner(Result(stdout=yaml_stream(owner)))
+    fragment = (
+        f"owner flux-system/nul-path-owner spec.path {raw_path!r} "
+        "could not be resolved"
+    )
+    expect_all_paths_main_error(
+        repo,
+        lambda requested: desired_load(requested, runner=runner)[0],
+        fragment,
+    )
+    if len(runner.commands) != 1:
+        raise AssertionError(f"embedded-NUL owner render count was wrong: {runner.commands!r}")
+
+
 def register_invalid_owner_path_shape_cases() -> None:
     mutations = {
         "absent": lambda spec: spec.pop("path"),
@@ -1376,6 +1549,37 @@ def all_paths_non_root_render_failure(repo: Path) -> None:
     )
     if len(runner.commands) != 2 or Path(runner.commands[-1][-1]) != target:
         raise AssertionError(f"wrong failing render command: {runner.commands!r}")
+
+
+@case("all-paths-explicit-null-render-document-is-rejected")
+def all_paths_explicit_null_document(repo: Path) -> None:
+    make_render_path(repo, "null-document-owner")
+    owner = desired_owner("null-document-owner", "./null-document-owner")
+    runner = FakeRunner(
+        Result(stdout=yaml_stream(owner) + "---\nnull\n"),
+    )
+    expect_error(
+        lambda: desired_load(repo, runner=runner),
+        "ROOT bootstrap render document 2 is explicit null, not a mapping",
+    )
+    if len(runner.commands) != 1:
+        raise AssertionError(f"explicit-null owner was rendered: {runner.commands!r}")
+
+
+@case("all-paths-empty-render-document-is-skipped")
+def all_paths_empty_document(repo: Path) -> None:
+    make_render_path(repo, "empty-document-owner")
+    owner = desired_owner("empty-document-owner", "./empty-document-owner")
+    output = ordinary_doc("ConfigMap", "empty-document-output")
+    inventory, runner = desired_load(
+        repo,
+        Result(stdout=yaml_stream(owner) + "---\n"),
+        Result(stdout=yaml_stream(output)),
+    )
+    if len(runner.commands) != 2:
+        raise AssertionError(f"empty document prevented render: {runner.commands!r}")
+    if [document.document for document in inventory.documents] != [output]:
+        raise AssertionError(inventory.documents)
 
 
 @case("all-paths-owner-label-ignores-object-labels-and-annotations")
