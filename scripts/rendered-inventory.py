@@ -9,14 +9,21 @@ the same unrestricted loader that Flux uses.
 ``--all-paths`` instead reports a desired-build inventory of this repository,
 not applied or live cluster state.  Discovery starts from the raw ROOT render
 and expands every discovered in-repository, unmodified owner to a fixed point;
-it is complete over that unmodified subset only.  Every discovered owner is
-classified as unmodified, modified, or external.  Modified and external owners
-are named in ``reach_limits`` and excluded from owner-build expansion; the ROOT
-owner is partially searched because its raw bootstrap output is scanned even
-though its modified owner build is not expanded.  Only unmodified owner builds
-contribute documents.  Their ``apply_semantics`` surface state-affecting fields
-without claiming that the desired build models whether objects are applied or
-what survives in the cluster.
+it is complete over that reachable unmodified subset only.  A document with
+``kind: Kustomization`` is an owner candidate only when its string
+``apiVersion`` determines the Flux API group; an absent, null, or non-string
+value fails closed, while a determinable other-group Kustomization remains an
+ordinary document.  Every discovered owner is classified as unmodified,
+modified, or external and is excluded from owner-build expansion unless it is
+unmodified.  A modified owner is named as partially searched in
+``reach_limits`` whenever its resolved path was rendered during the run,
+whether as the ROOT bootstrap or through an unmodified owner; the remaining
+modified and external owners are named as wholly unsearched.  Only unmodified
+owner builds contribute documents.  Desired-build renders reject explicit
+null documents, while the default single-target mode retains its established
+parser and still skips them.  ``apply_semantics`` surface state-affecting
+fields without claiming that the desired build models whether objects are
+applied or what survives in the cluster.
 
 Faithful Flux build emulation, external-owner RBAC confinement,
 ``LoadRestrictionsNone`` input provenance, and a coverage ratchet remain
@@ -155,7 +162,7 @@ EXTERNAL_WHOLELY_UNSEARCHED_REASON = (
 
 
 class InventoryError(RuntimeError):
-    """The applied inventory could not be determined safely."""
+    """The requested inventory could not be determined safely."""
 
 
 @dataclass(frozen=True)
@@ -279,7 +286,7 @@ def _parse_rendered_yaml(stdout: object, label: str) -> tuple[dict, ...]:
 
 
 def _parse_desired_build_yaml(stdout: object, label: str) -> tuple[dict, ...]:
-    """Parse desired-build output while distinguishing empty and null documents."""
+    """Parse desired-build output, skipping empty but rejecting explicit-null documents."""
     if isinstance(stdout, str):
         try:
             nodes = list(yaml.compose_all(stdout))
@@ -882,10 +889,13 @@ def load_desired_build_inventory(
     """Discover and render the unmodified Flux-owner desired-build closure.
 
     The raw ROOT build is an unconditional discovery bootstrap.  Only owners
-    classified as unmodified are expanded.  ``reach_limits`` identifies every
+    classified as unmodified are expanded, so discovery is complete only over
+    the reachable unmodified subset.  ``reach_limits`` identifies every
     discovered modified or external frontier where nested owners may remain
-    undiscovered.  Apply-semantics values are surfaced, but the returned
-    documents describe desired repository output rather than live state.
+    undiscovered; a modified owner is partially searched whenever its resolved
+    path was rendered during this run.  Apply-semantics values are surfaced,
+    but the returned documents describe desired repository output rather than
+    live state.
     """
     try:
         repo = repo_root.resolve(strict=True)
@@ -1070,7 +1080,10 @@ def _all_paths_main(root: Path) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render the validated Flux-applied vault-config-managed inventory."
+        description=(
+            "Render the validated single-target inventory or report desired-build "
+            "owner discovery."
+        )
     )
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument(
