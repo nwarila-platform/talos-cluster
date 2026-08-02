@@ -53,6 +53,7 @@ oversized/reinvents a wheel) · **CONSOLIDATE** (merge with a sibling / a shared
 | `check-flux-crd-served-versions.py` (369) | Flux CRD served/storage versions match a reviewed map (silent reconcile-stall class, #246) | `flux check` doesn't diff served versions vs a map → **NO** | **KEEP** — share the duplicated YAML-node boilerplate via `scripts/lib/` |
 | `check-renovate-coverage.py` (260) | Every `# renovate:` annotation is covered by a customManager (orphaned pins that silently never update) | `renovate-config-validator` validates syntax only, not coverage → **NO** | **KEEP** |
 | `check-workflow-health.py` (342) | Weekly: no scheduled workflow is persistently red (a silently-dead pipeline) | GitHub has no "workflow red N times" alert; actionlint is static lint → **NO** | **SIMPLIFY** — de-scaffold (5 dataclasses + ASCII table around a 2-condition boolean) |
+| `build-review-evidence.py` (1026) | Commit-bound review evidence: materializes the target SHA, runs only the read-only guard-family gates admitted by a closed whole-argv grammar, and records every skipped run-step with its reason; **partial at this commit: 46 of 60 eligible, 14 not run** | GitHub Actions remains the authoritative full runner; this does not reproduce ineligible CI setup → **PARTIAL** | **KEEP** — replaces hand-assembled evidence without overstating coverage. **Not a sandbox:** selected scripts and transitive commands require effect audit, and the controller must have no ambient live-state capability |
 
 ## CI guards — nodes / Talos
 
