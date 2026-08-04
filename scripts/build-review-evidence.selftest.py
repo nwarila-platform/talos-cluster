@@ -1387,13 +1387,14 @@ def generative_near_misses(root: Path) -> None:
 
 @case("14h-exit-zero-carve-out-is-exact")
 def exact_help_carve_out(root: Path) -> None:
-    for index, argv in enumerate((("-h",), ("--help",))):
-        destination = root / f"accepted-{index}.json"
+    for argv in (("-h",), ("--help",)):
+        before = sorted(path.relative_to(root) for path in root.rglob("*"))
         completed = run([str(PYTHON), str(TOOL), *argv], cwd=root, check=False)
         if completed.returncode != 0 or not completed.stdout.startswith(b"usage:"):
             raise AssertionError((argv, completed.returncode, completed.stdout, completed.stderr))
-        if destination.exists() or destination.is_symlink():
-            raise AssertionError(f"help invocation created destination: {destination}")
+        after = sorted(path.relative_to(root) for path in root.rglob("*"))
+        if after != before:
+            raise AssertionError(f"help invocation changed directory contents: {before!r} != {after!r}")
 
     explicit_destination = root / "malformed-with-out.json"
     rejected = (
@@ -1403,11 +1404,13 @@ def exact_help_carve_out(root: Path) -> None:
         ("--help", "--definitely-unknown"),
         ("--definitely-unknown", "--help"),
         ("--commit", "0" * 40, "--out", str(explicit_destination), "--help"),
+        ("-h", "--commit", "0" * 40),
         ("--definitely-unknown",),
     )
+    refusal_prefix = b"REFUSAL: argument error:"
     for argv in rejected:
         completed = run([str(PYTHON), str(TOOL), *argv], cwd=root, check=False)
-        if completed.returncode != 3:
+        if completed.returncode != 3 or not completed.stderr.startswith(refusal_prefix):
             raise AssertionError((argv, completed.returncode, completed.stdout, completed.stderr))
     if explicit_destination.exists() or explicit_destination.is_symlink():
         raise AssertionError(f"malformed help invocation created destination: {explicit_destination}")
