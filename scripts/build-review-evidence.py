@@ -61,6 +61,7 @@ RENDER_RE = re.compile(r"^scripts/render-[A-Za-z0-9][A-Za-z0-9._-]*\.py$")
 TRUST_BOUNDARY = [
     "This tool is not a GitHub Actions runner; workflow bodies outside the closed grammar are never executed directly.",
     "This tool is not a sandbox and does not confine selected scripts or their transitive commands.",
+    "The generator self-binding detects accidental source drift but is not tamper-resistant because the check runs inside the program whose bytes it reads.",
     "Every selected script and its transitive commands must be effect-audited before use.",
     "The controller must have no ambient live-state capability that a runaway selected script could use.",
     "Credential-free HOME/TMPDIR child-environment scrubbing is defense in depth, not confinement.",
@@ -249,18 +250,18 @@ def verify_generator_binding(repo: Path, commit: str) -> str:
         invoked_path = Path(__file__).absolute()
         actual_stat = invoked_path.lstat()
         if invoked_path.is_symlink():
-            raise Refusal("executing generator is not a regular non-symlink file")
+            raise Refusal("generator source at __file__ is not a regular non-symlink file")
         actual_path = invoked_path.resolve(strict=True)
         actual_bytes = actual_path.read_bytes()
     except OSError as exc:
-        raise Refusal(f"cannot read executing generator: {exc}") from exc
+        raise Refusal(f"cannot read generator source at __file__: {exc}") from exc
     if not stat.S_ISREG(actual_stat.st_mode) or actual_path.is_symlink():
-        raise Refusal("executing generator is not a regular non-symlink file")
+        raise Refusal("generator source at __file__ is not a regular non-symlink file")
     target_sha = regular_blob_sha(repo, commit, GENERATOR_PATH)
     actual_sha = git_blob_sha(actual_bytes)
     if actual_sha != target_sha:
         raise Refusal(
-            "generator binding mismatch: executing bytes do not match "
+            "generator binding mismatch: source read at __file__ at check time does not match "
             f"{commit}:{GENERATOR_PATH}"
         )
     return target_sha
@@ -883,7 +884,7 @@ class RefusingArgumentParser(argparse.ArgumentParser):
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = RefusingArgumentParser(description=__doc__)
+    parser = RefusingArgumentParser(description=__doc__, add_help=False)
     parser.add_argument("--commit", required=True, help="commit or revision to materialize")
     parser.add_argument("--out", required=True, help="new artifact path (must not exist)")
     parser.add_argument(
@@ -892,7 +893,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=600,
         help="per-gate timeout (default: 600)",
     )
-    return parser.parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments in (["-h"], ["--help"]):
+        parser.print_help()
+        raise SystemExit(0)
+    return parser.parse_args(arguments)
 
 
 def build(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:

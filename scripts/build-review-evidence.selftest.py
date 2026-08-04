@@ -919,7 +919,12 @@ def generator_self_binding(root: Path) -> None:
     dirty_tool.write_bytes(TOOL.read_bytes() + b"\n# dirty executing bytes\n")
     out = clean_root / "evidence.json"
     completed = invoke(repo, commit, out, tool=dirty_tool)
-    assert_refusal(completed, out, "generator binding mismatch")
+    assert_refusal(
+        completed,
+        out,
+        "generator binding mismatch: source read at __file__ at check time does not match "
+        f"{commit}:{helper.GENERATOR_PATH}",
+    )
 
     absent_root = root / "absent"
     absent_root.mkdir()
@@ -936,7 +941,12 @@ def generator_self_binding(root: Path) -> None:
     )
     different_out = different_root / "evidence.json"
     different = invoke(different_repo, different_commit, different_out)
-    assert_refusal(different, different_out, "generator binding mismatch")
+    assert_refusal(
+        different,
+        different_out,
+        "generator binding mismatch: source read at __file__ at check time does not match "
+        f"{different_commit}:{helper.GENERATOR_PATH}",
+    )
 
 
 @case("13-invalid-utf8-and-nul-streams-use-base64")
@@ -1293,6 +1303,40 @@ def generative_near_misses(root: Path) -> None:
         ("python3", "scripts/rendered-inventory.py", "--all-paths"),
     ]
     generated = near_misses(accepted)
+    expected_verdicts: dict[str, str | tuple[str, str]] = {
+        "form-0-extra-flag": ("not-run", "outside-guard-family"),  # AC-3a self-test form permits no flags.
+        "form-0-interpreter-python": ("not-run", "outside-guard-family"),  # AC-3a self-test form requires python3.
+        "form-0-interpreter-bash": ("not-run", "outside-grammar"),  # AC-3 clause 6 requires bash paths to end in .sh.
+        "form-1-extra-flag": ("not-run", "outside-guard-family"),  # AC-3a check-guard form permits no flags.
+        "form-1-interpreter-python3": "pass",  # AC-3a check-guard form admits python and python3 for .py.
+        "form-1-interpreter-bash": ("not-run", "outside-grammar"),  # AC-3 clause 6 requires bash paths to end in .sh.
+        "form-2-extra-flag": ("not-run", "outside-guard-family"),  # AC-3a check-guard form permits no flags.
+        "form-2-interpreter-python": "pass",  # AC-3a check-guard form admits python and python3 for .py.
+        "form-2-interpreter-bash": ("not-run", "outside-grammar"),  # AC-3 clause 6 requires bash paths to end in .sh.
+        "form-3-extra-flag": ("not-run", "outside-guard-family"),  # AC-3a check-guard form permits no flags.
+        "form-3-interpreter-python": ("not-run", "outside-grammar"),  # AC-3 clause 6 requires python paths to end in .py.
+        "form-3-interpreter-python3": ("not-run", "outside-grammar"),  # AC-3 clause 6 requires python3 paths to end in .py.
+        "form-4-extra-flag": ("not-run", "outside-guard-family"),  # AC-3a renderer form is exactly python3, path, and --check.
+        "form-4-missing-flag": ("not-run", "outside-guard-family"),  # AC-3a renderer form requires --check.
+        "form-4-duplicated-flag": ("not-run", "outside-guard-family"),  # AC-3a renderer form permits exactly one --check.
+        "form-4-substituted-flag": ("not-run", "outside-guard-family"),  # AC-3a renderer form requires --check.
+        "form-4-reordered-with-extra": ("not-run", "outside-guard-family"),  # AC-3a renderer form permits no extra flag or reordering.
+        "form-4-interpreter-python": ("not-run", "outside-guard-family"),  # AC-3a renderer form requires python3.
+        "form-4-interpreter-bash": ("not-run", "outside-grammar"),  # AC-3 clause 6 requires bash paths to end in .sh.
+        "form-5-extra-flag": ("not-run", "outside-guard-family"),  # AC-3a named exception requires the exact whole argv.
+        "form-5-missing-flag": ("not-run", "outside-guard-family"),  # AC-3a named exception requires --all-paths.
+        "form-5-duplicated-flag": ("not-run", "outside-guard-family"),  # AC-3a named exception permits exactly one --all-paths.
+        "form-5-substituted-flag": ("not-run", "outside-guard-family"),  # AC-3a named exception requires --all-paths.
+        "form-5-reordered-with-extra": ("not-run", "outside-guard-family"),  # AC-3a named exception requires the exact whole argv.
+        "form-5-interpreter-python": ("not-run", "outside-guard-family"),  # AC-3a named exception requires python3.
+        "form-5-interpreter-bash": ("not-run", "outside-grammar"),  # AC-3 clause 6 requires bash paths to end in .sh.
+    }
+    if generated.keys() != expected_verdicts.keys():
+        missing = sorted(generated.keys() - expected_verdicts.keys())
+        unexpected = sorted(expected_verdicts.keys() - generated.keys())
+        raise AssertionError(f"literal oracle differs from near_misses: missing={missing}, unexpected={unexpected}")
+    if sum(verdict == "pass" for verdict in expected_verdicts.values()) != 2:
+        raise AssertionError("literal oracle must contain exactly two accepted near-misses")
     if ("python3", "scripts/render-probe.py", "--check", "--write") not in generated.values():
         raise AssertionError("generator omitted renderer --check --write")
     if ("python3", "scripts/rendered-inventory.py", "--all-paths", "--extra") not in generated.values():
@@ -1324,26 +1368,49 @@ def generative_near_misses(root: Path) -> None:
         raise AssertionError((completed.returncode, stderr_text(completed)))
     data = artifact(out)
     expected_executions: dict[str, int] = {path: 0 for path in scripts}
-    for name, argv in generated.items():
+    for name, expected in expected_verdicts.items():
+        argv = generated[name]
         gate = gate_by_name(data, name)
-        parsed = helper.parse_command_body(" ".join(argv))
-        if parsed is not None and helper.is_guard_family(argv):
-            # python and python3 are both accepted for check-*.py, so an
-            # interpreter substitution can mechanically collide with another
-            # accepted form. It is proven as accepted rather than mislabeled.
+        if expected == "pass":
             if gate["status"] != "pass":
                 raise AssertionError((name, argv, gate))
             expected_executions[argv[1]] += 1
-        elif parsed is None:
-            if gate["status"] != "not-run" or gate["reason_code"] != "outside-grammar":
-                raise AssertionError((name, argv, gate))
         else:
-            if gate["status"] != "not-run" or gate["reason_code"] != "outside-guard-family":
+            expected_status, expected_reason = expected
+            if gate["status"] != expected_status or gate["reason_code"] != expected_reason:
                 raise AssertionError((name, argv, gate))
     for path, counter in counters.items():
         observed = len(counter.read_text(encoding="utf-8")) if counter.exists() else 0
         if observed != expected_executions[path]:
             raise AssertionError(f"near-miss canary count for {path}: {observed} != {expected_executions[path]}")
+
+
+@case("14h-exit-zero-carve-out-is-exact")
+def exact_help_carve_out(root: Path) -> None:
+    for index, argv in enumerate((("-h",), ("--help",))):
+        destination = root / f"accepted-{index}.json"
+        completed = run([str(PYTHON), str(TOOL), *argv], cwd=root, check=False)
+        if completed.returncode != 0 or not completed.stdout.startswith(b"usage:"):
+            raise AssertionError((argv, completed.returncode, completed.stdout, completed.stderr))
+        if destination.exists() or destination.is_symlink():
+            raise AssertionError(f"help invocation created destination: {destination}")
+
+    explicit_destination = root / "malformed-with-out.json"
+    rejected = (
+        ("--h",),
+        ("--he",),
+        ("--hel",),
+        ("--help", "--definitely-unknown"),
+        ("--definitely-unknown", "--help"),
+        ("--commit", "0" * 40, "--out", str(explicit_destination), "--help"),
+        ("--definitely-unknown",),
+    )
+    for argv in rejected:
+        completed = run([str(PYTHON), str(TOOL), *argv], cwd=root, check=False)
+        if completed.returncode != 3:
+            raise AssertionError((argv, completed.returncode, completed.stdout, completed.stderr))
+    if explicit_destination.exists() or explicit_destination.is_symlink():
+        raise AssertionError(f"malformed help invocation created destination: {explicit_destination}")
 
 
 @case("15-worktree-cleanup-failure-refuses-with-exact-recovery")
