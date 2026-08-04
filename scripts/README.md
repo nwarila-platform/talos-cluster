@@ -53,7 +53,6 @@ oversized/reinvents a wheel) · **CONSOLIDATE** (merge with a sibling / a shared
 | `check-flux-crd-served-versions.py` (369) | Flux CRD served/storage versions match a reviewed map (silent reconcile-stall class, #246) | `flux check` doesn't diff served versions vs a map → **NO** | **KEEP** — share the duplicated YAML-node boilerplate via `scripts/lib/` |
 | `check-renovate-coverage.py` (260) | Every `# renovate:` annotation is covered by a customManager (orphaned pins that silently never update) | `renovate-config-validator` validates syntax only, not coverage → **NO** | **KEEP** |
 | `check-workflow-health.py` (342) | Weekly: no scheduled workflow is persistently red (a silently-dead pipeline) | GitHub has no "workflow red N times" alert; actionlint is static lint → **NO** | **SIMPLIFY** — de-scaffold (5 dataclasses + ASCII table around a 2-condition boolean) |
-| `build-review-evidence.py` (1026) | Commit-bound review evidence: materializes the target SHA, runs only the read-only guard-family gates admitted by a closed whole-argv grammar, and records every skipped run-step with its reason; **partial at this commit: 46 of 60 eligible, 14 not run** | GitHub Actions remains the authoritative full runner; this does not reproduce ineligible CI setup → **PARTIAL** | **KEEP** — replaces hand-assembled evidence without overstating coverage. **Not a sandbox:** selected scripts and transitive commands require effect audit, and the controller must have no ambient live-state capability |
 
 ## CI guards — nodes / Talos
 
@@ -97,6 +96,14 @@ single source) so the guards evaporate, or failing that collapse 3→1 parameter
 | `render-dr-schedule-values.py` (325) | DR schedule/retention numbers rendered from canonical manifests into 11 target doc lines; `--check` fails if stale | none; generation is the repo's preferred source-backed docs pattern | **KEEP** — additive precondition for cutting the curated schedule-claim guard |
 | `render-scripts-readme-counts.py` (192) | scripts/README line-count cells derived with `wc -l` semantics; `--check` fails if stale | none; generation removes the hand-maintained count drift class | **KEEP** |
 | `check-doc-links.py` (187) | No broken *relative* markdown links | `lychee --offline` / markdown-link-check do exactly this → **FULLY** | **CONSOLIDATE** — replace with `lychee --offline` (a pinned binary like actionlint) |
+
+## Local review tooling (not a CI gate)
+
+The generator below runs locally; its companion `build-review-evidence.selftest.py` is a CI gate.
+
+| Script (lines) | Protects | Native alternative | Verdict |
+|---|---|---|---|
+| `build-review-evidence.py` (1031) | Commit-bound review evidence: materializes the target SHA, runs only the read-only guard-family gates admitted by a closed whole-argv grammar, and records every skipped run-step with its reason. Coverage is deliberately partial; the artifact's `coverage_limits` records its current limits | GitHub Actions remains the authoritative full runner; this does not reproduce ineligible CI setup → **PARTIAL** | **KEEP** — replaces hand-assembled evidence without overstating coverage. **Not a sandbox:** selected scripts and transitive commands require effect audit, and the controller must have no ambient live-state capability |
 
 ## Operational / lifecycle (thin `talosctl`/`aws`/Factory wrappers — zero-manual)
 
