@@ -24,6 +24,8 @@ import tempfile
 from typing import Any
 
 import yaml
+from yaml.events import AliasEvent, ScalarEvent
+from yaml.nodes import ScalarNode
 
 
 GENERATOR_PATH = "scripts/build-review-evidence.py"
@@ -58,6 +60,8 @@ COMMAND_RE = re.compile(
 CHECK_PY_RE = re.compile(r"^scripts/check-[A-Za-z0-9][A-Za-z0-9._-]*\.py$")
 CHECK_SH_RE = re.compile(r"^scripts/check-[A-Za-z0-9][A-Za-z0-9._-]*\.sh$")
 RENDER_RE = re.compile(r"^scripts/render-[A-Za-z0-9][A-Za-z0-9._-]*\.py$")
+SELFTEST_RE = re.compile(r"^scripts/[A-Za-z0-9][A-Za-z0-9._-]*\.selftest\.py$")
+MERGE_TAG = "tag:yaml.org,2002:merge"
 TRUST_BOUNDARY = [
     "This tool is not a GitHub Actions runner; workflow bodies outside the closed grammar are never executed directly.",
     "This tool is not a sandbox and does not confine selected scripts or their transitive commands.",
@@ -75,26 +79,108 @@ class Refusal(RuntimeError):
     """A fail-closed condition that must produce exit status 3."""
 
 
+@dataclass(frozen=True)
+class ScalarPresentation:
+    """Source-level scalar properties that composition would otherwise discard."""
+
+    value: str
+    style: str | None
+    anchor: str | None
+    tag: str | None
+    start_line: int
+    end_line: int
+
+    def is_plain_single_line_implicit(self) -> bool:
+        return (
+            self.style is None
+            and self.anchor is None
+            and self.tag is None
+            and self.start_line == self.end_line
+        )
+
+
+class PresentedMapping(dict[Any, Any]):
+    """Constructed mapping retaining source presentation for each authored pair."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.key_presentations: list[ScalarPresentation | None] = []
+        self.value_presentations: dict[Any, ScalarPresentation | None] = {}
+
+
 class DuplicateTrackingLoader(yaml.SafeLoader):
-    """SafeLoader variant that records, rather than silently hiding, duplicates."""
+    """Safe loader that retains scalar presentation and refuses unsafe YAML forms."""
 
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
-        self.duplicate_keys: list[str] = []
+        self.scalar_presentations: dict[int, ScalarPresentation] = {}
 
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
-        self.flatten_mapping(node)
-        mapping: dict[Any, Any] = {}
+    def compose_node(self, parent: Any, index: Any) -> yaml.Node:
+        if self.check_event(AliasEvent):
+            raise Refusal("workflow YAML contains an alias")
+        return super().compose_node(parent, index)
+
+    def compose_scalar_node(self, anchor: str | None) -> ScalarNode:
+        event = self.get_event()
+        if not isinstance(event, ScalarEvent):
+            raise Refusal("workflow YAML scalar event was not available during composition")
+        tag = event.tag
+        if tag is None or tag == "!":
+            tag = self.resolve(ScalarNode, event.value, event.implicit)
+        node = ScalarNode(
+            tag,
+            event.value,
+            event.start_mark,
+            event.end_mark,
+            style=event.style,
+        )
+        if anchor is not None:
+            self.anchors[anchor] = node
+        self.scalar_presentations[id(node)] = ScalarPresentation(
+            value=event.value,
+            style=event.style,
+            anchor=event.anchor,
+            tag=event.tag,
+            start_line=event.start_mark.line,
+            end_line=event.end_mark.line,
+        )
+        return node
+
+    def scalar_presentation(self, node: yaml.Node) -> ScalarPresentation | None:
+        return self.scalar_presentations.get(id(node))
+
+    def construct_yaml_map(self, node: yaml.MappingNode) -> Any:
+        mapping = PresentedMapping()
+        yield mapping
+        constructed = self.construct_mapping(node)
+        mapping.update(constructed)
+        mapping.key_presentations = constructed.key_presentations
+        mapping.value_presentations = constructed.value_presentations
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> PresentedMapping:
+        if not isinstance(node, yaml.MappingNode):
+            raise Refusal("workflow contains a non-mapping node where a mapping was required")
+        mapping = PresentedMapping()
         for key_node, value_node in node.value:
+            if key_node.tag == MERGE_TAG:
+                raise Refusal("workflow YAML contains a merge key")
             key = self.construct_object(key_node, deep=deep)
             try:
                 duplicate = key in mapping
             except TypeError as exc:
                 raise Refusal("workflow contains an unhashable YAML mapping key") from exc
             if duplicate:
-                self.duplicate_keys.append(str(key))
+                raise Refusal("workflow YAML contains a duplicate mapping key")
+            mapping.key_presentations.append(self.scalar_presentation(key_node))
             mapping[key] = self.construct_object(value_node, deep=deep)
+            mapping.value_presentations[key] = self.scalar_presentation(value_node)
         return mapping
+
+
+DuplicateTrackingLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    DuplicateTrackingLoader.construct_yaml_map,
+)
 
 
 @dataclass(frozen=True)
@@ -325,7 +411,7 @@ def refuse_gitlinks_and_active_filters(repo: Path, commit: str) -> None:
             raise Refusal(f"active checkout filter is not allowed: {driver} on {path}")
 
 
-def load_workflow(path: Path) -> tuple[Mapping[Any, Any], list[str]]:
+def load_workflow(path: Path) -> Mapping[Any, Any]:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
@@ -333,24 +419,38 @@ def load_workflow(path: Path) -> tuple[Mapping[Any, Any], list[str]]:
     loader = DuplicateTrackingLoader(text)
     try:
         document = loader.get_single_data()
-    except (yaml.YAMLError, Refusal) as exc:
+    except Refusal:
+        raise
+    except yaml.YAMLError as exc:
         raise Refusal(f"cannot parse workflow YAML: {exc}") from exc
     finally:
         loader.dispose()
     if not isinstance(document, Mapping):
         raise Refusal("workflow document is not a mapping")
-    return document, loader.duplicate_keys
-
-
-def workflow_key_name(key: object) -> str | None:
-    if key is True:
-        return "on"
-    return key if isinstance(key, str) else None
+    return document
 
 
 def mapping_has_only_keys(mapping: Mapping[Any, Any], allowlist: frozenset[str]) -> bool:
-    names = [workflow_key_name(key) for key in mapping]
-    return all(name is not None and name in allowlist for name in names)
+    if not isinstance(mapping, PresentedMapping):
+        return False
+    return len(mapping.key_presentations) == len(mapping) and all(
+        presentation is not None
+        and presentation.is_plain_single_line_implicit()
+        and presentation.value in allowlist
+        for presentation in mapping.key_presentations
+    )
+
+
+def scalar_value_presentation(
+    mapping: Mapping[Any, Any],
+    key: object,
+) -> ScalarPresentation | None:
+    if not isinstance(mapping, PresentedMapping):
+        return None
+    try:
+        return mapping.value_presentations.get(key)
+    except TypeError:
+        return None
 
 
 def parse_command_body(run_body: str) -> ParsedCommand | None:
@@ -378,7 +478,7 @@ def is_guard_family(argv: Sequence[str]) -> bool:
         return True
     if len(argv) == 2:
         interpreter, path = argv
-        if interpreter == "python3" and path.endswith(".selftest.py"):
+        if interpreter == "python3" and SELFTEST_RE.fullmatch(path):
             return True
         if interpreter in {"python", "python3"} and CHECK_PY_RE.fullmatch(path):
             return True
@@ -397,19 +497,19 @@ def classify_step(
     root: Path,
     step: Mapping[Any, Any],
     run_body: str,
+    run_presentation: ScalarPresentation,
     *,
     workflow_context_allowed: bool,
     job_context_allowed: bool,
-    duplicate_keys: bool,
 ) -> Classification:
-    if duplicate_keys:
-        return Classification(None, "duplicate-yaml-key", "workflow YAML contains a duplicate mapping key")
     if not workflow_context_allowed:
         return Classification(None, "workflow-context-not-allowlisted", "workflow mapping contains a non-allowlisted key")
     if not job_context_allowed:
         return Classification(None, "job-context-not-allowlisted", "job mapping contains a non-allowlisted key")
     if not mapping_has_only_keys(step, STEP_KEYS):
         return Classification(None, "step-key-not-allowlisted", "step mapping contains a non-allowlisted key")
+    if not run_presentation.is_plain_single_line_implicit():
+        return Classification(None, "outside-grammar", "run body is outside the closed command grammar")
     parsed = parse_command_body(run_body)
     if parsed is None:
         return Classification(None, "outside-grammar", "run body is outside the closed command grammar")
@@ -598,7 +698,6 @@ def collect_workflow(
     commit: str,
     root: Path,
     workflow: Mapping[Any, Any],
-    duplicates: list[str],
     *,
     environment: Mapping[str, str],
     timeout_seconds: int,
@@ -645,18 +744,19 @@ def collect_workflow(
                 uses = raw_uses if isinstance(raw_uses, str) else None
                 non_run.append({"job": job_id, "step_name": step_name, "uses": uses})
                 continue
-            run_body = step["run"]
-            if not isinstance(run_body, str):
-                raise Refusal(f"run body is not a string in job {job_id}")
+            run_presentation = scalar_value_presentation(step, "run")
+            if run_presentation is None:
+                raise Refusal(f"run body is not a scalar in job {job_id}")
+            run_body = run_presentation.value
             classification = classify_step(
                 repo,
                 commit,
                 root,
                 step,
                 run_body,
+                run_presentation,
                 workflow_context_allowed=workflow_allowed,
                 job_context_allowed=job_allowed,
-                duplicate_keys=bool(duplicates),
             )
             if classification.parsed is None:
                 if classification.reason_code is None or classification.reason is None:
@@ -690,6 +790,8 @@ def collect_workflow(
                     timeout_seconds=timeout_seconds,
                 )
             )
+    if not gates:
+        raise Refusal("derived gate list is empty")
     return gates, {
         "ineligible_steps": ineligible,
         "non_run_steps": non_run,
@@ -939,13 +1041,12 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             pass
         else:
             raise Refusal("artifact destination must not lie inside the materialized tree")
-        workflow, duplicates = load_workflow(worktree / WORKFLOW_PATH)
+        workflow = load_workflow(worktree / WORKFLOW_PATH)
         gates, coverage = collect_workflow(
             repo,
             commit,
             worktree,
             workflow,
-            duplicates,
             environment=child_environment(child_home, child_temp),
             timeout_seconds=args.timeout_seconds,
         )

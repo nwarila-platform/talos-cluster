@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+from dataclasses import dataclass
 import errno
 import importlib.util
 import io
@@ -152,10 +153,12 @@ def initialize_repo(
             {"name": "pass", "run": "python3 scripts/check-pass.py"}
         ]
         document = default_workflow(selected_steps) if workflow is None else workflow
-        write(
-            repo / helper.WORKFLOW_PATH,
-            yaml.safe_dump(document, sort_keys=False),
-        )
+        rendered = yaml.safe_dump(document, sort_keys=False)
+        if "on" in document:
+            if rendered.count("'on':") != 1:
+                raise AssertionError("fixture serializer did not emit exactly one quoted on key")
+            rendered = rendered.replace("'on':", "on:", 1)
+        write(repo / helper.WORKFLOW_PATH, rendered)
     git(repo, "add", "--all")
     git(repo, "commit", "-m", "fixture")
     commit = git(repo, "rev-parse", "HEAD").stdout.decode("ascii").strip()
@@ -1156,36 +1159,37 @@ def duplicate_workflow(level: str) -> str:
     )
     if level == "workflow":
         return (
-            "name: one\nname: two\n'on': {pull_request: null}\n"
+            "name: one\nname: two\non: {pull_request: null}\n"
             "permissions: {contents: read}\njobs:\n" + ordinary_job
         )
     if level == "on":
         return (
-            "name: Fixture Validate\n'on':\n  pull_request: null\n  pull_request: null\n"
+            "name: Fixture Validate\non:\n  pull_request: null\n  pull_request: null\n"
             "permissions: {contents: read}\njobs:\n" + ordinary_job
         )
     if level == "permissions":
         return (
-            "name: Fixture Validate\n'on': {pull_request: null}\npermissions:\n"
+            "name: Fixture Validate\non: {pull_request: null}\npermissions:\n"
             "  contents: read\n  contents: write\njobs:\n" + ordinary_job
         )
     if level == "jobs":
         return (
-            "name: Fixture Validate\n'on': {pull_request: null}\npermissions: {contents: read}\n"
-            "jobs:\n  fixture: &job\n    name: Fixture\n    runs-on: ubuntu-latest\n"
+            "name: Fixture Validate\non: {pull_request: null}\npermissions: {contents: read}\n"
+            "jobs:\n  fixture:\n    name: Fixture\n    runs-on: ubuntu-latest\n"
             "    steps:\n      - name: canary\n        run: python3 scripts/check-canary.py\n"
-            "  fixture: *job\n"
+            "  fixture:\n    name: Fixture\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - name: canary\n        run: python3 scripts/check-canary.py\n"
         )
     if level == "job":
         return (
-            "name: Fixture Validate\n'on': {pull_request: null}\npermissions: {contents: read}\n"
+            "name: Fixture Validate\non: {pull_request: null}\npermissions: {contents: read}\n"
             "jobs:\n  fixture:\n    name: Fixture\n    runs-on: ubuntu-latest\n"
             "    runs-on: ubuntu-22.04\n    steps:\n      - name: canary\n"
             "        run: python3 scripts/check-canary.py\n"
         )
     if level == "step":
         return (
-            "name: Fixture Validate\n'on': {pull_request: null}\npermissions: {contents: read}\n"
+            "name: Fixture Validate\non: {pull_request: null}\npermissions: {contents: read}\n"
             "jobs:\n  fixture:\n    name: Fixture\n    runs-on: ubuntu-latest\n"
             "    steps:\n      - name: canary\n        name: duplicate\n"
             "        run: python3 scripts/check-canary.py\n"
@@ -1227,20 +1231,19 @@ def context_allowlists_and_duplicates(root: Path) -> None:
     for level in ("workflow", "on", "permissions", "jobs", "job", "step"):
         fixture = root / f"duplicate-{level}"
         fixture.mkdir()
+        raw_workflow = duplicate_workflow(level)
+        if level == "jobs":
+            token_types = {type(token) for token in yaml.scan(raw_workflow, Loader=yaml.SafeLoader)}
+            if yaml.tokens.AnchorToken in token_types or yaml.tokens.AliasToken in token_types:
+                raise AssertionError("duplicate jobs fixture still contains an anchor or alias token")
         repo, commit = initialize_repo(
             fixture,
             scripts={"scripts/check-canary.py": script},
-            raw_workflow=duplicate_workflow(level),
+            raw_workflow=raw_workflow,
         )
         out = fixture / "evidence.json"
         completed = invoke(repo, commit, out)
-        if completed.returncode != 2:
-            raise AssertionError((level, completed.returncode, stderr_text(completed)))
-        data = artifact(out)
-        if not data["gates"]:
-            raise AssertionError(f"duplicate {level} erased the canary gate")
-        if any(gate["reason_code"] != "duplicate-yaml-key" for gate in data["gates"]):
-            raise AssertionError((level, data["gates"]))
+        assert_exact_refusal(completed, out, "workflow YAML contains a duplicate mapping key")
     if canary.exists():
         raise AssertionError("duplicate-key canary fired")
 
@@ -1501,6 +1504,600 @@ def all_gates_pass(root: Path) -> None:
     ]
     if data["coverage_limits"]["unreproduced_context"] != expected_context:
         raise AssertionError(data["coverage_limits"]["unreproduced_context"])
+
+
+def assert_exact_refusal(
+    completed: subprocess.CompletedProcess[bytes],
+    out: Path,
+    reason: str,
+) -> None:
+    expected = f"REFUSAL: {reason}\n".encode("utf-8")
+    if completed.returncode != 3 or completed.stdout != b"" or completed.stderr != expected:
+        raise AssertionError(
+            (completed.returncode, completed.stdout, completed.stderr, expected)
+        )
+    if out.exists() or out.is_symlink():
+        raise AssertionError(f"refusal unexpectedly created {out}")
+
+
+def assert_gate_outcome(
+    completed: subprocess.CompletedProcess[bytes],
+    out: Path,
+    *,
+    expected_exit: int,
+    expected_status: str,
+    expected_reason_code: str | None,
+    expected_reason: str | None,
+) -> dict[str, Any]:
+    if completed.returncode != expected_exit:
+        raise AssertionError((completed.returncode, stderr_text(completed)))
+    data = artifact(out)
+    gate = gate_by_name(data, "canary")
+    actual = (gate["status"], gate["reason_code"], gate["reason"])
+    expected = (expected_status, expected_reason_code, expected_reason)
+    if actual != expected:
+        raise AssertionError((actual, expected, gate))
+    return gate
+
+
+def raw_gate_workflow(
+    *,
+    trigger_key: str = "on",
+    run_body: str = "python3 scripts/check-canary.py",
+) -> str:
+    return (
+        "name: Fixture Validate\n"
+        f"{trigger_key}: {{pull_request: null}}\n"
+        "permissions: {contents: read}\n"
+        "jobs:\n"
+        "  fixture:\n"
+        "    name: Fixture\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: canary\n"
+        f"        run: {run_body}\n"
+    )
+
+
+@case("17-duplicate-jobs-erasure-refuses-before-gate-derivation")
+def duplicate_jobs_erasure(root: Path) -> None:
+    canary = root / "duplicate-erasure-canary"
+    raw_workflow = (
+        "name: Fixture Validate\n"
+        "on: {pull_request: null}\n"
+        "permissions: {contents: read}\n"
+        "jobs:\n"
+        "  fixture:\n"
+        "    name: Fixture\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: canary\n"
+        "        run: python3 scripts/check-canary.py\n"
+        "jobs: {}\n"
+    )
+    token_types = {type(token) for token in yaml.scan(raw_workflow, Loader=yaml.SafeLoader)}
+    if yaml.tokens.AnchorToken in token_types or yaml.tokens.AliasToken in token_types:
+        raise AssertionError("duplicate erasure fixture contains an anchor or alias")
+    repo, commit = initialize_repo(
+        root,
+        scripts={"scripts/check-canary.py": counter_script(canary)},
+        raw_workflow=raw_workflow,
+    )
+    out = root / "evidence.json"
+    completed = invoke(repo, commit, out)
+    assert_exact_refusal(completed, out, "workflow YAML contains a duplicate mapping key")
+    if canary.exists():
+        raise AssertionError("duplicate erasure canary fired")
+
+
+@case("17b-empty-derived-gate-list-refuses-without-duplicate")
+def empty_gate_list(root: Path) -> None:
+    raw_workflow = (
+        "name: Fixture Validate\n"
+        "on: {pull_request: null}\n"
+        "permissions: {contents: read}\n"
+        "jobs:\n"
+        "  fixture:\n"
+        "    name: Fixture\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps: []\n"
+    )
+    repo, commit = initialize_repo(root, raw_workflow=raw_workflow)
+    out = root / "evidence.json"
+    completed = invoke(repo, commit, out)
+    assert_exact_refusal(completed, out, "derived gate list is empty")
+
+
+@case("17c-workflow-key-lexemes-do-not-inherit-on-semantics")
+def workflow_key_lexemes(root: Path) -> None:
+    for index, trigger_key in enumerate(("yes", "true", "ON", "on")):
+        fixture = root / f"{index}-{trigger_key}"
+        fixture.mkdir()
+        canary = fixture / "canary-fired"
+        repo, commit = initialize_repo(
+            fixture,
+            scripts={"scripts/check-canary.py": counter_script(canary)},
+            raw_workflow=raw_gate_workflow(trigger_key=trigger_key),
+        )
+        out = fixture / "evidence.json"
+        completed = invoke(repo, commit, out)
+        if trigger_key == "on":
+            assert_gate_outcome(
+                completed,
+                out,
+                expected_exit=0,
+                expected_status="pass",
+                expected_reason_code=None,
+                expected_reason=None,
+            )
+            if canary.read_text(encoding="utf-8") != "x":
+                raise AssertionError("bare on positive did not execute exactly once")
+        else:
+            assert_gate_outcome(
+                completed,
+                out,
+                expected_exit=2,
+                expected_status="not-run",
+                expected_reason_code="workflow-context-not-allowlisted",
+                expected_reason="workflow mapping contains a non-allowlisted key",
+            )
+            if canary.exists():
+                raise AssertionError(f"coerced workflow-key canary fired: {trigger_key}")
+
+
+@case("17d-selftest-family-is-flat-anchored")
+def flat_selftest_family(root: Path) -> None:
+    for label, script_path, expected_exit, expected_status, reason_code, reason in (
+        (
+            "nested",
+            "scripts/sub/probe.selftest.py",
+            2,
+            "not-run",
+            "outside-guard-family",
+            "script is outside the read-only guard family",
+        ),
+        ("flat", "scripts/probe.selftest.py", 0, "pass", None, None),
+    ):
+        fixture = root / label
+        fixture.mkdir()
+        canary = fixture / "canary-fired"
+        repo, commit = initialize_repo(
+            fixture,
+            scripts={script_path: counter_script(canary)},
+            raw_workflow=raw_gate_workflow(
+                run_body=f"python3 {script_path}",
+            ),
+        )
+        out = fixture / "evidence.json"
+        completed = invoke(repo, commit, out)
+        assert_gate_outcome(
+            completed,
+            out,
+            expected_exit=expected_exit,
+            expected_status=expected_status,
+            expected_reason_code=reason_code,
+            expected_reason=reason,
+        )
+        if label == "flat":
+            if canary.read_text(encoding="utf-8") != "x":
+                raise AssertionError("flat self-test positive did not execute exactly once")
+        elif canary.exists():
+            raise AssertionError("nested self-test canary fired")
+
+
+@case("17e-merge-alias-and-anchor-controls-are-independent")
+def merge_alias_anchor_controls(root: Path) -> None:
+    prefix = (
+        "name: Fixture Validate\n"
+        "on: {pull_request: null}\n"
+        "permissions: {contents: read}\n"
+        "jobs:\n"
+        "  fixture:\n"
+        "    name: Fixture\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+    )
+    fixtures = {
+        "literal-merge": (
+            prefix + "      - <<: {name: canary, run: python3 scripts/check-canary.py}\n",
+            "workflow YAML contains a merge key",
+        ),
+        "explicit-tag-merge": (
+            prefix + "      - !!merge x: {name: canary, run: python3 scripts/check-canary.py}\n",
+            "workflow YAML contains a merge key",
+        ),
+        "alias-step": (
+            prefix
+            + "      - &template\n"
+            + "        name: canary\n"
+            + "        run: python3 scripts/check-canary.py\n"
+            + "      - *template\n",
+            "workflow YAML contains an alias",
+        ),
+        "anchor-only": (
+            prefix
+            + "      - &only\n"
+            + "        name: canary\n"
+            + "        run: python3 scripts/check-canary.py\n",
+            None,
+        ),
+    }
+    for label, (raw_workflow, refusal_reason) in fixtures.items():
+        fixture = root / label
+        fixture.mkdir()
+        canary = fixture / "canary-fired"
+        token_types = {type(token) for token in yaml.scan(raw_workflow, Loader=yaml.SafeLoader)}
+        if "merge" in label and (
+            yaml.tokens.AnchorToken in token_types or yaml.tokens.AliasToken in token_types
+        ):
+            raise AssertionError(f"{label} fixture is not alias- and anchor-free")
+        repo, commit = initialize_repo(
+            fixture,
+            scripts={"scripts/check-canary.py": counter_script(canary)},
+            raw_workflow=raw_workflow,
+        )
+        out = fixture / "evidence.json"
+        completed = invoke(repo, commit, out)
+        if refusal_reason is not None:
+            assert_exact_refusal(completed, out, refusal_reason)
+            if canary.exists():
+                raise AssertionError(f"{label} canary fired")
+        else:
+            if yaml.tokens.AnchorToken not in token_types or yaml.tokens.AliasToken in token_types:
+                raise AssertionError("anchor-only positive has the wrong property tokens")
+            assert_gate_outcome(
+                completed,
+                out,
+                expected_exit=0,
+                expected_status="pass",
+                expected_reason_code=None,
+                expected_reason=None,
+            )
+            if canary.read_text(encoding="utf-8") != "x":
+                raise AssertionError("anchor-only positive did not execute exactly once")
+
+
+@dataclass(frozen=True)
+class ScalarRendering:
+    name: str
+    mode: str
+    marker: str
+    expected_violations: frozenset[str]
+
+
+def presentation_violations(event: yaml.events.ScalarEvent) -> frozenset[str]:
+    violations: set[str] = set()
+    if event.style is not None:
+        violations.add("style")
+    if event.anchor is not None:
+        violations.add("anchor")
+    if event.tag is not None:
+        violations.add("explicit-tag")
+    if event.start_mark.line != event.end_mark.line:
+        violations.add("span")
+    return frozenset(violations)
+
+
+def scalar_event_for_value(source: str, value: str) -> yaml.events.ScalarEvent:
+    matches = [
+        event
+        for event in yaml.parse(source, Loader=yaml.SafeLoader)
+        if isinstance(event, yaml.events.ScalarEvent)
+        and event.value.rstrip("\n") == value
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one scalar event for {value!r}, got {len(matches)}")
+    return matches[0]
+
+
+def body_presentation_rows() -> list[ScalarRendering]:
+    rows = [ScalarRendering("plain", "inline", "plain", frozenset())]
+    for name, marker in (("single-quoted", "single"), ("double-quoted", "double")):
+        rows.append(ScalarRendering(name, "inline", marker, frozenset({"style"})))
+    rows.extend(
+        [
+            ScalarRendering("double-escaped", "inline", "escaped", frozenset({"style"})),
+            ScalarRendering(
+                "double-multiline",
+                "inline",
+                "double-multiline",
+                frozenset({"style", "span"}),
+            ),
+        ]
+    )
+    for style_name, style in (("literal", "|"), ("folded", ">")):
+        for modifier_name, modifier in (
+            ("clip", ""),
+            ("strip", "-"),
+            ("keep", "+"),
+            ("indent", "2"),
+        ):
+            rows.append(
+                ScalarRendering(
+                    f"{style_name}-{modifier_name}",
+                    "block",
+                    style + modifier,
+                    frozenset({"style", "span"}),
+                )
+            )
+    for name, marker, violation in (
+        ("scalar-anchor", "anchor", "anchor"),
+        ("explicit-str-tag", "explicit-tag", "explicit-tag"),
+        ("nonspecific-tag", "nonspecific-tag", "explicit-tag"),
+        ("plain-multiline", "plain-multiline", "span"),
+    ):
+        rows.append(ScalarRendering(name, "inline", marker, frozenset({violation})))
+    return rows
+
+
+def render_body_binding(row: ScalarRendering, command: str, indent: int) -> str:
+    padding = " " * indent
+    continuation = " " * (indent + 2)
+    if row.mode == "block":
+        return f"{padding}run: {row.marker}\n{continuation}{command}\n"
+    if row.marker == "plain":
+        scalar = command
+    elif row.marker == "single":
+        scalar = f"'{command}'"
+    elif row.marker == "double":
+        scalar = f'"{command}"'
+    elif row.marker == "escaped":
+        scalar = f'"{command.replace(".py", r"\x2epy")}"'
+    elif row.marker == "double-multiline":
+        left, right = command.split("check-canary", 1)
+        scalar = f'"{left}\\\n{continuation}check-canary{right}"'
+    elif row.marker == "anchor":
+        scalar = f"&body {command}"
+    elif row.marker == "explicit-tag":
+        scalar = f"!!str {command}"
+    elif row.marker == "nonspecific-tag":
+        scalar = f"! {command}"
+    elif row.marker == "plain-multiline":
+        interpreter, path = command.split(" ", 1)
+        scalar = f"{interpreter}\n{continuation}{path}"
+    else:
+        raise AssertionError(f"unknown body rendering: {row}")
+    return f"{padding}run: {scalar}\n"
+
+
+@case("17f-generative-run-body-presentation-matrix")
+def run_body_presentation_matrix(root: Path) -> None:
+    command = "python3 scripts/check-canary.py"
+    rows = body_presentation_rows()
+    if len({row.name for row in rows}) != len(rows):
+        raise AssertionError("run-body presentation generator emitted duplicate names")
+    if "nonspecific-tag" not in {row.name for row in rows}:
+        raise AssertionError("run-body presentation generator omitted the ! row")
+    for clause in ("style", "anchor", "explicit-tag", "span"):
+        if not any(row.expected_violations == frozenset({clause}) for row in rows):
+            raise AssertionError(f"run-body matrix lacks a single-property {clause} witness")
+
+    prefix = (
+        "name: Fixture Validate\n"
+        "on: {pull_request: null}\n"
+        "permissions: {contents: read}\n"
+        "jobs:\n"
+        "  fixture:\n"
+        "    name: Fixture\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: canary\n"
+    )
+    for row in rows:
+        fixture = root / row.name
+        fixture.mkdir()
+        canary = fixture / "canary-fired"
+        raw_workflow = prefix + render_body_binding(row, command, 8)
+        event = scalar_event_for_value(raw_workflow, command)
+        actual_violations = presentation_violations(event)
+        if actual_violations != row.expected_violations:
+            raise AssertionError(
+                f"{row.name} violations {actual_violations} != {row.expected_violations}"
+            )
+        repo, commit = initialize_repo(
+            fixture,
+            scripts={"scripts/check-canary.py": counter_script(canary)},
+            raw_workflow=raw_workflow,
+        )
+        out = fixture / "evidence.json"
+        completed = invoke(repo, commit, out)
+        if row.expected_violations:
+            assert_gate_outcome(
+                completed,
+                out,
+                expected_exit=2,
+                expected_status="not-run",
+                expected_reason_code="outside-grammar",
+                expected_reason="run body is outside the closed command grammar",
+            )
+            if canary.exists():
+                raise AssertionError(f"run-body presentation canary fired: {row.name}")
+        else:
+            assert_gate_outcome(
+                completed,
+                out,
+                expected_exit=0,
+                expected_status="pass",
+                expected_reason_code=None,
+                expected_reason=None,
+            )
+            if canary.read_text(encoding="utf-8") != "x":
+                raise AssertionError("plain run-body positive did not execute exactly once")
+
+
+def key_presentation_rows(key: str) -> list[ScalarRendering]:
+    escape_indexes = {"jobs": 2, "steps": 2, "run": 1}
+    escaped_index = escape_indexes[key]
+    escaped = (
+        key[:escaped_index]
+        + f"\\x{ord(key[escaped_index]):02x}"
+        + key[escaped_index + 1 :]
+    )
+    rows = [ScalarRendering("plain", "inline-key", key, frozenset())]
+    for name, rendered in (
+        ("single-quoted", f"'{key}'"),
+        ("double-quoted", f'"{key}"'),
+        ("double-escaped", f'"{escaped}"'),
+    ):
+        rows.append(ScalarRendering(name, "inline-key", rendered, frozenset({"style"})))
+    rows.append(
+        ScalarRendering(
+            "double-multiline",
+            "double-multiline-key",
+            key,
+            frozenset({"style", "span"}),
+        )
+    )
+    for style_name, style in (("literal", "|"), ("folded", ">")):
+        rows.append(
+            ScalarRendering(
+                f"{style_name}-block-strip",
+                "block-key",
+                style + "-",
+                frozenset({"style", "span"}),
+            )
+        )
+    for name, rendered, violation in (
+        ("scalar-anchor", f"&key {key}", "anchor"),
+        ("explicit-str-tag", f"!!str {key}", "explicit-tag"),
+        ("nonspecific-tag", f"! {key}", "explicit-tag"),
+    ):
+        rows.append(ScalarRendering(name, "inline-key", rendered, frozenset({violation})))
+    return rows
+
+
+def indent_yaml(value: str, width: int) -> str:
+    padding = " " * width
+    return "".join(padding + line + "\n" for line in value.rstrip("\n").split("\n"))
+
+
+def render_mapping_binding(
+    row: ScalarRendering,
+    key: str,
+    value: str,
+    indent: int,
+    *,
+    scalar_value: bool = False,
+) -> str:
+    padding = " " * indent
+    continuation = " " * (indent + 2)
+    if row.mode == "block-key":
+        binding = f"{padding}? {row.marker}\n{continuation}{key}\n{padding}:"
+    elif row.mode == "double-multiline-key":
+        split_at = max(1, len(key) // 2)
+        rendered_key = f'"{key[:split_at]}\\\n{continuation}{key[split_at:]}"'
+        binding = f"{padding}? {rendered_key}\n{padding}:"
+    else:
+        binding = f"{padding}{row.marker}:"
+    if scalar_value:
+        return f"{binding} {value}\n"
+    return binding + "\n" + indent_yaml(value, indent + 2)
+
+
+def raw_workflow_with_presented_key(level: str, row: ScalarRendering) -> tuple[str, str]:
+    command = "python3 scripts/check-canary.py"
+    step_value = f"- name: canary\n  run: {command}\n"
+    job_value = (
+        "fixture:\n"
+        "  name: Fixture\n"
+        "  runs-on: ubuntu-latest\n"
+        "  steps:\n"
+        + indent_yaml(step_value, 4)
+    )
+    prefix = (
+        "name: Fixture Validate\n"
+        "on: {pull_request: null}\n"
+        "permissions: {contents: read}\n"
+    )
+    if level == "workflow":
+        return prefix + render_mapping_binding(row, "jobs", job_value, 0), "jobs"
+    if level == "job":
+        return (
+            prefix
+            + "jobs:\n"
+            + "  fixture:\n"
+            + "    name: Fixture\n"
+            + "    runs-on: ubuntu-latest\n"
+            + render_mapping_binding(row, "steps", step_value, 4)
+        ), "steps"
+    if level == "step":
+        return (
+            prefix
+            + "jobs:\n"
+            + "  fixture:\n"
+            + "    name: Fixture\n"
+            + "    runs-on: ubuntu-latest\n"
+            + "    steps:\n"
+            + "      - name: canary\n"
+            + render_mapping_binding(row, "run", command, 8, scalar_value=True)
+        ), "run"
+    raise AssertionError(f"unknown key-presentation level: {level}")
+
+
+@case("17g-generative-key-presentation-matrix-at-all-levels")
+def key_presentation_matrix(root: Path) -> None:
+    reason_by_level = {
+        "workflow": (
+            "workflow-context-not-allowlisted",
+            "workflow mapping contains a non-allowlisted key",
+        ),
+        "job": (
+            "job-context-not-allowlisted",
+            "job mapping contains a non-allowlisted key",
+        ),
+        "step": (
+            "step-key-not-allowlisted",
+            "step mapping contains a non-allowlisted key",
+        ),
+    }
+    for level, key in (("workflow", "jobs"), ("job", "steps"), ("step", "run")):
+        rows = key_presentation_rows(key)
+        if len({row.name for row in rows}) != len(rows):
+            raise AssertionError(f"{level} key generator emitted duplicate row names")
+        if "nonspecific-tag" not in {row.name for row in rows}:
+            raise AssertionError(f"{level} key generator omitted the ! row")
+        for row in rows:
+            fixture = root / level / row.name
+            fixture.mkdir(parents=True)
+            canary = fixture / "canary-fired"
+            raw_workflow, target_value = raw_workflow_with_presented_key(level, row)
+            event = scalar_event_for_value(raw_workflow, target_value)
+            actual_violations = presentation_violations(event)
+            if actual_violations != row.expected_violations:
+                raise AssertionError(
+                    f"{level}/{row.name} violations {actual_violations} "
+                    f"!= {row.expected_violations}"
+                )
+            repo, commit = initialize_repo(
+                fixture,
+                scripts={"scripts/check-canary.py": counter_script(canary)},
+                raw_workflow=raw_workflow,
+            )
+            out = fixture / "evidence.json"
+            completed = invoke(repo, commit, out)
+            if row.expected_violations:
+                reason_code, reason = reason_by_level[level]
+                assert_gate_outcome(
+                    completed,
+                    out,
+                    expected_exit=2,
+                    expected_status="not-run",
+                    expected_reason_code=reason_code,
+                    expected_reason=reason,
+                )
+                if canary.exists():
+                    raise AssertionError(f"key-presentation canary fired: {level}/{row.name}")
+            else:
+                assert_gate_outcome(
+                    completed,
+                    out,
+                    expected_exit=0,
+                    expected_status="pass",
+                    expected_reason_code=None,
+                    expected_reason=None,
+                )
+                if canary.read_text(encoding="utf-8") != "x":
+                    raise AssertionError(f"plain {level} key positive did not execute exactly once")
 
 
 def main() -> int:
