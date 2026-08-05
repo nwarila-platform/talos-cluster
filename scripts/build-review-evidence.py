@@ -60,7 +60,7 @@ COMMAND_RE = re.compile(
 CHECK_PY_RE = re.compile(r"^scripts/check-[A-Za-z0-9][A-Za-z0-9._-]*\.py$")
 CHECK_SH_RE = re.compile(r"^scripts/check-[A-Za-z0-9][A-Za-z0-9._-]*\.sh$")
 RENDER_RE = re.compile(r"^scripts/render-[A-Za-z0-9][A-Za-z0-9._-]*\.py$")
-SELFTEST_RE = re.compile(r"^scripts/[A-Za-z0-9][A-Za-z0-9._-]*\.selftest\.py$")
+SELFTEST_RE = re.compile(r"^scripts/([A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*\.selftest\.py$")
 MERGE_TAG = "tag:yaml.org,2002:merge"
 TRUST_BOUNDARY = [
     "This tool is not a GitHub Actions runner; workflow bodies outside the closed grammar are never executed directly.",

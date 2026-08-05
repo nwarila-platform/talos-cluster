@@ -1645,18 +1645,11 @@ def workflow_key_lexemes(root: Path) -> None:
                 raise AssertionError(f"coerced workflow-key canary fired: {trigger_key}")
 
 
-@case("17d-selftest-family-is-flat-anchored")
-def flat_selftest_family(root: Path) -> None:
-    for label, script_path, expected_exit, expected_status, reason_code, reason in (
-        (
-            "nested",
-            "scripts/sub/probe.selftest.py",
-            2,
-            "not-run",
-            "outside-guard-family",
-            "script is outside the read-only guard family",
-        ),
-        ("flat", "scripts/probe.selftest.py", 0, "pass", None, None),
+@case("17d-selftest-family-has-its-own-bounded-path-rule")
+def bounded_selftest_family(root: Path) -> None:
+    for label, script_path in (
+        ("flat", "scripts/probe.selftest.py"),
+        ("nested", "scripts/sub/probe.selftest.py"),
     ):
         fixture = root / label
         fixture.mkdir()
@@ -1673,16 +1666,23 @@ def flat_selftest_family(root: Path) -> None:
         assert_gate_outcome(
             completed,
             out,
-            expected_exit=expected_exit,
-            expected_status=expected_status,
-            expected_reason_code=reason_code,
-            expected_reason=reason,
+            expected_exit=0,
+            expected_status="pass",
+            expected_reason_code=None,
+            expected_reason=None,
         )
-        if label == "flat":
-            if canary.read_text(encoding="utf-8") != "x":
-                raise AssertionError("flat self-test positive did not execute exactly once")
-        elif canary.exists():
-            raise AssertionError("nested self-test canary fired")
+        if canary.read_text(encoding="utf-8") != "x":
+            raise AssertionError(f"{label} self-test positive did not execute exactly once")
+
+    for path in (
+        "x.selftest.py",
+        "/etc/x.selftest.py",
+        "scripts//x.selftest.py",
+        "scripts/../x.selftest.py",
+        "scripts/.hidden/x.selftest.py",
+    ):
+        if helper.is_guard_family(["python3", path]) is not False:
+            raise AssertionError(f"self-test family admitted path outside its boundary: {path!r}")
 
 
 @case("17e-merge-alias-and-anchor-controls-are-independent")
