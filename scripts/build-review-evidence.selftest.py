@@ -37,7 +37,6 @@ REASON_CODES = frozenset(
         "step-key-not-allowlisted",
         "job-context-not-allowlisted",
         "workflow-context-not-allowlisted",
-        "duplicate-yaml-key",
         "path-not-tracked-regular-blob",
         "path-escapes-root",
         "interpreter-absent",
@@ -1790,6 +1789,24 @@ def scalar_event_for_value(source: str, value: str) -> yaml.events.ScalarEvent:
     return matches[0]
 
 
+def scalar_event_for_presented_key(
+    source: str,
+    value: str,
+    row: ScalarRendering,
+) -> yaml.events.ScalarEvent:
+    block_style = row.marker[0] if row.mode == "block-key" else None
+    matches = [
+        event
+        for event in yaml.parse(source, Loader=yaml.SafeLoader)
+        if isinstance(event, yaml.events.ScalarEvent)
+        and event.value.rstrip("\n") == value
+        and (block_style is None or event.style == block_style)
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one presented key event for {value!r}, got {len(matches)}")
+    return matches[0]
+
+
 def body_presentation_rows() -> list[ScalarRendering]:
     rows = [ScalarRendering("plain", "inline", "plain", frozenset())]
     for name, marker in (("single-quoted", "single"), ("double-quoted", "double")):
@@ -1949,14 +1966,20 @@ def key_presentation_rows(key: str) -> list[ScalarRendering]:
         )
     )
     for style_name, style in (("literal", "|"), ("folded", ">")):
-        rows.append(
-            ScalarRendering(
-                f"{style_name}-block-strip",
-                "block-key",
-                style + "-",
-                frozenset({"style", "span"}),
+        for modifier_name, modifier in (
+            ("clip", ""),
+            ("strip", "-"),
+            ("keep", "+"),
+            ("indent", "2"),
+        ):
+            rows.append(
+                ScalarRendering(
+                    f"{style_name}-block-{modifier_name}",
+                    "block-key",
+                    style + modifier,
+                    frozenset({"style", "span"}),
+                )
             )
-        )
     for name, rendered, violation in (
         ("scalar-anchor", f"&key {key}", "anchor"),
         ("explicit-str-tag", f"!!str {key}", "explicit-tag"),
@@ -2009,9 +2032,28 @@ def raw_workflow_with_presented_key(level: str, row: ScalarRendering) -> tuple[s
         "on: {pull_request: null}\n"
         "permissions: {contents: read}\n"
     )
+    needs_traversal_key = row.mode == "block-key" and not row.marker.endswith("-")
     if level == "workflow":
+        if needs_traversal_key:
+            return (
+                prefix
+                + render_mapping_binding(row, "jobs", "null", 0, scalar_value=True)
+                + "jobs:\n"
+                + indent_yaml(job_value, 2)
+            ), "jobs"
         return prefix + render_mapping_binding(row, "jobs", job_value, 0), "jobs"
     if level == "job":
+        if needs_traversal_key:
+            return (
+                prefix
+                + "jobs:\n"
+                + "  fixture:\n"
+                + "    name: Fixture\n"
+                + "    runs-on: ubuntu-latest\n"
+                + render_mapping_binding(row, "steps", "null", 4, scalar_value=True)
+                + "    steps:\n"
+                + indent_yaml(step_value, 6)
+            ), "steps"
         return (
             prefix
             + "jobs:\n"
@@ -2021,6 +2063,18 @@ def raw_workflow_with_presented_key(level: str, row: ScalarRendering) -> tuple[s
             + render_mapping_binding(row, "steps", step_value, 4)
         ), "steps"
     if level == "step":
+        if needs_traversal_key:
+            return (
+                prefix
+                + "jobs:\n"
+                + "  fixture:\n"
+                + "    name: Fixture\n"
+                + "    runs-on: ubuntu-latest\n"
+                + "    steps:\n"
+                + "      - name: canary\n"
+                + render_mapping_binding(row, "run", "null", 8, scalar_value=True)
+                + f"        run: {command}\n"
+            ), "run"
         return (
             prefix
             + "jobs:\n"
@@ -2034,8 +2088,7 @@ def raw_workflow_with_presented_key(level: str, row: ScalarRendering) -> tuple[s
     raise AssertionError(f"unknown key-presentation level: {level}")
 
 
-@case("17g-generative-key-presentation-matrix-at-all-levels")
-def key_presentation_matrix(root: Path) -> None:
+def key_presentation_matrix_for_level(root: Path, level: str, key: str) -> None:
     reason_by_level = {
         "workflow": (
             "workflow-context-not-allowlisted",
@@ -2050,54 +2103,68 @@ def key_presentation_matrix(root: Path) -> None:
             "step mapping contains a non-allowlisted key",
         ),
     }
-    for level, key in (("workflow", "jobs"), ("job", "steps"), ("step", "run")):
-        rows = key_presentation_rows(key)
-        if len({row.name for row in rows}) != len(rows):
-            raise AssertionError(f"{level} key generator emitted duplicate row names")
-        if "nonspecific-tag" not in {row.name for row in rows}:
-            raise AssertionError(f"{level} key generator omitted the ! row")
-        for row in rows:
-            fixture = root / level / row.name
-            fixture.mkdir(parents=True)
-            canary = fixture / "canary-fired"
-            raw_workflow, target_value = raw_workflow_with_presented_key(level, row)
-            event = scalar_event_for_value(raw_workflow, target_value)
-            actual_violations = presentation_violations(event)
-            if actual_violations != row.expected_violations:
-                raise AssertionError(
-                    f"{level}/{row.name} violations {actual_violations} "
-                    f"!= {row.expected_violations}"
-                )
-            repo, commit = initialize_repo(
-                fixture,
-                scripts={"scripts/check-canary.py": counter_script(canary)},
-                raw_workflow=raw_workflow,
+    rows = key_presentation_rows(key)
+    if len({row.name for row in rows}) != len(rows):
+        raise AssertionError(f"{level} key generator emitted duplicate row names")
+    if "nonspecific-tag" not in {row.name for row in rows}:
+        raise AssertionError(f"{level} key generator omitted the ! row")
+    for row in rows:
+        fixture = root / level / row.name
+        fixture.mkdir(parents=True)
+        canary = fixture / "canary-fired"
+        raw_workflow, target_value = raw_workflow_with_presented_key(level, row)
+        event = scalar_event_for_presented_key(raw_workflow, target_value, row)
+        actual_violations = presentation_violations(event)
+        if actual_violations != row.expected_violations:
+            raise AssertionError(
+                f"{level}/{row.name} violations {actual_violations} "
+                f"!= {row.expected_violations}"
             )
-            out = fixture / "evidence.json"
-            completed = invoke(repo, commit, out)
-            if row.expected_violations:
-                reason_code, reason = reason_by_level[level]
-                assert_gate_outcome(
-                    completed,
-                    out,
-                    expected_exit=2,
-                    expected_status="not-run",
-                    expected_reason_code=reason_code,
-                    expected_reason=reason,
-                )
-                if canary.exists():
-                    raise AssertionError(f"key-presentation canary fired: {level}/{row.name}")
-            else:
-                assert_gate_outcome(
-                    completed,
-                    out,
-                    expected_exit=0,
-                    expected_status="pass",
-                    expected_reason_code=None,
-                    expected_reason=None,
-                )
-                if canary.read_text(encoding="utf-8") != "x":
-                    raise AssertionError(f"plain {level} key positive did not execute exactly once")
+        repo, commit = initialize_repo(
+            fixture,
+            scripts={"scripts/check-canary.py": counter_script(canary)},
+            raw_workflow=raw_workflow,
+        )
+        out = fixture / "evidence.json"
+        completed = invoke(repo, commit, out)
+        if row.expected_violations:
+            reason_code, reason = reason_by_level[level]
+            assert_gate_outcome(
+                completed,
+                out,
+                expected_exit=2,
+                expected_status="not-run",
+                expected_reason_code=reason_code,
+                expected_reason=reason,
+            )
+            if canary.exists():
+                raise AssertionError(f"key-presentation canary fired: {level}/{row.name}")
+        else:
+            assert_gate_outcome(
+                completed,
+                out,
+                expected_exit=0,
+                expected_status="pass",
+                expected_reason_code=None,
+                expected_reason=None,
+            )
+            if canary.read_text(encoding="utf-8") != "x":
+                raise AssertionError(f"plain {level} key positive did not execute exactly once")
+
+
+@case("17g-generative-key-presentation-matrix-at-workflow-level")
+def workflow_key_presentation_matrix(root: Path) -> None:
+    key_presentation_matrix_for_level(root, "workflow", "jobs")
+
+
+@case("17g-generative-key-presentation-matrix-at-job-level")
+def job_key_presentation_matrix(root: Path) -> None:
+    key_presentation_matrix_for_level(root, "job", "steps")
+
+
+@case("17g-generative-key-presentation-matrix-at-step-level")
+def step_key_presentation_matrix(root: Path) -> None:
+    key_presentation_matrix_for_level(root, "step", "run")
 
 
 def main() -> int:

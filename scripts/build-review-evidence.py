@@ -42,7 +42,6 @@ REASON_CODES = frozenset(
         "step-key-not-allowlisted",
         "job-context-not-allowlisted",
         "workflow-context-not-allowlisted",
-        "duplicate-yaml-key",
         "path-not-tracked-regular-blob",
         "path-escapes-root",
         "interpreter-absent",
