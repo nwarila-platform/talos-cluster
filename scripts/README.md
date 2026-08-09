@@ -103,7 +103,7 @@ The generator below runs locally; its companion `build-review-evidence.selftest.
 
 | Script (lines) | Protects | Native alternative | Verdict |
 |---|---|---|---|
-| `build-review-evidence.py` (1132) | Commit-bound review evidence: materializes the target SHA, runs only the read-only guard-family gates admitted by a closed whole-argv grammar, and records every skipped run-step with its reason. Coverage is deliberately partial; the artifact's `coverage_limits` records its current limits | GitHub Actions remains the authoritative full runner; this does not reproduce ineligible CI setup → **PARTIAL** | **KEEP** — replaces hand-assembled evidence without overstating coverage. **Not a sandbox:** selected scripts and transitive commands require effect audit, and the controller must have no ambient live-state capability |
+| `build-review-evidence.py` (1131) | Commit-bound review evidence: materializes the target SHA, runs only the read-only guard-family gates admitted by a closed whole-argv grammar, and records every skipped run-step with its reason. Coverage is deliberately partial; the artifact's `coverage_limits` records its current limits | GitHub Actions remains the authoritative full runner; this does not reproduce ineligible CI setup → **PARTIAL** | **KEEP** — replaces hand-assembled evidence without overstating coverage. **Not a sandbox:** selected scripts and transitive commands require effect audit, and the controller must have no ambient live-state capability |
 
 **Declared supported-syntax limitation.** `build-review-evidence.py` deliberately narrows the
 workflow syntax it accepts. It refuses aliases and merge keys. In workflow-, job-, and
@@ -114,11 +114,11 @@ only plain, unanchored, implicitly tagged scalars on one physical source line ca
 so a valid future workflow can make this local tool refuse. Whether Actions accepts the merge
 key `<<` is **UNVERIFIED**.
 
-The current base workflow contains no aliases or merge keys, and none of its 46 executable
-bodies or relevant mapping keys uses a rejected presentation; its existing block-scalar script
-steps were already outside that executable subset. The 46-body count is unchanged. The builder
-is local review tooling, not a CI gate; only its self-test runs in `validate.yaml`. Mapping-level
-anchors remain allowed.
+The current base workflow contains no aliases or merge keys. All bodies in its executable subset
+and all relevant mapping keys use accepted presentations; its existing block-scalar script steps
+remain outside that subset. The artifact's `coverage_limits` records the current coverage figures.
+The builder is local review tooling, not a CI gate; only its self-test runs in `validate.yaml`.
+Mapping-level anchors remain allowed.
 
 [actions-anchors]: https://github.blog/changelog/2025-09-18-actions-yaml-anchors-and-non-public-workflow-templates/
 
