@@ -1,0 +1,21 @@
+# Deliberately a SEPARATE ClusterRole/Binding per org rather than one shared role.
+# A ClusterRoleBinding's roleRef is IMMUTABLE, so re-pointing an existing binding at
+# a renamed shared role would make Flux's server-side apply fail on an immutable
+# field and stall the reconcile. Duplicating a 2-verb read-only rule is the cheaper
+# trade; the thing that must NOT be duplicated (the minter script) is shared via the
+# single source-rotator-script ConfigMap.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: source-rotator-nwp
+  labels:
+    app.kubernetes.io/name: source-rotator
+    app.kubernetes.io/component: source-token-minter
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list

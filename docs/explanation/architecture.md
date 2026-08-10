@@ -158,14 +158,25 @@ Source files verified for this diagram:
 `clusters/talos-cluster/tenants/_template/zero-touch/base/vaultstaticsecret-gitops-source-auth.yaml`,
 `clusters/talos-cluster/tenants/_template/zero-touch/base/vaultstaticsecret-ghcr-pull.yaml`,
 `clusters/talos-cluster/tenants/hwg-1268831311/kustomization.yaml`,
-`clusters/talos-cluster/apps/source-rotator/cronjob.yaml`,
+`clusters/talos-cluster/apps/source-rotator/cronjob-hwg.yaml`,
+`clusters/talos-cluster/apps/source-rotator/cronjob-nwp.yaml`,
 `clusters/talos-cluster/apps/source-rotator/configmap.yaml`,
-`clusters/talos-cluster/apps/source-rotator/serviceaccount.yaml`,
+`clusters/talos-cluster/apps/source-rotator/serviceaccount-hwg.yaml`,
+`clusters/talos-cluster/apps/source-rotator/serviceaccount-nwp.yaml`,
 `clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/tenant.json`,
-`clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/source-minter-hwg.json`,
-`clusters/talos-cluster/apps/vault/vault-config/policies/tenant-read.hcl`,
-`clusters/talos-cluster/apps/vault/vault-config/policies/tenant-write.hcl`, and
-`clusters/talos-cluster/apps/vault/vault-config/policies/source-minter-hwg.hcl`.
+`clusters/talos-cluster/apps/vault/vault-config/managed/policy-source-minter-hwg.yaml`,
+`clusters/talos-cluster/apps/vault/vault-config/managed/policy-source-minter-nwp.yaml`,
+`clusters/talos-cluster/apps/vault/vault-config/managed/role-source-minter-hwg.yaml`,
+`clusters/talos-cluster/apps/vault/vault-config/managed/role-source-minter-nwp.yaml`,
+`clusters/talos-cluster/apps/vault/vault-config/managed/policy-tenant-read.yaml`, and
+`clusters/talos-cluster/apps/vault/vault-config/managed/policy-tenant-write.yaml`.
+
+The rotation subgraph is drawn once and instantiated per organization. Instantiated
+today: `hwg` (GitHub org `the-hero-wars-guys`) and `nwp` (GitHub org `nwarila-platform`).
+Every box is per-org EXCEPT the `source-rotator-script` ConfigMap, which is shared: the
+minter is fully env-driven, so one reviewed copy serves all orgs. `<prefix>` is the Vault
+path prefix (`hwg`/`nwp`) and is deliberately NOT the same string as the full GitHub org
+name carried in the `nwarila.io/org` namespace label used to select tenants.
 
 ```mermaid
 flowchart TD
@@ -191,10 +202,10 @@ flowchart TD
     HwgGitRepo["GitRepository deploy-herowars-engine-porter<br/>secretRef hwg-1268831311-gitops-source-auth"]
   end
 
-  subgraph Rotation["Source token rotation"]
-    RotatorCron["CronJob source-rotator-hwg<br/>ServiceAccount source-rotator-hwg"]
-    SourceMinterRole["Vault role source-minter-hwg<br/>policy source-minter-hwg"]
-    OrgPullKey["secret/data/platform/org-pull/hwg/gitops-source-auth"]
+  subgraph Rotation["Source token rotation (one instance per org)"]
+    RotatorCron["CronJob source-rotator-&lt;prefix&gt;<br/>ServiceAccount source-rotator-&lt;prefix&gt;<br/>shared ConfigMap source-rotator-script"]
+    SourceMinterRole["Vault role source-minter-&lt;prefix&gt;<br/>policy source-minter-&lt;prefix&gt;"]
+    OrgPullKey["secret/data/platform/org-pull/&lt;prefix&gt;/gitops-source-auth"]
     GitHubToken["per-repo contents:read GitHub App token"]
   end
 

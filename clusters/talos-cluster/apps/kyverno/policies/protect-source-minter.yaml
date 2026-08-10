@@ -1,8 +1,15 @@
 # ClusterPolicy: protect-source-minter
 #
-# Defense in depth for the B-apex source rotator boundary. The protected
-# workload arrives in a later step; this policy is inert until those objects
-# exist, then only Flux may create, mutate, or delete them.
+# Defense in depth for the B-apex source rotator boundary. Flux's kustomize-controller
+# may create, mutate, and delete these objects; so may any principal bound to
+# cluster-admin (both are in every rule's `exclude`). This policy therefore raises
+# the bar against non-platform actors - it is NOT a control against a cluster-admin.
+#
+# Scope is WILDCARD (source-rotator-*), not an enumerated name list. Enumerating
+# names is a known failure mode here: onboarding the nwp org added a second
+# rotator that an enumerated policy would not have covered, and renaming the
+# script ConfigMap would have left the old rule pointing at a name that no
+# longer exists - protection silently lost with nothing failing.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -14,8 +21,10 @@ metadata:
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: ServiceAccount,ClusterRole,ClusterRoleBinding,CronJob,ConfigMap
     policies.kyverno.io/description: >-
-      Blocks non-platform actors from creating, mutating, or deleting the
-      B-apex hwg source rotator identity, RBAC, schedule, or script.
+      Blocks non-platform actors from creating, mutating, or deleting ANY
+      per-org source rotator identity, RBAC, schedule, or the shared script.
+      Names are matched by the source-rotator-* wildcard deliberately: an
+      enumerated list silently leaves each newly onboarded org unprotected.
 spec:
   validationFailureAction: Enforce
   background: false
@@ -29,7 +38,7 @@ spec:
               kinds:
                 - ServiceAccount
               names:
-                - source-rotator-hwg
+                - source-rotator-*
               namespaces:
                 - source-rotator
               operations:
@@ -46,7 +55,7 @@ spec:
               - cluster-admin
       validate:
         message: >-
-          The source-rotator-hwg ServiceAccount is platform-owned.
+          Per-org source-rotator ServiceAccounts are platform-owned.
         deny:
           conditions:
             any:
@@ -63,7 +72,7 @@ spec:
               kinds:
                 - CronJob
               names:
-                - source-rotator-hwg
+                - source-rotator-*
               namespaces:
                 - source-rotator
               operations:
@@ -74,7 +83,14 @@ spec:
               kinds:
                 - ConfigMap
               names:
-                - source-rotator-hwg-script
+                # The minter script AND the Vault trust anchor it mounts. vault-ca is
+                # load-bearing: swap that CA and the minter's TLS connection to Vault can
+                # be intercepted, yielding its Vault token and the org App key it reads.
+                # Protecting the script while leaving its trust anchor writable would be a
+                # hole in the same boundary. Namespace-scoped, so the identically-named
+                # ConfigMaps in dr-backup and the tenant namespaces are unaffected.
+                - source-rotator-script
+                - vault-ca
               namespaces:
                 - source-rotator
               operations:
@@ -109,7 +125,7 @@ spec:
                 - ClusterRole
                 - ClusterRoleBinding
               names:
-                - source-rotator-hwg
+                - source-rotator-*
               operations:
                 - CREATE
                 - UPDATE

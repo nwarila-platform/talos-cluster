@@ -42,3 +42,16 @@ DEPLOY_REPO_DATABASE_ID_OVERRIDES["herowars"]="1268831311"
 #
 # DEPLOY_REPO_ORG_PREFIX_OVERRIDES["deploy-example"]="nwp"
 # DEPLOY_REPO_DATABASE_ID_OVERRIDES["deploy-example"]="1202118418" # optional escape hatch; discovery normally supplies databaseId
+
+# --- nwarila-platform (prefix nwp) ---------------------------------------------
+# The orgPrefix registration is the deliberate TRUST GATE for convention discovery
+# (ADR-0011): a repository must not be able to choose its own tenancy, namespace, or
+# Vault path simply by picking a name. Discovery admits a repo only once a human has
+# registered which organization it belongs to, which is why sync-deploy-repos.sh hard
+# -errors on an unregistered prefix rather than guessing.
+#
+# ORDERING MATTERS: this registration must be MERGED BEFORE the repository publishes
+# kubernetes/overlays/talos-cluster/. A repo that exposes the overlay while its prefix
+# is unregistered makes the hourly sync exit 1 - which fails the whole run, not just
+# that repo. See docs/runbooks/onboard-organization.md.
+DEPLOY_REPO_ORG_PREFIX_OVERRIDES["deploy-platform-canary"]="nwp"

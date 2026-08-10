@@ -26,6 +26,7 @@ resources:
   - vault-statefulset.yaml
   - vault-tls-trust-configmap.yaml
   - networkpolicies.yaml
+  - ciliumnetworkpolicy-egress-github-oidc.yaml
   - allow-tenant-vault-api-ingress.yaml
 
 configMapGenerator:

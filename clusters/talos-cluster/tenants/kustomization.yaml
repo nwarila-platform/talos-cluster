@@ -9,4 +9,5 @@ resources:
   - arc-systems
   - deploy-vault
   - hwg-1268831311
+  - nwp-1306985678
   - talos-drift
