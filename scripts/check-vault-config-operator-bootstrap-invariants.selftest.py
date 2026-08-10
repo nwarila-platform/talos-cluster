@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tempfile
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "scripts/check-vault-config-operator-bootstrap-invariants.py"
@@ -65,6 +68,108 @@ VALID_ROLE = """\
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def ensure_render_scaffold(root: Path) -> None:
+    paths = guard.paths_for_root(root)
+    managed = paths.cluster_root / "apps/vault/vault-config/managed"
+    managed.mkdir(parents=True, exist_ok=True)
+    config = managed / "jwtoidcauthengineconfig-jwt-github.yaml"
+    if not config.exists():
+        write(
+            config,
+            (
+                "apiVersion: redhatcop.redhat.io/v1alpha1\n"
+                "kind: JWTOIDCAuthEngineConfig\n"
+                "metadata:\n"
+                "  name: jwt-github\n"
+                "spec:\n"
+                "  path: jwt-github\n"
+            ),
+        )
+    kustomization = managed / "kustomization.yaml"
+    external_resources: list[str] = []
+    if kustomization.is_file():
+        existing = yaml.safe_load(kustomization.read_text(encoding="utf-8")) or {}
+        for resource in existing.get("resources", []) or []:
+            if isinstance(resource, str) and resource.startswith("../"):
+                external_resources.append(resource)
+    local_resources = sorted(
+        path.name
+        for path in managed.iterdir()
+        if path.is_file() and path.name != "kustomization.yaml"
+    )
+    write(
+        kustomization,
+        yaml.safe_dump(
+            {
+                "apiVersion": "kustomize.config.k8s.io/v1beta1",
+                "kind": "Kustomization",
+                "namespace": "vault-config-operator",
+                "resources": local_resources + external_resources,
+            },
+            sort_keys=False,
+        ),
+    )
+    health = [
+        {
+            "apiVersion": guard.rendered_inventory.REDHATCOP_API_VERSION,
+            "kind": kind,
+            "current": guard.rendered_inventory.HEALTH_CURRENT,
+        }
+        for kind in guard.rendered_inventory.JWT_KINDS
+    ]
+    flux = paths.cluster_root / "apps/kustomization-vault-config-managed.yaml"
+    write(
+        flux,
+        yaml.safe_dump(
+            {
+                "apiVersion": guard.rendered_inventory.FLUX_API_VERSION,
+                "kind": "Kustomization",
+                "metadata": {
+                    "name": "vault-config-managed",
+                    "namespace": "flux-system",
+                },
+                "spec": {
+                    "interval": "10m",
+                    "path": (
+                        "./clusters/talos-cluster/apps/vault/"
+                        "vault-config/managed"
+                    ),
+                    "prune": True,
+                    "wait": True,
+                    "dependsOn": [
+                        {"name": "vault-config-operator"},
+                        {"name": "vault"},
+                    ],
+                    "sourceRef": {
+                        "kind": "GitRepository",
+                        "name": "flux-system",
+                    },
+                    "healthCheckExprs": health,
+                },
+            },
+            sort_keys=False,
+        ),
+    )
+    write(
+        paths.cluster_root / "apps/kustomization.yaml",
+        (
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "kind: Kustomization\n"
+            "resources:\n"
+            "  - kustomization-vault-config-managed.yaml\n"
+        ),
+    )
+    write(
+        paths.cluster_root / "kustomization.yaml",
+        (
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "kind: Kustomization\n"
+            "resources:\n"
+            "  - apps\n"
+        ),
+    )
 
 
 def build_valid_tree(root: Path, policy: str = VALID_POLICY) -> None:
@@ -631,13 +736,17 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="vco-bootstrap-guard-") as tmp:
             root = Path(tmp)
             builder(root)
-            findings = guard.evaluate(root, s0)
+            ensure_render_scaffold(root)
+            inventory = guard.rendered_inventory.load_rendered_inventory(root)
+            findings = guard.evaluate(root, s0, inventory)
+            object_count = len(inventory.documents)
         ok = (not findings) if expect_clean else bool(findings)
         status = "PASS" if ok else "FAIL"
         guard_status = "PASS" if not findings else "FAIL"
         print(
             f"{status}  {name:<40} "
-            f"guard={guard_status} findings={len(findings)}"
+            f"guard={guard_status} findings={len(findings)} "
+            f"rendered_objects={object_count}"
         )
         if not ok:
             failures.append((name, findings))

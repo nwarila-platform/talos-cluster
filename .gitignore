@@ -375,6 +375,8 @@
 !/scripts/check-live-vault-config-invariants.sh
 !/scripts/check-vault-policy-no-escalation.py
 !/scripts/check-vault-policy-no-escalation.selftest.py
+!/scripts/rendered-inventory.py
+!/scripts/rendered-inventory.selftest.py
 !/scripts/check-vault-config-reference-safety.py
 !/scripts/check-vault-config-reference-safety.selftest.py
 !/scripts/check-vault-config-terminating.py
