@@ -9,8 +9,9 @@ out-of-band** — never by GitOps, never by the operator itself.
 ## Why here (and why NOT under `../policies/`)
 
 `vault-config-operator.policy.hcl` legitimately grants **management-plane** paths
-(`sys/policies/acl/*`, `auth/kubernetes/role/*`, `sys/mounts/pki-int-tcn`) so the
-operator can manage the platform's Vault config. Those are exactly the paths the
+(`sys/policies/acl/*`, `auth/kubernetes/role/*`, `auth/jwt-github/*`,
+`sys/mounts/pki-int-tcn`) so the operator can manage the platform's Vault config.
+Those are exactly the paths the
 **S0 escalation guard** (`scripts/check-vault-policy-no-escalation.py`) is
 designed to **reject in a *managed* policy**. So this file lives OUTSIDE the
 guard's scan scope (`apps/vault/vault-config/policies/`) and is **not** a
@@ -25,7 +26,7 @@ managed policy dir, never referenced by a Flux kustomization).
 
 | Path | Purpose |
 |---|---|
-| `vault-config-operator.policy.hcl` | The operator's scoped ACL policy. Exact-path enumeration of the managed set (8 policies + 7 roles + the `pki-int-tcn` mount), `[create, read, update]` only (no delete until prune is armed in S7); `*-smoke` throwaway paths carry delete for the S3 lifecycle proof. |
+| `vault-config-operator.policy.hcl` | The operator's scoped ACL policy. Exact-path enumeration remains the default for the managed set (8 policies + 7 Kubernetes-auth roles + the `pki-int-tcn` mount). ADR-0031 adds one config path plus two tightly mount/name-scoped `deploy-*` globs; only those offboarding globs and `*-smoke` throwaways carry delete. |
 | `vault-config-operator.role.json` | The operator's `auth/kubernetes/role/vault-config-operator` — binds the unforgeable SA name `vault-config-operator-vault` in ns `vault-config-operator`, `token_no_default_policy`, 15m/30m TTL. |
 
 The dedicated Vault-auth SA `vault-config-operator-vault` is GitOps-applied via

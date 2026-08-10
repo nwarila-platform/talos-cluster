@@ -15,12 +15,23 @@ This guard is fail-closed and asserts:
 2. The bootstrap policy grants no `sudo` capability and no root `path "*"` /
    `path "/"` stanza (design: path-scoped, no sudo) — parsed with the S0 guard's
    HCL tokenizer.
-3. The operator's own identity is never a MANAGED object: no
-   redhatcop.redhat.io/v1alpha1 `Policy` or `KubernetesAuthEngineRole` CR named
-   `vault-config-operator`, and no managed policy HCL named
-   `vault-config-operator.hcl` under the managed policy dir.
-4. Nothing under the bootstrap dir is referenced by any kustomization.yaml
+3. The exact three-stanza GitHub-OIDC grant set is present with no broader
+   path or capability, and every managed JWT config/role path is covered.
+4. Within the target render and cluster-wide authored-file scan, the operator's
+   own identity is not a MANAGED object: no redhatcop.redhat.io/v1alpha1
+   `Policy` or `KubernetesAuthEngineRole` CR named `vault-config-operator`, and
+   no managed policy HCL named `vault-config-operator.hcl` under the managed
+   policy dir.
+5. Nothing under the bootstrap dir is referenced by any kustomization.yaml
    `resources`/`components`/`bases` list (so Flux/kustomize can never apply it).
+
+Managed JWT paths come from the rendered applied ``vault-config-managed``
+inventory. Managed-name allow sets and protected-identity prohibitions use that
+render unioned with their wider filesystem inputs; the never-applied assertion
+remains filesystem-wide. Residual authored-value coverage outside the target
+render is tracked in TD-0019. The cluster-root render includes a remote Gateway
+API base, so this guard requires network access and fails closed when the
+render cannot be reproduced (TD-0020).
 """
 
 from __future__ import annotations
@@ -57,6 +68,24 @@ def _fold(name: str) -> str:
 ROOT_PATHS = {"", "*", "sys/*", "auth/*", "identity/*"}
 MANAGED_POLICY_PREFIX = "sys/policies/acl/"
 MANAGED_ROLE_PREFIX = "auth/kubernetes/role/"
+RATIFIED_JWT_CONFIG_PATH = "auth/jwt-github/config"
+RATIFIED_JWT_ROLE_GLOB = "auth/jwt-github/role/deploy-*"
+RATIFIED_DEPLOY_POLICY_GLOB = "sys/policies/acl/deploy-*"
+RATIFIED_JWT_GRANTS = {
+    RATIFIED_JWT_CONFIG_PATH: frozenset({"create", "read", "update"}),
+    RATIFIED_JWT_ROLE_GLOB: frozenset({"create", "read", "update", "delete"}),
+    RATIFIED_DEPLOY_POLICY_GLOB: frozenset(
+        {"create", "read", "update", "delete"}
+    ),
+}
+SUPPORTED_MANAGED_REDHATCOP_KINDS = {
+    "Policy",
+    "KubernetesAuthEngineRole",
+    "SecretEngineMount",
+    "PKISecretEngineRole",
+    "JWTOIDCAuthEngineConfig",
+    "JWTOIDCAuthEngineRole",
+}
 # Forward-looking managed objects that the operator will create later (S5) — not
 # yet a file in the managed tree, but allowed in the bootstrap enumeration.
 # Empty since CP-5b: vault-server became a managed-in-git Policy/Role CR pair,
@@ -69,6 +98,25 @@ SMOKE_MARKER = "smoke"
 YAML_SUFFIXES = {".yaml", ".yml"}
 KUSTOMIZATION_NAMES = {"kustomization.yaml", "kustomization.yml"}
 REFERENCE_KEYS = ("resources", "components", "bases")
+
+
+def _fail_usage(message: str) -> SystemExit:
+    print(f"ERROR: {message}", file=sys.stderr)
+    return SystemExit(2)
+
+
+def _load_rendered_inventory_helper():
+    helper_path = ROOT / "scripts/rendered-inventory.py"
+    spec = importlib.util.spec_from_file_location("_rendered_inventory", helper_path)
+    if spec is None or spec.loader is None:
+        raise _fail_usage(f"cannot load rendered-inventory helper: {helper_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+rendered_inventory = _load_rendered_inventory_helper()
 
 
 @dataclass(frozen=True)
@@ -130,7 +178,7 @@ def check_bootstrap_present_and_out_of_scope(
         )
 
 
-def _managed_names(paths: BootstrapPaths) -> tuple[set[str], set[str]]:
+def _managed_names(paths: BootstrapPaths, inventory) -> tuple[set[str], set[str]]:
     policy_names = (
         {_fold(p.stem) for p in paths.managed_policy_dir.glob("*.hcl")}
         if paths.managed_policy_dir.is_dir()
@@ -167,11 +215,75 @@ def _managed_names(paths: BootstrapPaths) -> tuple[set[str], set[str]]:
                     policy_names.add(name)
                 else:
                     role_names.add(name)
+    for doc in inventory.documents:
+        if doc.get("apiVersion") != "redhatcop.redhat.io/v1alpha1":
+            continue
+        kind = doc.get("kind")
+        if kind not in {"Policy", "KubernetesAuthEngineRole"}:
+            continue
+        spec = doc.get("spec") or {}
+        metadata = doc.get("metadata") or {}
+        name = spec.get("name") or metadata.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        name = _fold(name)
+        if name in PROTECTED_IDENTITY_NAMES:
+            continue
+        if kind == "Policy":
+            policy_names.add(name)
+        else:
+            role_names.add(name)
     return policy_names, role_names
 
 
+def _managed_jwt_paths(
+    paths: BootstrapPaths, findings: list[str], inventory
+) -> tuple[set[str], set[str]]:
+    """Derive the exact Vault write paths from managed JWT CR fields."""
+    config_paths: set[str] = set()
+    role_paths: set[str] = set()
+    for doc in inventory.documents:
+        if doc.get("apiVersion") != "redhatcop.redhat.io/v1alpha1":
+            continue
+        kind = doc.get("kind")
+        label = rendered_inventory.rendered_document_label(doc)
+        if kind not in SUPPORTED_MANAGED_REDHATCOP_KINDS:
+            findings.append(
+                f"unsupported redhatcop kind {kind!r} under the managed "
+                f"inventory: {label} — update the bootstrap/reference guards "
+                "before adding a new kind"
+            )
+            continue
+        if kind not in {
+            "JWTOIDCAuthEngineConfig",
+            "JWTOIDCAuthEngineRole",
+        }:
+            continue
+        spec = doc.get("spec") or {}
+        mount = spec.get("path")
+        if not isinstance(mount, str) or not mount:
+            findings.append(
+                f"{kind} in {label} has no string spec.path; cannot derive "
+                "its exact bootstrap grant"
+            )
+            continue
+        if kind == "JWTOIDCAuthEngineConfig":
+            config_paths.add(f"auth/{mount}/config")
+            continue
+        metadata = doc.get("metadata") or {}
+        name = spec.get("name") or metadata.get("name")
+        if not isinstance(name, str) or not name:
+            findings.append(
+                f"{kind} in {label} has no effective name; cannot derive "
+                "its exact bootstrap grant"
+            )
+            continue
+        role_paths.add(f"auth/{mount}/role/{name}")
+    return config_paths, role_paths
+
+
 def check_bootstrap_policy_content(
-    paths: BootstrapPaths, findings: list[str], s0
+    paths: BootstrapPaths, findings: list[str], s0, inventory
 ) -> None:
     """Content-level checks on the bootstrap policy (design §7 + the paradox).
 
@@ -179,13 +291,17 @@ def check_bootstrap_policy_content(
     guard, so THIS is the only guard on what it grants. It must:
       - be sudo-free and never grant a root/wildcard path (incl. `path "/"`);
       - never grant a path that COVERS its own identity (self-escalation);
-      - on the management plane (sys/policies/acl, auth/kubernetes/role) use
-        EXACT names only (no wildcard) and only names that are managed-in-git,
-        forward-looking (vault-server), or throwaway *-smoke;
+      - on the management plane use exact names, except the two exact
+        ADR-0031 deploy-* globs;
+      - carry the one exact three-stanza ADR-0031 grant set, with no broader
+        sibling path or extra capability;
+      - derive every managed JWT config/role write path and prove it is
+        exactly granted or covered by the ratified role glob;
       - enumerate EVERY managed policy/role name (else the operator cannot adopt
-        it — a runtime break);
-      - grant `delete` ONLY on throwaway *-smoke paths (no live-object delete
-        until prune is armed in S7).
+        it — a runtime break), with deploy-* policies covered by the one
+        ratified policy glob;
+      - grant `delete` ONLY on the two ratified offboarding globs or throwaway
+        *-smoke paths.
     """
     if not paths.bootstrap_policy.is_file():
         return
@@ -199,20 +315,24 @@ def check_bootstrap_policy_content(
         findings.append(f"bootstrap policy does not parse as Vault HCL: {exc}")
         return
 
-    policy_names, role_names = _managed_names(paths)
+    policy_names, role_names = _managed_names(paths, inventory)
+    jwt_config_paths, jwt_role_paths = _managed_jwt_paths(paths, findings, inventory)
     self_policy = f"{MANAGED_POLICY_PREFIX}{OPERATOR_IDENTITY_NAME}"
     self_role = f"{MANAGED_ROLE_PREFIX}{OPERATOR_IDENTITY_NAME}"
     seen_policy: set[str] = set()
     seen_role: set[str] = set()
+    ratified_seen = {path: 0 for path in RATIFIED_JWT_GRANTS}
 
     for stanza in stanzas:
         # Case-fold the granted path before every comparison (audit FAIL-2):
         # Vault lowercases ACL policy names, so `sys/policies/acl/VAULT-ADMIN`
         # writes to vault-admin live — the fold makes the guard see it.
-        norm = _fold(s0.normalize_vault_path(stanza.path))
+        normalized = s0.normalize_vault_path(stanza.path)
+        norm = _fold(normalized)
         folded_path = _fold(stanza.path)
         caps = {c.lower() for c in stanza.capabilities}
         where = f"path {stanza.path!r} line {stanza.line}"
+        ratified_path = norm if norm in RATIFIED_JWT_GRANTS else None
 
         if "sudo" in caps:
             findings.append(
@@ -240,11 +360,40 @@ def check_bootstrap_policy_content(
                 f"vault-admin identity — a compromised operator could rewrite "
                 f"the recovery policy ({where})"
             )
-        # delete only on throwaway smoke objects.
-        if "delete" in caps and SMOKE_MARKER not in norm:
+        # AR4a grants are literal, including case and normalized spelling.
+        if ratified_path is not None:
+            ratified_seen[ratified_path] += 1
+            if normalized != ratified_path:
+                findings.append(
+                    f"ratified GitHub-OIDC grant must use the exact literal "
+                    f"{ratified_path!r}; found case/format variant ({where})"
+                )
+            expected_caps = RATIFIED_JWT_GRANTS[ratified_path]
+            if caps != expected_caps:
+                findings.append(
+                    f"ratified GitHub-OIDC grant {ratified_path!r} has "
+                    f"capabilities {sorted(caps)!r}; exact required set is "
+                    f"{sorted(expected_caps)!r} ({where})"
+                )
+        elif norm.startswith("auth/jwt-github/") or norm.startswith(
+            "sys/policies/acl/deploy"
+        ):
+            findings.append(
+                f"bootstrap policy grants an unratified GitHub-OIDC/deploy "
+                f"path ({where}); the combined grant set permits exactly "
+                f"{sorted(RATIFIED_JWT_GRANTS)!r}"
+            )
+
+        # delete only on ratified offboarding globs or throwaway smoke objects.
+        delete_exception = ratified_path in {
+            RATIFIED_JWT_ROLE_GLOB,
+            RATIFIED_DEPLOY_POLICY_GLOB,
+        }
+        if "delete" in caps and SMOKE_MARKER not in norm and not delete_exception:
             findings.append(
                 f"bootstrap policy grants delete on a non-smoke path ({where}); "
-                "delete on a live object is prohibited until prune is armed (S7)"
+                "delete is allowed only on the two ratified deploy-* "
+                "offboarding globs"
             )
         # Management-plane exactness + known-name.
         for prefix, allowed, seen in (
@@ -252,6 +401,8 @@ def check_bootstrap_policy_content(
             (MANAGED_ROLE_PREFIX, role_names, seen_role),
         ):
             if not norm.startswith(prefix):
+                continue
+            if norm == RATIFIED_DEPLOY_POLICY_GLOB:
                 continue
             name = norm[len(prefix):]
             if not name or "*" in name or "+" in name:
@@ -272,9 +423,41 @@ def check_bootstrap_policy_content(
                 )
             seen.add(name)
 
+    for path, count in ratified_seen.items():
+        if count == 0:
+            findings.append(
+                f"bootstrap policy is missing exact ratified GitHub-OIDC "
+                f"grant {path!r}"
+            )
+        elif count > 1:
+            findings.append(
+                f"bootstrap policy repeats ratified GitHub-OIDC grant "
+                f"{path!r} {count} times; exactly one stanza is required"
+            )
+
+    for required in sorted(jwt_config_paths):
+        if required != RATIFIED_JWT_CONFIG_PATH or not ratified_seen.get(required):
+            findings.append(
+                f"managed JWTOIDCAuthEngineConfig derives exact write path "
+                f"{required!r}, but the bootstrap policy does not carry that "
+                "exact ratified grant"
+            )
+    role_glob_present = ratified_seen[RATIFIED_JWT_ROLE_GLOB] == 1
+    for required in sorted(jwt_role_paths):
+        if not role_glob_present or not s0.covers(RATIFIED_JWT_ROLE_GLOB, required):
+            findings.append(
+                f"managed JWTOIDCAuthEngineRole derives exact write path "
+                f"{required!r}, which is not covered by the one ratified "
+                f"{RATIFIED_JWT_ROLE_GLOB!r} grant"
+            )
+
     # Enumeration completeness: every managed name must be granted.
     for name in sorted(policy_names):
-        if name not in seen_policy:
+        covered_by_deploy_glob = (
+            name.startswith("deploy-")
+            and ratified_seen[RATIFIED_DEPLOY_POLICY_GLOB] == 1
+        )
+        if name not in seen_policy and not covered_by_deploy_glob:
             findings.append(
                 f"managed policy {name!r} has no bootstrap "
                 f"{MANAGED_POLICY_PREFIX}{name} grant — the operator could not "
@@ -314,7 +497,9 @@ def _flatten_docs(docs):
         yield doc
 
 
-def check_identity_never_managed(paths: BootstrapPaths, findings: list[str]) -> None:
+def check_identity_never_managed(
+    paths: BootstrapPaths, findings: list[str], inventory
+) -> None:
     for protected in PROTECTED_IDENTITY_NAMES:
         managed_self = paths.managed_policy_dir / f"{protected}.hcl"
         if managed_self.exists():
@@ -323,34 +508,46 @@ def check_identity_never_managed(paths: BootstrapPaths, findings: list[str]) -> 
                 f"{_display(managed_self, paths.root)} (must live only in the "
                 "out-of-band bootstrap dir)"
             )
-    if not paths.cluster_root.is_dir():
-        return
     # Assumption: the operator's CRDs are redhatcop.redhat.io/v1alpha1 and the
     # only kinds that write sys/policies/acl/* or auth/<mount>/role/* are Policy
     # and KubernetesAuthEngineRole. Revisit if the operator bumps its API version
     # or adds a new config-writing kind.
-    for path in sorted(paths.cluster_root.rglob("*")):
-        if not path.is_file() or path.suffix not in YAML_SUFFIXES:
+    candidates: list[tuple[str, dict]] = []
+    if paths.cluster_root.is_dir():
+        for path in sorted(paths.cluster_root.rglob("*")):
+            if not path.is_file() or path.suffix not in YAML_SUFFIXES:
+                continue
+            for doc in _iter_yaml_docs(path):
+                candidates.append((_display(path, paths.root), doc))
+    for doc in inventory.documents:
+        candidates.append((rendered_inventory.rendered_document_label(doc), doc))
+
+    seen: set[tuple[object, object, object]] = set()
+    for label, doc in candidates:
+        if doc.get("apiVersion") != "redhatcop.redhat.io/v1alpha1":
             continue
-        for doc in _iter_yaml_docs(path):
-            if doc.get("apiVersion") != "redhatcop.redhat.io/v1alpha1":
-                continue
-            kind = doc.get("kind")
-            if kind not in {"Policy", "KubernetesAuthEngineRole"}:
-                continue
-            name = (doc.get("metadata") or {}).get("name")
-            spec = doc.get("spec") or {}
-            candidates = {
-                _fold(c) for c in (name, spec.get("name")) if isinstance(c, str)
-            }
-            for protected in PROTECTED_IDENTITY_NAMES:
-                if protected in candidates:
-                    findings.append(
-                        f"protected identity {protected!r} is a MANAGED {kind} "
-                        f"CR: {_display(path, paths.root)} — the operator must "
-                        "never manage its own identity or the break-glass "
-                        "vault-admin policy"
-                    )
+        kind = doc.get("kind")
+        if kind not in {"Policy", "KubernetesAuthEngineRole"}:
+            continue
+        name = (doc.get("metadata") or {}).get("name")
+        spec = doc.get("spec") or {}
+        spec_name = spec.get("name")
+        identity = (kind, name, spec_name)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        effective_candidates = {
+            _fold(candidate)
+            for candidate in (name, spec_name)
+            if isinstance(candidate, str)
+        }
+        for protected in PROTECTED_IDENTITY_NAMES:
+            if protected in effective_candidates:
+                findings.append(
+                    f"protected identity {protected!r} is a MANAGED {kind} "
+                    f"CR: {label} — the operator must never manage its own "
+                    "identity or the break-glass vault-admin policy"
+                )
 
 
 def _reference_targets_bootstrap(
@@ -384,12 +581,19 @@ def check_bootstrap_never_flux_applied(
                         )
 
 
-def evaluate(root: Path, s0) -> list[str]:
+def evaluate(root: Path, s0, inventory=None) -> list[str]:
     paths = paths_for_root(root)
-    findings: list[str] = []
+    if inventory is None:
+        try:
+            inventory = rendered_inventory.load_rendered_inventory(root)
+        except rendered_inventory.InventoryError as exc:
+            raise _fail_usage(f"cannot determine rendered inventory: {exc}")
+    findings = list(inventory.flux_findings)
+    findings.extend(inventory.containment_findings)
+    findings.extend(rendered_inventory.applied_inventory_findings(inventory))
     check_bootstrap_present_and_out_of_scope(paths, findings)
-    check_bootstrap_policy_content(paths, findings, s0)
-    check_identity_never_managed(paths, findings)
+    check_bootstrap_policy_content(paths, findings, s0, inventory)
+    check_identity_never_managed(paths, findings, inventory)
     check_bootstrap_never_flux_applied(paths, findings)
     return findings
 
@@ -407,10 +611,17 @@ def main() -> int:
         return 1
     print(
         "PASS: vault-config-operator bootstrap identity is out-of-band, "
-        "sudo-free, never self-managed, and never GitOps-applied."
+        "sudo-free, carries the exact three GitHub-OIDC grants, covers every "
+        "managed JWT path, is never self-managed, and is never GitOps-applied."
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - tooling failures must exit 2
+        print(f"ERROR: tooling failure: {exc!r}", file=sys.stderr)
+        sys.exit(2)

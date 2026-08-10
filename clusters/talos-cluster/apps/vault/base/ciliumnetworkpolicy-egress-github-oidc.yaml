@@ -1,0 +1,31 @@
+# Vault retrieves GitHub Actions' OIDC discovery document and signing keys for
+# the jwt-github auth mount. Keep this policy separate from AWS egress so its
+# purpose, hostname, and rollback boundary remain independently reviewable.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: vault-egress-github-oidc
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  egress:
+    # DNS visibility lets Cilium's proxy learn only the GitHub OIDC host.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchName: token.actions.githubusercontent.com
+    # OIDC discovery and JWKS retrieval, TLS only.
+    - toFQDNs:
+        - matchName: token.actions.githubusercontent.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

@@ -375,12 +375,16 @@
 !/scripts/check-live-vault-config-invariants.sh
 !/scripts/check-vault-policy-no-escalation.py
 !/scripts/check-vault-policy-no-escalation.selftest.py
+!/scripts/rendered-inventory.py
+!/scripts/rendered-inventory.selftest.py
 !/scripts/check-vault-config-reference-safety.py
 !/scripts/check-vault-config-reference-safety.selftest.py
 !/scripts/check-vault-config-terminating.py
 !/scripts/check-vault-config-terminating.selftest.py
 !/scripts/check-vault-config-operator-bootstrap-invariants.py
 !/scripts/check-vault-config-operator-bootstrap-invariants.selftest.py
+!/scripts/check-vault-jwt-github-invariants.py
+!/scripts/check-vault-jwt-github-invariants.selftest.py
 !/scripts/check-vault-restore-validator-boundaries.sh
 !/scripts/check-vault-restore-validator-boundaries.selftest.py
 !/scripts/check-workflow-health.py
@@ -416,6 +420,7 @@
 !/docs/runbooks/dr-generate-root-breakglass.md
 !/docs/runbooks/dr-stage1-backup.md
 !/docs/runbooks/dr-validate-boundary-enforce-hardening.md
+!/docs/runbooks/enable-jwt-github-auth-mount.md
 !/docs/runbooks/migrate-first-vso-secret.md
 !/docs/runbooks/onboard-organization.md
 !/docs/runbooks/reprovision-secureboot-node.md
@@ -459,6 +464,7 @@
 !/docs/decision-records/repo/0028-vault-config-operator-bootstrap-identity.md
 !/docs/decision-records/repo/0029-mvp-stability-contract-and-security-floor.md
 !/docs/decision-records/repo/0030-per-org-source-token-minter.md
+!/docs/decision-records/repo/0031-adopt-github-oidc-jwt-auth.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/

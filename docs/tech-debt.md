@@ -17,6 +17,16 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0009 | First-party image admission enforcement was temporarily non-blocking | Resolved | **High** |
 | TD-0010 | kube-system remains outside the declared PSA floor | Open | **High** |
 | TD-0011 | Tenant image pulls use an org-wide classic PAT that cannot be repo-scoped | Open | **High** |
+| TD-0012 | Source-minter policies permit cross-org tenant-leaf writes | Open | **High** |
+| TD-0013 | Image-verification proof and upstream annotation trust remain incomplete | Open | Medium |
+| TD-0014 | jwt-github bootstrap uses `deploy-*` wildcard grants | Open | Medium |
+| TD-0015 | Vault-config health can retain same-generation success; managed prune comment is stale | Open | Medium |
+| TD-0016 | Vault-config guards did not validate the rendered managed inventory | Resolved | **High** |
+| TD-0017 | Vault policy escalation guard misses cross-root rendered Policy CRs | Open | **High** |
+| TD-0018 | Vault reference-safety consumer discovery is filesystem-only | Open | Medium |
+| TD-0019 | Vault guards 2 and 3 retain authored-file-derived assertions | Open | **High** |
+| TD-0020 | Render-anchored Vault guards are not runnable offline | Open | Low |
+| TD-0021 | Vault guard 1 CNP assertion does not consume owning Flux transforms | Open | **High** |
 
 ---
 
@@ -710,6 +720,482 @@ to benefit. Digest pinning and merge review remain in front of that path.
 - [kyverno#16336](https://github.com/kyverno/kyverno/issues/16336) — open, milestone 1.19.0
 - [kyverno#16435](https://github.com/kyverno/kyverno/issues/16435) — closed, milestone 1.19.0
 - [ADR-0027]: fail-closed first-party image admission
+
+---
+
+## TD-0014 — jwt-github bootstrap uses `deploy-*` wildcard grants
+
+**Opened:** 2026-07-28 · **Status:** Open (owner-ratified) · **Priority:** Medium ·
+**See:** [ADR-0031](decision-records/repo/0031-adopt-github-oidc-jwt-auth.md)
+
+### Gap
+
+ADR-0028 normally enumerates every managed Vault policy and auth role by exact
+name in the vault-config-operator bootstrap HCL. Automatic CI-consumer
+onboarding deliberately deviates from that rule with:
+
+- `auth/jwt-github/role/deploy-*`;
+- `sys/policies/acl/deploy-*`.
+
+The globs are mount/name-scoped and mechanically pinned to
+create/read/update/delete, but they authorize future `deploy-*` names that are
+not yet present in git. A compromised operator can therefore create, rewrite,
+or delete any role or ACL policy in that prefix, not only an onboarded
+consumer's current pair. Because the operator authors policy content and binds
+policies to roles, this compounds the root-equivalent-in-practice residual
+already owned by ADR-0028.
+
+### Why deferred
+
+Exact enumeration would require an owner-watched bootstrap re-seed for every
+consumer addition and offboarding. That contradicts the ratified D9
+convention-discovery model, whose marginal path is a reviewed, owner-merged
+onboarding PR with no repeated Vault ceremony.
+
+The accepted containment is explicit:
+
+- only the `jwt-github` role subtree and `deploy-*` ACL-policy names match;
+- config uses an exact path and carries no delete;
+- no `list`, `sudo`, broader auth wildcard, or case variant is allowed;
+- the bootstrap guard rejects missing, broader, extra-capability, duplicate,
+  and case-variant grants;
+- the JWT and reference guards require each git-authored role to bind exactly
+  one same-named managed policy and the one managed config.
+
+Those controls constrain git-authored intent. They do not constrain an attacker
+already executing with the operator's live Vault token.
+
+### Exit condition
+
+Close this item only when the two wildcard stanzas are removed from the
+bootstrap HCL and one of these states is proven:
+
+1. every active consumer role/policy path is exact-enumerated and the program
+   has deliberately accepted per-consumer owner re-seeds; or
+2. a Vault enforcement layer independent of the operator (for example
+   Enterprise Sentinel) constrains both allowed names and authored policy/role
+   content strongly enough that future prefix members cannot expand privilege.
+
+The closing change must update ADR-0031, the owner runbook, and the bootstrap
+and self-test fixtures together.
+
+### References
+
+- [ADR-0031](decision-records/repo/0031-adopt-github-oidc-jwt-auth.md)
+- [ADR-0028](decision-records/repo/0028-vault-config-operator-bootstrap-identity.md)
+- `clusters/talos-cluster/apps/vault/vault-config/bootstrap/vault-config-operator.policy.hcl`
+- `scripts/check-vault-config-operator-bootstrap-invariants.py`
+
+---
+
+## TD-0015 — Vault-config health can retain same-generation success; managed prune comment is stale
+
+**Opened:** 2026-07-29 · **Status:** Open · **Priority:** Medium
+
+### Same-generation health residual
+
+All six redhat-cop kinds in the `vault-config-managed` Flux Kustomization use
+an observed-generation-aware CEL expression that requires
+`ReconcileSuccessful=True`. This fails closed on first reconcile and after a
+spec edit because no success for the new generation exists.
+
+The operator's `AddOrReplaceCondition` behavior replaces only a condition with
+the same type. A failure after an earlier success can therefore add
+`ReconcileFailed` while retaining `ReconcileSuccessful=True` for the same
+generation. The existing expression still sees that retained success, so this
+same-generation runtime regression can remain healthy at the Flux layer. The
+residual applies equally to `Policy`, `KubernetesAuthEngineRole`,
+`JWTOIDCAuthEngineConfig`, `JWTOIDCAuthEngineRole`, `SecretEngineMount`, and
+`PKISecretEngineRole`.
+
+Do not add a simple `ReconcileFailed` exclusion: failed conditions can linger
+after a later success, which would make recovered resources permanently
+unhealthy. Closure requires either an upstream condition model that makes the
+latest outcome unambiguous or a source-verified CEL predicate that identifies
+the latest outcome while proving both regression detection and recovery.
+
+### Stale managed-inventory comment
+
+`vault-config/managed/kustomization.yaml` still says `prune: false until S7`,
+but S7 is complete and
+`apps/kustomization-vault-config-managed.yaml` has `prune: true`. Runtime
+behavior is controlled by the Flux Kustomization, so this is documentation
+drift rather than a live configuration mismatch. Remove or rewrite the stale
+comment in a separately reviewed cleanup.
+
+### References
+
+- `clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
+
+---
+
+## TD-0016 — Vault-config guards did not validate the rendered managed inventory
+
+**Opened:** 2026-07-29 · **Resolved:** 2026-07-31 · **Status:** Resolved ·
+**Priority:** High
+
+### Gap at open time
+
+The CI guard family inspected only `.yaml` and `.yml` files discovered under
+`clusters/talos-cluster/apps/vault/vault-config/managed/`. A
+`JWTOIDCAuthEngineRole` stored as `.json`, in a file with another or no
+extension, or outside `managed/` and included through a cross-root `resources:`
+entry could therefore render into the prune-armed inventory without being seen
+by those guards. Authored-file reads also missed Kustomize transformations: an
+inline patch could change the applied JWT config or role while the guards
+validated the unpatched source.
+
+### Resolution
+
+Commit `5b345a6` added `scripts/rendered-inventory.py`. The helper renders the
+cluster root with `--load-restrictor LoadRestrictionsNone`, selects and
+validates the effective `flux-system/vault-config-managed` Flux Kustomization,
+then renders that object's validated `spec.path` with the same unrestricted
+load semantics. It fails closed when the applied inventory cannot be reproduced.
+
+Sourcing is deliberately per semantic rather than a blanket replacement:
+
+- contract, cardinality, and managed-edge checks use the render only, so an
+  authored value cannot mask a transformed applied value and same-effective-name
+  objects are not collapsed;
+- allow-set builders and prohibitions use the render unioned with their existing
+  filesystem inputs, where additional candidates make the check stricter.
+
+This closes the managed-inventory discovery and patch-divergence scope assigned
+to TD-0016. It does not claim to close the separate S0, consumer-discovery,
+residual authored-assertion, or offline-execution gaps tracked separately in
+this register.
+
+### Closure evidence
+
+- `scripts/rendered-inventory.selftest.py` exercises the helper's reachable
+  fail-closed branches and flat manifest-only containment policy.
+- The guard family rejects every listed managed-role discovery evasion: each
+  `.json`, alternate- or absent-extension, and cross-root `resources:` fixture
+  is rejected by at least one guard with a field-specific finding that
+  identifies the rendered object's kind and name. Every guard's own
+  managed-object discovery is sourced from the rendered inventory.
+- Focused fixtures also reject patches that rewrite the JWT discovery URL,
+  health expressions, or role policy bindings, plus duplicate effective policy
+  providers, with findings labelled from the rendered object's kind and name.
+- The helper self-test proves that an object-supplied annotation cannot
+  influence that object's finding label.
+- CI runs the helper self-test before the three guards and their self-tests.
+
+### References
+
+- `scripts/check-vault-jwt-github-invariants.py`
+- `scripts/check-vault-config-reference-safety.py`
+- `scripts/check-vault-config-operator-bootstrap-invariants.py`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
+
+---
+
+## TD-0017 — Vault policy escalation guard misses cross-root rendered Policy CRs
+
+**Opened:** 2026-07-31 · **Status:** Open · **Priority:** High ·
+**Queue:** Next
+
+### Guard and defect class
+
+`scripts/check-vault-policy-no-escalation.py` discovers Policy CRs by scanning
+the fixed `clusters/talos-cluster/` root for `.yaml` and `.yml` files. Flux
+builds with `LoadRestrictionsNone`, so a Kustomization below that root can load
+a Policy CR whose source file is elsewhere in the repository. The Policy is
+applied, but the escalation guard never parses its `spec.policy` HCL.
+
+The Vault-config README previously called this residual "a booked hardening
+(S4a audit finding R1)" when no technical-debt entry existed. That statement
+was false until this TD-0017 entry was opened.
+
+### Concrete reproduction
+
+Place a redhat-cop `Policy` CR in a repository-root
+`outside/policy-cross-root.yaml`, give its `spec.policy` a management-plane
+grant such as `path "sys/auth/*"` with `create` and `update`, and add
+`../../../../../../outside/policy-cross-root.yaml` to the managed
+Kustomization's `resources:` list. Flux-compatible Kustomize rendering includes
+the Policy, while the guard's fixed-root source walk does not inspect the file;
+the prohibited grant therefore does not produce an escalation finding.
+
+### Impact
+
+The deny-by-default allowlist is not complete for the set Flux can apply. If
+such a Policy is reconciled, the resulting Vault policy can grant
+authentication-management capabilities that the guard is intended to reject.
+This is a gate weakness; no such cross-root Policy is present in the current
+managed inventory.
+
+### Closure criteria
+
+Close only when the escalation guard consumes the rendered applied inventory
+for Policy `spec.policy` content and fails closed if that inventory cannot be
+determined. Self-tests must prove that an allowlisted in-root Policy still
+passes and that a cross-root Policy carrying a management-plane grant reaches
+the guard and is rejected with an escalation finding, not merely a renderer
+error.
+
+### References
+
+- `scripts/check-vault-policy-no-escalation.py`
+- `scripts/rendered-inventory.py`
+- `clusters/talos-cluster/apps/vault/vault-config/managed/kustomization.yaml`
+- `clusters/talos-cluster/apps/vault/vault-config/README.md`
+
+---
+
+## TD-0018 — Vault reference-safety consumer discovery is filesystem-only
+
+**Opened:** 2026-07-31 · **Status:** Open · **Priority:** Medium
+
+### Guard and defect class
+
+`scripts/check-vault-config-reference-safety.py` takes managed providers and
+managed-role edges from the rendered `vault-config-managed` inventory, but it
+still discovers structured consumers by walking `clusters/` for `.yaml` and
+`.yml` files. `VaultAuth`, `ClusterIssuer`, and `Certificate` objects authored
+as JSON, with another or no extension, or sourced from outside `clusters/`
+through a cross-root Flux path are invisible to the consumer-side reference
+graph.
+
+### Concrete reproduction
+
+Author a `VaultAuth` as `vaultauth-cross-root.json` with
+`spec.kubernetes.role: missing-role`, and include it from a reconciled
+Kustomization using a cross-root `resources:` entry. Kustomize parses and
+applies the JSON object, but the guard's `clusters/` YAML walk never adds its
+role edge. The same discovery evasion applies to a JSON `ClusterIssuer` with an
+unmanaged mount/role or a JSON `Certificate` that names a missing
+`ClusterIssuer`.
+
+### Impact
+
+The guard can report a complete reference graph while an applied consumer has
+an unresolved Vault role, PKI mount/role, or issuer reference. A later prune or
+provider removal can therefore pass CI and leave VSO authentication returning
+403 or certificate issuance and renewal unable to proceed. This is a static
+coverage gap; it is not evidence that a current consumer is broken.
+
+### Closure criteria
+
+Close only when consumer discovery covers the rendered inventories of all Flux
+reconciliation paths that can apply `VaultAuth`, `ClusterIssuer`, and
+`Certificate` objects. Self-tests must prove rejection of JSON, extensionless,
+and cross-root consumer fixtures by their dangling-reference findings, not by a
+rendering failure, while preserving the existing capture-only and pinned
+unstructured consumer edges.
+
+### References
+
+- `scripts/check-vault-config-reference-safety.py`
+- `scripts/rendered-inventory.py`
+- `clusters/talos-cluster/apps/`
+
+---
+
+## TD-0019 — Vault guards 2 and 3 retain authored-file-derived assertions
+
+**Opened:** 2026-07-31 · **Status:** Open · **Priority:** High
+
+### Guards and defect class
+
+The TD-0016 fix made guard 1's JWT config, health, role contract, and related
+managed-inventory checks render-authoritative. Two other guards still make
+assertions about applied objects from authored files:
+
+- guard 2, `scripts/check-vault-config-reference-safety.py`, reads structured
+  consumers from source files;
+- guard 3,
+  `scripts/check-vault-config-operator-bootstrap-invariants.py`, unions the
+  target render with cluster-wide authored Policy and
+  `KubernetesAuthEngineRole` CRs for name enumeration and protected-identity
+  checks.
+
+Those reads can disagree with Kustomize's transformed values. Filesystem union
+is intentionally stricter for the target managed inventory's allow-set and
+prohibition semantics, but it is not a substitute for rendering objects
+reconciled through other Flux paths.
+
+### Concrete reproduction
+
+For guard 2, apply a Kustomize patch to an existing `VaultAuth` that replaces a
+valid authored `spec.kubernetes.role` with `missing-role`. The guard reads the
+unpatched file, resolves the old edge, and can pass while Flux applies the
+dangling role reference.
+
+For guard 3, place a benignly named redhat-cop Policy in a different Flux
+reconciliation path and patch its effective `spec.name` to `vault-admin`. The
+guard's cluster-wide authored scan sees only the benign name, and the rendered
+`vault-config-managed` target does not contain that other path, so the applied
+protected identity can evade the prohibition.
+
+### Impact
+
+Patch divergence can hide a broken consumer edge from the prune-safety guard or
+hide a protected/operator-managed identity from the bootstrap invariant guard.
+The former can cause authentication or certificate-renewal outages; the latter
+can violate the separation between GitOps-managed state and the break-glass or
+operator bootstrap identities. No such divergent patch is present in the
+current repository.
+
+### Closure criteria
+
+Close only when every assertion about an applied structured object in guards 2
+and 3 consumes that object's effective rendered value across all relevant Flux
+paths. Keep authored-file reads only where the asserted property is expressly
+about source absence, non-applied capture material, or unstructured pinned
+content. Self-tests must patch an existing consumer edge and an out-of-target
+Policy/role identity and prove both effective values are rejected.
+
+### References
+
+- `scripts/check-vault-config-reference-safety.py`
+- `scripts/check-vault-config-operator-bootstrap-invariants.py`
+- `scripts/rendered-inventory.py`
+
+---
+
+## TD-0020 — Render-anchored Vault guards are not runnable offline
+
+**Opened:** 2026-07-31 · **Status:** Open · **Priority:** Low
+
+### Guards and defect class
+
+The three guards that consume `scripts/rendered-inventory.py` must render
+`clusters/talos-cluster/` to select the effective `vault-config-managed` Flux
+Kustomization. That root includes
+`apps/gateway-api/kustomization.yaml`, which fetches Gateway API v1.4.1 from a
+GitHub release URL. The guards therefore require network access even though
+their own managed target contains local files.
+
+### Concrete reproduction
+
+Disable outbound network or DNS resolution and run any of:
+
+- `scripts/check-vault-jwt-github-invariants.py`;
+- `scripts/check-vault-config-reference-safety.py`;
+- `scripts/check-vault-config-operator-bootstrap-invariants.py`.
+
+Under those conditions, all three guards have been observed to fail closed with
+exit 2: the root Kustomize render cannot fetch the pinned Gateway API base, so
+the helper cannot establish the applied inventory. None falls back to
+authored-file discovery.
+
+### Impact
+
+A developer cannot execute these guards in an offline checkout. This does not
+create a new CI failure mode: the same validation job already renders the
+cluster root before running the guards, so an unavailable remote base already
+fails that job. The impact is local reproducibility and resilience, not weaker
+enforcement or a false-green result.
+
+### Closure criteria
+
+Close when the Gateway API v1.4.1 remote base is replaced by a version- and
+integrity-pinned local mirror with a documented update path, and a
+network-disabled test proves the root render plus all three guards complete
+without remote access. The rendered output must remain reviewed and equivalent
+to the pinned upstream release.
+
+### References
+
+- `scripts/rendered-inventory.py`
+- `clusters/talos-cluster/apps/gateway-api/kustomization.yaml`
+- `.github/workflows/validate.yaml`
+
+---
+
+## TD-0021 — Vault guard 1 CNP assertion does not consume owning Flux transforms
+
+**Opened:** 2026-08-01 · **Status:** Open · **Priority:** High
+
+### Guards and defect class
+
+Guard 1, `scripts/check-vault-jwt-github-invariants.py`, checks the CNP in
+`check_cnp()` at lines 352-365 by reading
+`clusters/talos-cluster/apps/vault/base/ciliumnetworkpolicy-egress-github-oidc.yaml`
+directly. That object is absent from the cluster ROOT render. It belongs to Flux
+Kustomization `vault`, whose tracked definition is
+`clusters/talos-cluster/apps/vault-kustomization.yaml`: `spec.path` selects
+`clusters/talos-cluster/apps/vault`, `spec.targetNamespace` is `deploy-vault`,
+and `spec.patches` contains four existing prune-annotation patches.
+
+The directory build does not consume those outer `targetNamespace` and
+`patches` transforms. The code defect is therefore present: the exact-host CNP
+assertion can disagree with the effective rendered value under its owning Flux
+path.
+
+### Concrete reproduction
+
+Use this two-pass contrast procedure in a disposable checkout; it performs no
+live-cluster operation:
+
+1. As the input, model one additional entry in
+   `clusters/talos-cluster/apps/vault-kustomization.yaml` under `spec.patches`:
+
+   ```yaml
+   - target:
+       group: cilium.io
+       version: v2
+       kind: CiliumNetworkPolicy
+       name: vault-egress-github-oidc
+     patch: |-
+       - op: add
+         path: /spec/egress/1/toEntities
+         value:
+           - world
+   ```
+
+2. For the contrast pass, run
+   `kubectl kustomize clusters/talos-cluster/apps/vault` and assert exit zero.
+   The CNP appears in its authored exact-host form, without `toEntities`; this
+   directory render does not demonstrate Flux-level patch application.
+3. For the transformed pass, create a temporary Kustomization with
+   `resources` naming the source directory
+   `clusters/talos-cluster/apps/vault` by a path relative to the temporary
+   directory. Kustomize rejects an absolute root. Use the source directory, not
+   serialized output from the first pass. Set `namespace: deploy-vault`, copy
+   the four existing patches from the owning Flux Kustomization, and add the
+   JSON-6902 patch above. Build the temporary Kustomization with
+   `kubectl kustomize <temporary-directory>` and assert exit zero.
+4. The transformed CNP contains `spec.egress[1].toEntities: [world]`. With the
+   authored file unchanged,
+   `python3 scripts/check-vault-jwt-github-invariants.py` still passes when the
+   prerequisite ROOT render is available, because `check_cnp()` compares that
+   unmodified authored file rather than the transformed CNP.
+5. This procedure is an approximation of the controller's post-build patch
+   application, offered only to exhibit divergent effective configuration. It
+   is not a faithful emulation of kustomize-controller and does not prove its
+   internal transformation ordering. The demonstration does not depend on that
+   ordering because the CNP has a stable, non-generated name. The repository
+   presently has no faithful offline renderer for a Flux owner whose build is
+   modified by `patches` and `targetNamespace`.
+
+### Impact
+
+A divergent effective configuration can broaden the CNP while the guard still
+accepts the authored exact-host policy. No divergent CNP patch is present in
+the current repository, and this latent reproduction does not establish a
+current effective-object difference or an outage.
+
+### Closure criteria
+
+Close when the assertion consumes the CNP's effective rendered value under its
+owning Flux path, and a negative test proves that a divergent CNP patch is
+rejected. Closure depends on `scripts/rendered-inventory.py` being able to
+expand a Flux owner whose build is modified by `patches` and
+`targetNamespace`; the helper presently reports such an owner as a reach
+limit. Keep an authored-file assertion only if the asserted property is
+explicitly about source content.
+
+### References
+
+- `scripts/check-vault-jwt-github-invariants.py`
+- `scripts/rendered-inventory.py`
+- `clusters/talos-cluster/apps/vault/base/ciliumnetworkpolicy-egress-github-oidc.yaml`
+- `clusters/talos-cluster/apps/vault-kustomization.yaml`
+- `clusters/talos-cluster/kustomization.yaml`
 
 ---
 
