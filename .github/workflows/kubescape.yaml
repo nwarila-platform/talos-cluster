@@ -121,13 +121,16 @@ jobs:
       # THIS workflow red — the zero-red sweep's established signal surface.
       # Rides this job deliberately: same scoped scanner role, same
       # single-object kubeconfig, zero new credentials.
-      # Egress-resilience (2026-07-17): the ARC runner began timing out (5 min)
-      # fetching kubectl from dl.k8s.io (Fastly) while github.com/AWS downloads
-      # kept working -> the kubectl-dependent detector steps below (sigstore-pin
-      # drift + vault-config terminating) went dark. All download curls now force
-      # IPv4 (-4, defeats an IPv6-blackhole to the CDN), retry, and fail a bad
-      # connect in 20s instead of hanging. Integrity is unchanged: every artifact
-      # is still pinned by version + sha256sum -c.
+      # Egress resilience (2026-07-17): dl.k8s.io was absent from the ARC
+      # runner's Cilium FQDN allowlists. Its repeated connection timeouts were
+      # consistent with a policy drop; that manifest boundary plus successful
+      # downloads from allowlisted github.com/AWS hosts makes a policy drop the
+      # best-supported explanation, though no Hubble drop verdict is available.
+      # The platform-only allowance permits the checksum-pinned kubectl download
+      # needed by the detector steps below. Curl still forces IPv4, retries, and
+      # limits connect time as independent hardening; those flags neither
+      # established the cause nor closed the policy gap. Integrity remains
+      # version-pinned and checked with sha256sum -c.
       - name: Install kubectl (pinned + checksum-verified)
         run: |
           set -euo pipefail

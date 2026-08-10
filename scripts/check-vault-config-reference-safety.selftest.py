@@ -13,18 +13,21 @@ from __future__ import annotations
 import contextlib
 import io
 import importlib.util
+import re
 import sys
 import tempfile
 import textwrap
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "scripts/check-vault-config-reference-safety.py"
 
 MANAGED = "clusters/talos-cluster/apps/vault/vault-config/managed"
 CAPTURES = "clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles"
-PIN_CRON = "clusters/talos-cluster/apps/source-rotator/cronjob.yaml"
-PIN_CM = "clusters/talos-cluster/apps/source-rotator/configmap.yaml"
+PIN_CRON = "clusters/talos-cluster/apps/source-rotator/cronjob-hwg.yaml"
+PIN_CRON_NWP = "clusters/talos-cluster/apps/source-rotator/cronjob-nwp.yaml"
 PIN_DRILL = "clusters/talos-cluster/apps/vault/restore-drill/s0-restore-generate-root.sh"
 
 
@@ -45,9 +48,108 @@ def write(root: Path, rel: str, content: str) -> None:
     path.write_text(textwrap.dedent(content).lstrip("\n"), encoding="utf-8")
 
 
+def managed_kustomization(root: Path) -> dict:
+    return yaml.safe_load(
+        (root / f"{MANAGED}/kustomization.yaml").read_text(encoding="utf-8")
+    )
+
+
+def write_managed_kustomization(root: Path, doc: dict) -> None:
+    write(root, f"{MANAGED}/kustomization.yaml", yaml.safe_dump(doc, sort_keys=False))
+
+
+def add_managed_resource(root: Path, resource: str) -> None:
+    doc = managed_kustomization(root)
+    doc["resources"].append(resource)
+    write_managed_kustomization(root, doc)
+
+
+def remove_managed_resource(root: Path, resource: str) -> None:
+    doc = managed_kustomization(root)
+    doc["resources"].remove(resource)
+    write_managed_kustomization(root, doc)
+
+
+def write_render_scaffold(root: Path) -> None:
+    managed = root / MANAGED
+    resources = sorted(
+        path.name
+        for path in managed.iterdir()
+        if path.is_file() and path.name != "kustomization.yaml"
+    )
+    write_managed_kustomization(
+        root,
+        {
+            "apiVersion": "kustomize.config.k8s.io/v1beta1",
+            "kind": "Kustomization",
+            "namespace": "vault-config-operator",
+            "resources": resources,
+        },
+    )
+    health = [
+        {
+            "apiVersion": guard.rendered_inventory.REDHATCOP_API_VERSION,
+            "kind": kind,
+            "current": guard.rendered_inventory.HEALTH_CURRENT,
+        }
+        for kind in guard.rendered_inventory.JWT_KINDS
+    ]
+    write(
+        root,
+        "clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml",
+        yaml.safe_dump(
+            {
+                "apiVersion": guard.rendered_inventory.FLUX_API_VERSION,
+                "kind": "Kustomization",
+                "metadata": {
+                    "name": "vault-config-managed",
+                    "namespace": "flux-system",
+                },
+                "spec": {
+                    "interval": "10m",
+                    "path": f"./{MANAGED}",
+                    "prune": True,
+                    "wait": True,
+                    "dependsOn": [
+                        {"name": "vault-config-operator"},
+                        {"name": "vault"},
+                    ],
+                    "sourceRef": {
+                        "kind": "GitRepository",
+                        "name": "flux-system",
+                    },
+                    "healthCheckExprs": health,
+                },
+            },
+            sort_keys=False,
+        ),
+    )
+    write(
+        root,
+        "clusters/talos-cluster/apps/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - kustomization-vault-config-managed.yaml
+        """,
+    )
+    write(
+        root,
+        "clusters/talos-cluster/kustomization.yaml",
+        """
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        resources:
+          - apps
+        """,
+    )
+
+
 def base_fixture(root: Path) -> None:
     """A minimal healthy tree: 2 policies, 1 managed role, 1 capture role,
-    1 mount + 1 PKI role, 1 issuer + 1 certificate, both pinned consumers."""
+    1 JWT role/config pair, 1 mount + 1 PKI role, 1 issuer + 1 certificate,
+    all three pinned consumers."""
     write(root, f"{MANAGED}/policy-source-minter-hwg.yaml", """
         apiVersion: redhatcop.redhat.io/v1alpha1
         kind: Policy
@@ -72,6 +174,21 @@ def base_fixture(root: Path) -> None:
         metadata: {name: source-minter-hwg}
         spec:
           policies: [source-minter-hwg]
+    """)
+    # Second org: proves the pinned-consumer table scales past one org, and that a
+    # per-org CronJob edge resolves to its own policy/role pair rather than hwg's.
+    write(root, f"{MANAGED}/policy-source-minter-nwp.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: Policy
+        metadata: {name: source-minter-nwp}
+        spec: {type: acl, policy: "path \\"x\\" {}"}
+    """)
+    write(root, f"{MANAGED}/role-source-minter-nwp.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: KubernetesAuthEngineRole
+        metadata: {name: source-minter-nwp}
+        spec:
+          policies: [source-minter-nwp]
     """)
     write(root, f"{MANAGED}/role-vault-snapshot-backup.yaml", """
         apiVersion: redhatcop.redhat.io/v1alpha1
@@ -107,6 +224,27 @@ def base_fixture(root: Path) -> None:
         spec:
           policies: [tenant-read]
     """)
+    write(root, f"{MANAGED}/jwtoidcauthengineconfig-jwt-github.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: JWTOIDCAuthEngineConfig
+        metadata: {name: jwt-github}
+        spec: {path: jwt-github}
+    """)
+    write(root, f"{MANAGED}/policy-deploy-example.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: Policy
+        metadata: {name: deploy-example}
+        spec: {type: acl, policy: "path \\"secret/data/deploy/example/*\\" {}"}
+    """)
+    write(root, f"{MANAGED}/jwtoidcauthenginerole-deploy-example.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: JWTOIDCAuthEngineRole
+        metadata: {name: deploy-example}
+        spec:
+          name: deploy-example
+          path: jwt-github
+          tokenPolicies: [deploy-example]
+    """)
     write(root, "clusters/talos-cluster/apps/vault-tls-cm/clusterissuer.yaml", """
         apiVersion: cert-manager.io/v1
         kind: ClusterIssuer
@@ -125,8 +263,9 @@ def base_fixture(root: Path) -> None:
           issuerRef: {name: vault-server, kind: ClusterIssuer}
     """)
     write(root, PIN_CRON, "env:\n  - name: VAULT_ROLE\n    value: source-minter-hwg\n")
-    write(root, PIN_CM, 'VAULT_ROLE = os.environ.get("VAULT_ROLE", "source-minter-hwg")\n')
+    write(root, PIN_CRON_NWP, "env:\n  - name: VAULT_ROLE\n    value: source-minter-nwp\n")
     write(root, PIN_DRILL, 'login with {"role": "vault-snapshot-backup", "jwt": j}\n')
+    write_render_scaffold(root)
 
 
 def run_guard(root: Path) -> tuple[int, str]:
@@ -160,6 +299,7 @@ case("healthy-tree-passes", 0, no_mutation, "PASS", "reference edge(s)")
 
 def drop_referenced_policy(root):
     (root / f"{MANAGED}/policy-source-minter-hwg.yaml").unlink()
+    remove_managed_resource(root, "policy-source-minter-hwg.yaml")
 
 
 case(
@@ -172,6 +312,7 @@ case(
 
 def drop_capture_referenced_policy(root):
     (root / f"{MANAGED}/policy-tenant-read.yaml").unlink()
+    remove_managed_resource(root, "policy-tenant-read.yaml")
 
 
 case(
@@ -196,6 +337,7 @@ case(
 
 def drop_pki_role(root):
     (root / f"{MANAGED}/pkirole-vault-server.yaml").unlink()
+    remove_managed_resource(root, "pkirole-vault-server.yaml")
 
 
 case(
@@ -208,6 +350,7 @@ case(
 
 def drop_mount(root):
     (root / f"{MANAGED}/secretenginemount-pki-int-tcn.yaml").unlink()
+    remove_managed_resource(root, "secretenginemount-pki-int-tcn.yaml")
 
 
 case(
@@ -223,6 +366,7 @@ def drop_issuer_auth_role(root):
     # The audit-S/T round-1 defect class: the issuer's LOGIN role CR removed
     # while the ClusterIssuer still logs in with it — must FAIL on edge 5b.
     (root / f"{MANAGED}/role-issuer-login.yaml").unlink()
+    remove_managed_resource(root, "role-issuer-login.yaml")
 
 
 case(
@@ -247,6 +391,7 @@ case(
 
 def drop_pinned_role(root):
     (root / f"{MANAGED}/role-source-minter-hwg.yaml").unlink()
+    remove_managed_resource(root, "role-source-minter-hwg.yaml")
 
 
 case(
@@ -271,6 +416,7 @@ def drop_unreferenced_role(root):
         metadata: {name: unused-extra}
         spec: {type: acl, policy: "path \\"q\\" {}"}
     """)
+    add_managed_resource(root, "policy-unused.yaml")
 
 
 case("unreferenced-provider-is-prunable", 0, drop_unreferenced_role, "PASS")
@@ -310,6 +456,7 @@ def case_folded_policy(root):
         spec:
           policies: [TENANT-READ]
     """)
+    add_managed_resource(root, "role-case.yaml")
 
 
 case("policy-compare-is-case-folded", 0, case_folded_policy, "PASS")
@@ -392,6 +539,91 @@ case(
 )
 
 
+def drop_jwt_policy(root):
+    (root / f"{MANAGED}/policy-deploy-example.yaml").unlink()
+    remove_managed_resource(root, "policy-deploy-example.yaml")
+
+
+case(
+    "removing-a-jwt-role-policy-fails",
+    1,
+    drop_jwt_policy,
+    "managed role 'deploy-example' references policy 'deploy-example'",
+)
+
+
+def drop_jwt_config(root):
+    (root / f"{MANAGED}/jwtoidcauthengineconfig-jwt-github.yaml").unlink()
+    remove_managed_resource(root, "jwtoidcauthengineconfig-jwt-github.yaml")
+
+
+case(
+    "removing-the-jwt-config-under-a-role-fails",
+    1,
+    drop_jwt_config,
+    "must resolve to exactly one managed JWTOIDCAuthEngineConfig",
+)
+
+
+def jwt_role_policy_parity_break(root):
+    write(root, f"{MANAGED}/jwtoidcauthenginerole-deploy-example.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: JWTOIDCAuthEngineRole
+        metadata: {name: deploy-example}
+        spec:
+          name: deploy-example
+          path: jwt-github
+          tokenPolicies: [tenant-read]
+    """)
+
+
+case(
+    "jwt-role-policy-name-parity-fails",
+    1,
+    jwt_role_policy_parity_break,
+    "must bind exactly its same-named deploy policy",
+)
+
+
+def duplicate_jwt_policy(root):
+    write(root, f"{MANAGED}/policy-deploy-example-duplicate.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: Policy
+        metadata: {name: deploy-example-duplicate}
+        spec:
+          name: deploy-example
+          type: acl
+          policy: "path \\"secret/data/deploy/example/*\\" {}"
+    """)
+    add_managed_resource(root, "policy-deploy-example-duplicate.yaml")
+
+
+case(
+    "jwt-role-policy-must-resolve-once",
+    1,
+    duplicate_jwt_policy,
+    "resolves to 2 managed Policy CRs",
+)
+
+
+def unknown_managed_redhatcop_kind(root):
+    write(root, f"{MANAGED}/unknown.yaml", """
+        apiVersion: redhatcop.redhat.io/v1alpha1
+        kind: FuturePrivilegeWriter
+        metadata: {name: surprise}
+        spec: {}
+    """)
+    add_managed_resource(root, "unknown.yaml")
+
+
+case(
+    "unknown-managed-redhatcop-kind-fails-closed",
+    2,
+    unknown_managed_redhatcop_kind,
+    "unsupported managed redhatcop kind",
+)
+
+
 def main() -> int:
     failures = 0
     for name, expected_rc, mutate, fragments in CASES:
@@ -401,7 +633,21 @@ def main() -> int:
             mutate(root)
             rc, output = run_guard(root)
             ok = rc == expected_rc and all(f in output for f in fragments)
-            print(f"{'PASS' if ok else 'FAIL'}  {name} (rc={rc}, want {expected_rc})")
+            object_report = ""
+            if expected_rc == 0:
+                match = re.search(r"across (\d+) rendered managed object", output)
+                if match is None or int(match.group(1)) == 0:
+                    ok = False
+                object_report = (
+                    f", rendered_objects={match.group(1)}"
+                    if match is not None
+                    else ""
+                )
+            observed = "PASS" if rc == 0 else "FAIL" if rc == 1 else "ERROR"
+            print(
+                f"{'PASS' if ok else 'FAIL'}  {name} "
+                f"guard={observed}(rc={rc}, want {expected_rc}{object_report})"
+            )
             if not ok:
                 failures += 1
                 missing = [f for f in fragments if f not in output]

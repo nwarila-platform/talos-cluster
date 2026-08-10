@@ -1,0 +1,140 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nwp-1306985678
+resources:
+  - ../_template/zero-touch/base
+configMapGenerator:
+  - name: tenant-contract
+    literals:
+      - tenantId=nwp-1306985678
+      - orgPrefix=nwp
+      - org=nwarila-platform
+      - deployRepo=deploy-platform-canary
+      - deployRepoGit=deploy-platform-canary.git
+      - sourceName=deploy-platform-canary
+      - appAuthSecret=nwp-1306985678-gitops-source-auth
+      - repoId=1306985678
+generatorOptions:
+  disableNameSuffixHash: true
+  annotations:
+    config.kubernetes.io/local-config: "true"
+patches:
+  - target:
+      kind: Namespace
+    patch: |-
+      - op: add
+        path: /metadata/labels/nwarila.io~1deploy-repo
+        value: "deploy-platform-canary"
+      - op: add
+        path: /metadata/labels/nwarila.io~1repo-id
+        value: "1306985678"
+      - op: add
+        path: /metadata/labels/nwarila.io~1org
+        value: "nwarila-platform"
+replacements:
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.tenantId
+    targets:
+      - select:
+          kind: Kustomization
+        fieldPaths:
+          - metadata.name
+          - spec.targetNamespace
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.sourceName
+    targets:
+      - select:
+          kind: GitRepository
+          name: source-placeholder
+        fieldPaths:
+          - metadata.name
+      - select:
+          kind: Kustomization
+        fieldPaths:
+          - spec.sourceRef.name
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.org
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.url
+        options:
+          delimiter: /
+          index: 3
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.deployRepoGit
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.url
+        options:
+          delimiter: /
+          index: 4
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.appAuthSecret
+    targets:
+      - select:
+          kind: GitRepository
+        fieldPaths:
+          - spec.secretRef.name
+      - select:
+          kind: VaultStaticSecret
+          name: app-auth-placeholder
+        fieldPaths:
+          - metadata.name
+          - spec.destination.name
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.tenantId
+    targets:
+      - select:
+          kind: VaultStaticSecret
+          name: app-auth-placeholder
+        fieldPaths:
+          - spec.path
+        options:
+          delimiter: '/'
+          index: 0
+  - source:
+      kind: ConfigMap
+      name: tenant-contract
+      fieldPath: data.orgPrefix
+    targets:
+      - select:
+          kind: ServiceAccount
+          name: vso-org-pull-placeholder
+        fieldPaths:
+          - metadata.name
+        options:
+          delimiter: '-'
+          index: 3
+      - select:
+          kind: VaultStaticSecret
+          name: ghcr-pull
+        fieldPaths:
+          - spec.path
+        options:
+          delimiter: '/'
+          index: 2
+      - select:
+          kind: VaultStaticSecret
+          name: ghcr-pull
+        fieldPaths:
+          - spec.vaultAuthRef
+        options:
+          delimiter: '-'
+          # vaultAuthRef slash-collapse: operator/org is one segment; placeholder is index 4, not 2.
+          index: 4

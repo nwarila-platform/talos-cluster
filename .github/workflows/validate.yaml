@@ -219,9 +219,6 @@ jobs:
       - name: "Guard: node inventory matches config.env"
         run: python3 scripts/check-node-inventory-sync.py
 
-      - name: Render cluster Kustomize tree
-        run: kubectl kustomize clusters/talos-cluster >/dev/null
-
       - name: "Guard: no template placeholder leak"
         run: bash scripts/check-no-placeholder-leak.sh
 
@@ -237,11 +234,23 @@ jobs:
       - name: "Guard self-test: Vault policy escalation guard bites"
         run: python3 scripts/check-vault-policy-no-escalation.selftest.py
 
+      - name: "Guard self-test: rendered inventory helper fails closed"
+        run: python3 scripts/rendered-inventory.selftest.py
+
+      - name: "Guard: Flux owner desired-build inventory is renderable"
+        run: python3 scripts/rendered-inventory.py --all-paths
+
       - name: "Guard: vault-config-operator bootstrap identity invariants"
         run: python3 scripts/check-vault-config-operator-bootstrap-invariants.py
 
       - name: "Guard self-test: bootstrap-invariant guard bites"
         run: python3 scripts/check-vault-config-operator-bootstrap-invariants.selftest.py
+
+      - name: "Guard: jwt-github foundation invariants"
+        run: python3 scripts/check-vault-jwt-github-invariants.py
+
+      - name: "Guard self-test: jwt-github foundation guard bites"
+        run: python3 scripts/check-vault-jwt-github-invariants.selftest.py
 
       - name: "Guard self-test: adoption-parity projections bite"
         run: python3 scripts/vault-config/verify-adoption-parity.selftest.py
@@ -251,6 +260,7 @@ jobs:
 
       - name: "Guard self-test: reference-safety guard bites"
         run: python3 scripts/check-vault-config-reference-safety.selftest.py
+
 
       - name: "Guard self-test: stuck-Terminating detector bites (S7 #133)"
         run: python3 scripts/check-vault-config-terminating.selftest.py

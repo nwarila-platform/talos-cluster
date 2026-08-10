@@ -1,4 +1,4 @@
-# Child Flux Kustomization for the source-token minter CronJob.
+# Child Flux Kustomization for the per-org source-token minter CronJobs.
 #
 # The child owns the source-rotator workload tree without taking a dependency on
 # Vault or VSO readiness; failed jobs remain explicit runtime signals.

@@ -391,6 +391,63 @@ def print_table(results: Sequence[CaseResult]) -> None:
             print(f"  actual: {result.actual}")
 
 
+def check_coverage_requires_a_real_row(renderer: Any) -> None:
+    """A guard with NO manifest row must fail — and a PROSE mention must not satisfy it.
+
+    The first version of this coverage check substring-searched the whole rendered
+    document, so a sentence merely naming a guard counted as coverage while a legitimate
+    "./check-x.py" row did not. These cases pin both directions.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_fixture(root, current_counts())
+        write_file(root, "scripts/check-unlisted.py", b"print('guard')\n")
+        try:
+            renderer.render_readme(root)
+        except renderer.RenderError as exc:
+            assert_contains(str(exc), "MISSING a row for: check-unlisted.py", "missing-row message")
+        else:
+            raise AssertionError("a guard with no manifest row was accepted")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_fixture(root, current_counts())
+        write_file(root, "scripts/check-unlisted.py", b"print('guard')\n")
+        readme = root / "scripts" / "README.md"
+        write_text(root, "scripts/README.md", readme.read_text() + "\nSee `check-unlisted.py` for details.\n")
+        try:
+            renderer.render_readme(root)
+        except renderer.RenderError as exc:
+            assert_contains(str(exc), "check-unlisted.py", "prose mention must not count as a row")
+        else:
+            raise AssertionError("a prose mention was accepted as manifest coverage")
+
+
+def check_coverage_accepts_path_prefixed_rows(renderer: Any) -> None:
+    """A row citing "./check-x.py" or a nested path is real coverage (basename identity)."""
+    for display in ("./check-pathy.py", "sub/dir/check-pathy.py"):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_fixture(root, current_counts())
+            write_file(root, "scripts/check-pathy.py", b"print('guard')\n")
+            readme = (root / "scripts" / "README.md").read_text()
+            row = f"| `{display}` (1) | fixture | none | KEEP |\n"
+            write_text(root, "scripts/README.md", readme + row)
+            renderer.render_readme(root)  # must not raise
+
+
+def check_coverage_ignores_selftests(renderer: Any) -> None:
+    """A guard's .selftest.py needs no row of its own."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_fixture(root, current_counts())
+        write_file(root, "scripts/check-covered.py", b"print('g')\n")
+        write_file(root, "scripts/check-covered.selftest.py", b"print('s')\n")
+        readme = (root / "scripts" / "README.md").read_text()
+        write_text(root, "scripts/README.md", readme + "| `check-covered.py` (1) | fixture | none | KEEP |\n")
+        renderer.render_readme(root)  # must not raise
+
+
 def main() -> int:
     try:
         renderer = load_renderer_module()
@@ -408,6 +465,9 @@ def main() -> int:
         ("unbalanced fence exits 2", lambda: check_unbalanced_fence_exits_2(renderer)),
         ("partial reformat exits 2", lambda: check_partial_reformat_exits_2(renderer)),
         ("resolution error exits", lambda: check_resolution_errors(renderer)),
+        ("coverage requires a real row", lambda: check_coverage_requires_a_real_row(renderer)),
+        ("coverage accepts path-prefixed rows", lambda: check_coverage_accepts_path_prefixed_rows(renderer)),
+        ("coverage ignores selftests", lambda: check_coverage_ignores_selftests(renderer)),
     )
     results = [run_case(name, func) for name, func in checks]
 
