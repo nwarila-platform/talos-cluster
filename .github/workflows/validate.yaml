@@ -237,6 +237,9 @@ jobs:
       - name: "Guard self-test: rendered inventory helper fails closed"
         run: python3 scripts/rendered-inventory.selftest.py
 
+      - name: "Guard self-test: review-evidence builder fails closed"
+        run: python3 scripts/build-review-evidence.selftest.py
+
       - name: "Guard: Flux owner desired-build inventory is renderable"
         run: python3 scripts/rendered-inventory.py --all-paths
 

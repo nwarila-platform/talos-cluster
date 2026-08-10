@@ -97,6 +97,31 @@ single source) so the guards evaporate, or failing that collapse 3→1 parameter
 | `render-scripts-readme-counts.py` (192) | scripts/README line-count cells derived with `wc -l` semantics; `--check` fails if stale | none; generation removes the hand-maintained count drift class | **KEEP** |
 | `check-doc-links.py` (187) | No broken *relative* markdown links | `lychee --offline` / markdown-link-check do exactly this → **FULLY** | **CONSOLIDATE** — replace with `lychee --offline` (a pinned binary like actionlint) |
 
+## Local review tooling (not a CI gate)
+
+The generator below runs locally; its companion `build-review-evidence.selftest.py` is a CI gate.
+
+| Script (lines) | Protects | Native alternative | Verdict |
+|---|---|---|---|
+| `build-review-evidence.py` (1131) | Commit-bound review evidence: materializes the target SHA, runs only the read-only guard-family gates admitted by a closed whole-argv grammar, and records every skipped run-step with its reason. Coverage is deliberately partial; the artifact's `coverage_limits` records its current limits | GitHub Actions remains the authoritative full runner; this does not reproduce ineligible CI setup → **PARTIAL** | **KEEP** — replaces hand-assembled evidence without overstating coverage. **Not a sandbox:** selected scripts and transitive commands require effect audit, and the controller must have no ambient live-state capability |
+
+**Declared supported-syntax limitation.** `build-review-evidence.py` deliberately narrows the
+workflow syntax it accepts. It refuses aliases and merge keys. In workflow-, job-, and
+step-mapping keys and in `run` bodies, it treats every quoted scalar, block scalar,
+explicitly-tagged scalar, scalar-anchored value, and multi-line plain scalar as ineligible;
+only plain, unanchored, implicitly tagged scalars on one physical source line can be eligible.
+[GitHub Actions has officially supported YAML anchors and aliases since 2025-09-18][actions-anchors],
+so a valid future workflow can make this local tool refuse. Whether Actions accepts the merge
+key `<<` is **UNVERIFIED**.
+
+The current base workflow contains no aliases or merge keys. All bodies in its executable subset
+and all relevant mapping keys use accepted presentations; its existing block-scalar script steps
+remain outside that subset. The artifact's `coverage_limits` records the current coverage figures.
+The builder is local review tooling, not a CI gate; only its self-test runs in `validate.yaml`.
+Mapping-level anchors remain allowed.
+
+[actions-anchors]: https://github.blog/changelog/2025-09-18-actions-yaml-anchors-and-non-public-workflow-templates/
+
 ## Operational / lifecycle (thin `talosctl`/`aws`/Factory wrappers — zero-manual)
 
 | Script (lines) | Does | Native alternative | Verdict |

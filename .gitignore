@@ -333,6 +333,8 @@
 !/scripts/apply.sh
 !/scripts/bootstrap.sh
 !/scripts/build-maintenance-iso.sh
+!/scripts/build-review-evidence.py
+!/scripts/build-review-evidence.selftest.py
 !/scripts/check-image-digest-sync.py
 !/scripts/check-image-digest-sync.selftest.py
 !/scripts/check-image-signature-enforcement.py
