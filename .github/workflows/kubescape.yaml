@@ -134,8 +134,8 @@ jobs:
       - name: Install kubectl (pinned + checksum-verified)
         run: |
           set -euo pipefail
-          KUBECTL_VERSION="v1.36.2"
-          KUBECTL_SHA256="1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+          KUBECTL_VERSION="v1.36.3"
+          KUBECTL_SHA256="ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336"
           bin="${RUNNER_TEMP}/kubectl"
           curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${bin}" \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"

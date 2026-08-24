@@ -128,7 +128,7 @@ jobs:
           set -euo pipefail
           KUBERNETES_VERSION=$(grep '^KUBERNETES_VERSION=' cluster/config.env | cut -d'"' -f2)
           [ -n "${KUBERNETES_VERSION}" ] || { echo "KUBERNETES_VERSION missing from cluster/config.env"; exit 1; }
-          KUBECTL_SHA256="1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+          KUBECTL_SHA256="ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336"
           url="https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
           curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o kubectl "${url}"
           echo "${KUBECTL_SHA256}  kubectl" | sha256sum -c -
