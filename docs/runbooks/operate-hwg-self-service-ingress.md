@@ -69,9 +69,7 @@ expansion, and `--overwrite-dns` is mandatory because the wildcard A record
 already exists:
 
 ```bash
-cloudflared tunnel route dns --overwrite-dns \
-  81379ca9-d323-4e95-8f7b-11f8937956e2 \
-  '*.theherowarsguys.com'
+cloudflared tunnel route dns --overwrite-dns 81379ca9-d323-4e95-8f7b-11f8937956e2 '*.theherowarsguys.com'
 ```
 
 This changes only the wildcard owner name. The exact `canary-hwg` and `hello`
