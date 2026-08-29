@@ -1,0 +1,19 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Value
+metadata:
+  name: restrict-tunnel-hostnames-values
+namespaces:
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: hwg-1268831311
+      labels:
+        nwarila.io/tenant: "true"
+        nwarila.io/org: the-hero-wars-guys
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: nwp-1306985678
+      labels:
+        nwarila.io/tenant: "true"
+        nwarila.io/org: nwarila-platform

@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tls
+  namespace: hwg-1268831311
+spec:
+  ingressClassName: cf-tunnel-hwg
+  tls: []
+  rules:
+    - host: tls.theherowarsguys.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  number: 8080

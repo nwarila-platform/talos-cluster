@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wrong-class
+  namespace: hwg-1268831311
+spec:
+  ingressClassName: cf-tunnel-nwp
+  defaultBackend:
+    resource:
+      apiGroup: example.com
+      kind: InvalidForTunnel
+      name: invalid
