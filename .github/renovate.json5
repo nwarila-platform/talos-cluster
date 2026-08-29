@@ -64,6 +64,9 @@
       "/^clusters/talos-cluster/apps/.+\\.ya?ml$/",
     ],
   },
+  kubernetes: {
+    managerFilePatterns: ["/^clusters/talos-cluster/apps/cloudflared-hwg/deployment\\.ya?ml$/"],
+  },
   packageRules: [
     {
       matchManagers: ["github-actions"],

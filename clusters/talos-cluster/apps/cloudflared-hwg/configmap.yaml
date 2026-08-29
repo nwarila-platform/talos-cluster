@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflared-hwg
+data:
+  config.yaml: |
+    tunnel: 81379ca9-d323-4e95-8f7b-11f8937956e2
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    ingress:
+      - hostname: canary-hwg.theherowarsguys.com
+        service: http_status:418
+      - service: http_status:404
