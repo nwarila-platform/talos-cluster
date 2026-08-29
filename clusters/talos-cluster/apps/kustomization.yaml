@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
   - actions-runner-controller
   - cert-manager
+  - cloudflared-hwg
   - cilium
   - dr-backup
   - dr-etcd-backup
