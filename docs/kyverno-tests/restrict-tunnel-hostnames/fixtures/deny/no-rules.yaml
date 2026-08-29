@@ -1,0 +1,7 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: no-rules
+  namespace: hwg-1268831311
+spec:
+  ingressClassName: cf-tunnel-hwg

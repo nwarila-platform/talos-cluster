@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        config-revision: hello-hwg-v1
+        config-revision: cft3a-mvp-v1
       labels:
         app.kubernetes.io/name: cloudflared
         app.kubernetes.io/instance: hwg

@@ -32,6 +32,12 @@ Runbooks are composite operational how-to documents under ADR-0002.
 - [Onboard A New Organization](runbooks/onboard-organization.md) - adds a GitHub
   org to the per-org source-token minting chain, including the four steps that
   fail silently if skipped.
+- [Operate HWG Self-Service Ingress](runbooks/operate-hwg-self-service-ingress.md) -
+  performs the one-time wildcard cutover and verifies autonomous app publishing
+  without regressing the canary or static hello route.
+- [Rotate HWG Tenant Secrets](runbooks/rotate-hwg-tenant-secrets.md) - rotates the
+  two tenant Secrets visible to the hwg Traefik informer and verifies refresh
+  without printing credential material.
 - [Reprovision A SecureBoot+TPM Talos Node](runbooks/reprovision-secureboot-node.md) -
   reprovisions one Talos node with SecureBoot and TPM-backed disk encryption.
 - [Backup And DR Restore Drill](runbooks/restore-drill-backup-dr.md) - proves
@@ -53,6 +59,9 @@ Runbooks are composite operational how-to documents under ADR-0002.
 - [Offline validation - protect-dr-validate-boundary](kyverno-tests/protect-dr-validate-boundary/README.md) -
   documents the local Kyverno CLI validation suite and expected pass/fail
   fixture behavior.
+- [Offline validation - restrict-tunnel-hostnames](kyverno-tests/restrict-tunnel-hostnames/README.md) -
+  exercises the hwg hostname and numeric-TCP-8080 Service-backend admission
+  contract, including cft2 precondition pass-through cases.
 - [Technical Debt Register](tech-debt.md) - tracks deliberately deferred gaps,
   including the strict Diataxis quadrant-directory layout deferral in TD-0003.
 - [First-party container inventory](container-inventory.md) - the canonical list

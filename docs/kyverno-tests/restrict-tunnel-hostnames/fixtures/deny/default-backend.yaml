@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: default-backend
+  namespace: hwg-1268831311
+spec:
+  ingressClassName: cf-tunnel-hwg
+  defaultBackend:
+    service:
+      name: catch-all
+      port:
+        number: 8080
+  rules:
+    - host: app.theherowarsguys.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  number: 8080

@@ -1,0 +1,8 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: missing-class
+  namespace: hwg-1268831311
+spec:
+  rules:
+    - host: outside.example.com

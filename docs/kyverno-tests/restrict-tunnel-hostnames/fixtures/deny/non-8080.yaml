@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: non-8080
+  namespace: hwg-1268831311
+spec:
+  ingressClassName: cf-tunnel-hwg
+  rules:
+    - host: wrong-port.theherowarsguys.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  number: 80

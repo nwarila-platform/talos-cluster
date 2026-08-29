@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: numeric-8080
+  namespace: hwg-1268831311
+  annotations:
+    example.com/benign: "true"
+spec:
+  ingressClassName: cf-tunnel-hwg
+  rules:
+    - host: freshly-invented.theherowarsguys.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: second-app
+                port:
+                  number: 8080

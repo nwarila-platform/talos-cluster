@@ -1,0 +1,99 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-tunnel-hostnames
+  annotations:
+    policies.kyverno.io/title: Restrict Tunnel Hostnames
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Ingress
+    policies.kyverno.io/description: >-
+      Constrains hwg tunnel Ingress hostnames and enforces the TCP 8080
+      Service-backend contract used by the opt-in network policies.
+spec:
+  validationActions: [Deny]
+  failurePolicy: Fail
+  evaluation:
+    background:
+      enabled: false
+  webhookConfiguration:
+    timeoutSeconds: 5
+  matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        nwarila.io/tenant: "true"
+    resourceRules:
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [ingresses]
+  variables:
+    # Admission webhooks have no ordering guarantee. Apply these checks only
+    # after cft2's org, legacy-annotation, and class preconditions all pass.
+    - name: applies
+      expression: >-
+        namespaceObject != null && has(namespaceObject.metadata.labels) &&
+        'nwarila.io/org' in namespaceObject.metadata.labels &&
+        namespaceObject.metadata.labels['nwarila.io/org'] == 'the-hero-wars-guys' &&
+        (!has(object.metadata.annotations) ||
+        !('kubernetes.io/ingress.class' in object.metadata.annotations)) &&
+        has(object.spec.ingressClassName) &&
+        object.spec.ingressClassName == 'cf-tunnel-hwg'
+  validations:
+    - expression: >-
+        !variables.applies ||
+        (has(object.spec.rules) && size(object.spec.rules) > 0)
+      message: tunnel Ingress must declare at least one rule
+    - expression: >-
+        !variables.applies || !has(object.spec.defaultBackend)
+      message: tunnel Ingress must not declare spec.defaultBackend
+    - expression: >-
+        !variables.applies || !has(object.spec.rules) ||
+        object.spec.rules.all(rule, has(rule.host) && rule.host != '')
+      message: every tunnel Ingress rule must declare a host
+    - expression: >-
+        !variables.applies || !has(object.spec.rules) ||
+        object.spec.rules.all(rule,
+          !has(rule.host) || rule.host == 'theherowarsguys.com' ||
+          (rule.host.endsWith('.theherowarsguys.com') &&
+          size(rule.host) > size('.theherowarsguys.com')))
+      message: tunnel Ingress hosts must be inside theherowarsguys.com
+    - expression: >-
+        !variables.applies || !has(object.spec.rules) ||
+        object.spec.rules.all(rule,
+          !has(rule.host) || rule.host != 'theherowarsguys.com')
+      message: the bare theherowarsguys.com apex is reserved
+    - expression: >-
+        !variables.applies || !has(object.spec.rules) ||
+        object.spec.rules.all(rule,
+          !has(rule.host) || !rule.host.contains('*'))
+      message: wildcard tunnel Ingress hosts are not permitted
+    - expression: >-
+        !variables.applies || !has(object.spec.rules) ||
+        object.spec.rules.all(rule,
+          !has(rule.host) || rule.host != 'canary-hwg.theherowarsguys.com')
+      message: canary-hwg.theherowarsguys.com is reserved
+    - expression: >-
+        !variables.applies || !has(object.spec.tls)
+      message: tunnel Ingress must not declare spec.tls
+    - expression: >-
+        !variables.applies || !has(object.metadata.annotations) ||
+        object.metadata.annotations.all(key,
+          !key.startsWith('traefik.ingress.kubernetes.io/') &&
+          !key.startsWith('traefik.io/'))
+      message: Traefik provider annotations are not permitted
+    - expression: >-
+        !variables.applies || !has(object.spec.rules) ||
+        object.spec.rules.all(rule,
+          has(rule.http) && has(rule.http.paths) && size(rule.http.paths) > 0)
+      message: every tunnel Ingress rule must declare at least one HTTP path
+    - expression: >-
+        !variables.applies || !has(object.spec.rules) ||
+        object.spec.rules.all(rule,
+          !has(rule.http) || !has(rule.http.paths) ||
+          rule.http.paths.all(path,
+            has(path.backend.service) &&
+            has(path.backend.service.port.number) &&
+            path.backend.service.port.number == 8080))
+      message: every tunnel Ingress backend must be a Service on numeric port 8080

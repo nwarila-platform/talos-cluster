@@ -8,6 +8,7 @@ resources:
   - networkpolicy-allow-dns.yaml
   - networkpolicy-allow-dns-visibility.yaml
   - networkpolicy-allow-vault-egress.yaml
+  - ciliumnetworkpolicy-allow-tunnel-proxy.yaml
   - deploy-reconciler-rbac.yaml
   - gitrepository.yaml
   - kustomization-flux.yaml

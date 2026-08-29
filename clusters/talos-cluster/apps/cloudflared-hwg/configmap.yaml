@@ -14,4 +14,6 @@ data:
         service: http_status:418
       - hostname: hello.theherowarsguys.com
         service: http://hello-hwg.hello-hwg.svc:8080
+      - hostname: '*.theherowarsguys.com'
+        service: http://traefik-hwg.traefik-hwg.svc:80
       - service: http_status:404

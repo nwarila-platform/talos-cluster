@@ -1,0 +1,19 @@
+# Every generated tenant inherits this opt-in target-side contract. Only pods
+# carrying the publication label are reachable, and only on the contract port.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-tunnel-proxy
+spec:
+  endpointSelector:
+    matchLabels:
+      nwarila.io/tunnel-exposed: "true"
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": traefik-hwg
+            "k8s:nwarila.io/tunnel-proxy": hwg
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
