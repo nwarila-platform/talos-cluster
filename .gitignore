@@ -196,6 +196,7 @@
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures-enforced.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/ivp-verify-first-party.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/restrict-tunnel-binding.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
 !/clusters/talos-cluster/apps/kyverno/release/helmrepository.yaml
@@ -436,6 +437,7 @@
 !/docs/runbooks/onboard-organization.md
 !/docs/runbooks/reprovision-secureboot-node.md
 !/docs/runbooks/restore-drill-backup-dr.md
+!/docs/runbooks/recover-tunnel-binding-admission.md
 !/docs/decision-records/
 !/docs/decision-records/README.md
 !/docs/decision-records/org/

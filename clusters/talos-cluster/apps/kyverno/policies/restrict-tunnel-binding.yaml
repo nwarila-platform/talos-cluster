@@ -1,0 +1,78 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-tunnel-binding
+  annotations:
+    policies.kyverno.io/title: Restrict Tunnel Binding
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Ingress,IngressClass
+    policies.kyverno.io/description: >-
+      Restricts tenant Ingresses to the tunnel ingress class registered for
+      their organization and prevents tunnel classes from becoming defaults.
+spec:
+  validationActions: [Deny]
+  failurePolicy: Fail
+  evaluation:
+    background:
+      enabled: false
+  webhookConfiguration:
+    timeoutSeconds: 5
+  matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        nwarila.io/tenant: "true"
+    resourceRules:
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [ingresses]
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [UPDATE]
+        resources: [ingresses/status]
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [ingressclasses]
+  variables:
+    - name: org
+      expression: >-
+        namespaceObject != null && has(namespaceObject.metadata.labels) &&
+        'nwarila.io/org' in namespaceObject.metadata.labels
+          ? namespaceObject.metadata.labels['nwarila.io/org']
+          : ''
+    - name: permittedClass
+      expression: >-
+        variables.org == 'the-hero-wars-guys' ? 'cf-tunnel-hwg' :
+        variables.org == 'nwarila-platform' ? 'cf-tunnel-nwp' : ''
+  validations:
+    - expression: >-
+        request.resource.resource != 'ingresses' ||
+        request.?subResource.orValue('') == 'status' ||
+        variables.permittedClass != ''
+      message: namespace has no registered tunnel binding
+    - expression: >-
+        request.resource.resource != 'ingresses' ||
+        !has(object.metadata.annotations) ||
+        !('kubernetes.io/ingress.class' in object.metadata.annotations)
+      message: the deprecated ingress-class annotation is not permitted
+    - expression: >-
+        request.resource.resource != 'ingresses' ||
+        request.?subResource.orValue('') == 'status' ||
+        variables.permittedClass == '' ||
+        (has(object.spec.ingressClassName) &&
+        object.spec.ingressClassName == variables.permittedClass)
+      message: tenant Ingress must use its registered tunnel ingress class
+      messageExpression: >-
+        'namespace ' + object.metadata.namespace + ' permits only ingress class ' +
+        variables.permittedClass + '; requested ' +
+        (has(object.spec.ingressClassName) ? object.spec.ingressClassName : '<absent>')
+    - expression: >-
+        request.resource.resource != 'ingressclasses' ||
+        !object.metadata.name.startsWith('cf-tunnel-') ||
+        !has(object.metadata.annotations) ||
+        !('ingressclass.kubernetes.io/is-default-class' in object.metadata.annotations) ||
+        object.metadata.annotations['ingressclass.kubernetes.io/is-default-class'] != 'true'
+      message: cf-tunnel-* IngressClasses must not be marked as default
