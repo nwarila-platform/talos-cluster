@@ -141,6 +141,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-yaml
 
+      - name: "Guard + CREATE-only Kyverno fixtures: tunnel binding"
+        run: bash docs/kyverno-tests/restrict-tunnel-binding/validate.sh
+
       - name: "Guard: per-node Talos patches match config.env + systems"
         run: python3 scripts/check-node-patch-consistency.py
 
@@ -299,6 +302,7 @@ jobs:
               "Namespace",
               "PriorityClass",
               "StorageClass",
+              "ValidatingPolicy",
               "ValidatingAdmissionPolicy",
               "ValidatingAdmissionPolicyBinding",
               "ValidatingWebhookConfiguration",

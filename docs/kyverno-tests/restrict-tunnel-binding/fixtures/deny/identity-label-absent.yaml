@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: identity-label-absent
+  namespace: deploy-vault
+spec:
+  ingressClassName: cf-tunnel-hwg
+  defaultBackend:
+    service:
+      name: probe
+      port:
+        number: 80
