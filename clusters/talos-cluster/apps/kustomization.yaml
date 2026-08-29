@@ -10,6 +10,7 @@ resources:
   - dr-backup
   - dr-etcd-backup
   - gateway-api
+  - hello-hwg
   - kubelet-csr-approver
   - kyverno
   - longhorn

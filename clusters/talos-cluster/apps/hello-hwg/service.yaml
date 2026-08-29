@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-hwg
+  namespace: hello-hwg
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hello-hwg
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

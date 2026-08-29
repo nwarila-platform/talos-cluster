@@ -32,3 +32,11 @@ spec:
               protocol: TCP
             - port: "7844"
               protocol: UDP
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": hello-hwg
+            "k8s:app.kubernetes.io/name": hello-hwg
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
