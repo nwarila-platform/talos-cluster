@@ -40,3 +40,11 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": traefik-hwg
+            "k8s:nwarila.io/tunnel-proxy": hwg
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP

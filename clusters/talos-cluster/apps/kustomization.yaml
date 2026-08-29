@@ -19,6 +19,7 @@ resources:
   - metrics-server
   - namespace-hardening
   - kustomization-source-rotator.yaml
+  - kustomization-traefik-hwg.yaml
   - talos-drift
   - vault-auth
   - vault-aws-access

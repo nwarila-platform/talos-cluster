@@ -152,6 +152,16 @@
 !/clusters/talos-cluster/apps/cloudflared-hwg/ciliumnetworkpolicy.yaml
 !/clusters/talos-cluster/apps/cloudflared-hwg/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/apps/cloudflared-hwg/kustomization.yaml
+!/clusters/talos-cluster/apps/kustomization-traefik-hwg.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/
+!/clusters/talos-cluster/apps/traefik-hwg/namespace.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/helmrepository.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/helmrelease.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/ingressclass.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/rbac.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/ciliumnetworkpolicy.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/networkpolicy-default-deny.yaml
+!/clusters/talos-cluster/apps/traefik-hwg/kustomization.yaml
 !/clusters/talos-cluster/apps/hello-hwg/
 !/clusters/talos-cluster/apps/hello-hwg/namespace.yaml
 !/clusters/talos-cluster/apps/hello-hwg/deployment.yaml
@@ -204,6 +214,7 @@
 !/clusters/talos-cluster/apps/kyverno/policies/verify-image-signatures-enforced.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/ivp-verify-first-party.yaml
 !/clusters/talos-cluster/apps/kyverno/policies/restrict-tunnel-binding.yaml
+!/clusters/talos-cluster/apps/kyverno/policies/restrict-tunnel-hostnames.yaml
 !/clusters/talos-cluster/apps/kyverno/release/
 !/clusters/talos-cluster/apps/kyverno/release/helmrelease.yaml
 !/clusters/talos-cluster/apps/kyverno/release/helmrepository.yaml
@@ -445,6 +456,11 @@
 !/docs/runbooks/reprovision-secureboot-node.md
 !/docs/runbooks/restore-drill-backup-dr.md
 !/docs/runbooks/recover-tunnel-binding-admission.md
+!/docs/runbooks/operate-hwg-self-service-ingress.md
+!/docs/runbooks/rotate-hwg-tenant-secrets.md
+!/_handoff/
+!/_handoff/steps/
+!/_handoff/steps/cft3a-mvp-DONE.md
 !/docs/decision-records/
 !/docs/decision-records/README.md
 !/docs/decision-records/org/

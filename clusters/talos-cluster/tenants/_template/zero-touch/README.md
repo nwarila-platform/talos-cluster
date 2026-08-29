@@ -42,9 +42,17 @@ proof currently renders these envelope categories:
 - `vault-ca` ConfigMap
 - default-deny, DNS egress, and Vault egress NetworkPolicies, plus the
   `allow-dns-visibility` DNS-visibility CiliumNetworkPolicy
+- an opt-in CiliumNetworkPolicy that permits the hwg tunnel proxy to reach
+  pods labelled `nwarila.io/tunnel-exposed: "true"` on TCP 8080 only
 - GitRepository and Flux Kustomization for the deploy repo
 - VSO VaultStaticSecrets for `ghcr-pull` and `<tenant>-gitops-source-auth`
 
 The `vault-client: "true"` pod label used by the Vault egress policy is network
 plumbing only. Vault Kubernetes auth and Vault policies are the security
 boundary.
+
+For an already-onboarded hwg tenant, publishing an app requires only the pod
+label `nwarila.io/tunnel-exposed: "true"` and a `networking.k8s.io/v1` Ingress
+using class `cf-tunnel-hwg`, an in-zone host, at least one HTTP path, and a
+numeric Service backend port of 8080. The platform supplies both sides of the
+network-policy contract; the tenant must not add a platform-side route or CNP.

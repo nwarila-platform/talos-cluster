@@ -1,0 +1,36 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: traefik-hwg-network
+  namespace: traefik-hwg
+spec:
+  endpointSelector:
+    matchLabels:
+      nwarila.io/tunnel-proxy: hwg
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": cloudflared-hwg
+            "k8s:app.kubernetes.io/name": cloudflared
+            "k8s:app.kubernetes.io/instance": hwg
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+  egress:
+    # kubernetes.default.svc:443 is translated to the API server's 6443
+    # endpoint before Cilium enforces L4 policy.
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": hwg-1268831311
+            "k8s:nwarila.io/tunnel-exposed": "true"
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

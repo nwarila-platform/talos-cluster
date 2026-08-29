@@ -1,0 +1,112 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: traefik-hwg
+  namespace: traefik-hwg
+spec:
+  interval: 10m
+  releaseName: traefik-hwg
+  chart:
+    spec:
+      chart: traefik
+      version: "41.2.0"
+      sourceRef:
+        kind: HelmRepository
+        name: traefik
+      interval: 1h
+  upgrade:
+    remediation:
+      remediateLastFailure: false
+    cleanupOnFail: true
+  test:
+    enable: false
+  values:
+    fullnameOverride: traefik-hwg
+    versionOverride: v3.7.10
+    image:
+      registry: docker.io
+      repository: library/traefik
+      tag: v3.7.10@sha256:9c3b91d5fb7770853ca5c1124a23c34bf2d9b47ffaebeab2614cbaf410dcb2ac
+
+    deployment:
+      replicas: 2
+      podLabels:
+        nwarila.io/tunnel-proxy: hwg
+
+    # The chart defaults create a default class and broad RBAC. Both are
+    # replaced by the explicit, hwg-scoped resources in this directory.
+    ingressClass:
+      enabled: false
+    rbac:
+      enabled: false
+
+    # Kubernetes Ingress is the only enabled dynamic configuration provider.
+    # The explicit namespace list bounds informer-driven Secret exposure to hwg.
+    providers:
+      kubernetesCRD:
+        enabled: false
+      kubernetesIngress:
+        enabled: true
+        ingressClass: cf-tunnel-hwg
+        namespaces:
+          - hwg-1268831311
+        allowExternalNameServices: false
+        crossProviderNamespaces: []
+        publishedService:
+          enabled: false
+        strictPrefixMatching: true
+      kubernetesGateway:
+        enabled: false
+      file:
+        enabled: false
+      kubernetesIngressNGINX:
+        enabled: false
+      knative:
+        enabled: false
+
+    gateway:
+      enabled: false
+    gatewayClass:
+      enabled: false
+    hub:
+      enabled: false
+    api:
+      dashboard: false
+    global:
+      checkNewVersion: false
+      sendAnonymousUsage: false
+
+    # cloudflared uses Service port 80. Cilium evaluates the translated pod
+    # destination, so both sides of that policy pair intentionally use 8000.
+    ports:
+      web:
+        port: 8000
+        exposedPort: 80
+        expose:
+          default: true
+      websecure:
+        expose:
+          default: false
+    service:
+      spec:
+        type: ClusterIP
+
+    serviceAccount:
+      name: traefik-hwg
+    persistence:
+      enabled: false
+    hostNetwork: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            nwarila.io/tunnel-proxy: hwg
