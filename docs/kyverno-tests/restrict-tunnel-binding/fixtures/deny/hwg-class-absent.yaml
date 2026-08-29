@@ -1,0 +1,11 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hwg-class-absent
+  namespace: hwg-1268831311
+spec:
+  defaultBackend:
+    service:
+      name: probe
+      port:
+        number: 80

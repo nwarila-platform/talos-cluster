@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hwg-own
+  namespace: hwg-1268831311
+spec:
+  ingressClassName: cf-tunnel-hwg
+  defaultBackend:
+    service:
+      name: probe
+      port:
+        number: 80

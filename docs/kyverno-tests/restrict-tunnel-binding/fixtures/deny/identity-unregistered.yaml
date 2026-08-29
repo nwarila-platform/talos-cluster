@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: identity-unregistered
+  namespace: unregistered-tenant
+  annotations:
+    kubernetes.io/ingress.class: cf-tunnel-hwg
+spec:
+  defaultBackend:
+    service:
+      name: probe
+      port:
+        number: 80

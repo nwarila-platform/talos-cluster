@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloudflared-hwg-legacy
+  namespace: cloudflared-hwg
+  annotations:
+    kubernetes.io/ingress.class: arbitrary
+spec:
+  defaultBackend:
+    service:
+      name: probe
+      port:
+        number: 80

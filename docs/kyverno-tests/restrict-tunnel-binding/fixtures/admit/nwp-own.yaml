@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nwp-own
+  namespace: nwp-1306985678
+spec:
+  ingressClassName: cf-tunnel-nwp
+  defaultBackend:
+    service:
+      name: probe
+      port:
+        number: 80
