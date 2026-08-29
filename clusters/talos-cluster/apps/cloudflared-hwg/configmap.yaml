@@ -12,4 +12,6 @@ data:
     ingress:
       - hostname: canary-hwg.theherowarsguys.com
         service: http_status:418
+      - hostname: hello.theherowarsguys.com
+        service: http://hello-hwg.hello-hwg.svc:8080
       - service: http_status:404

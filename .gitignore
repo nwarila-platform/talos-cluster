@@ -152,6 +152,13 @@
 !/clusters/talos-cluster/apps/cloudflared-hwg/ciliumnetworkpolicy.yaml
 !/clusters/talos-cluster/apps/cloudflared-hwg/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/apps/cloudflared-hwg/kustomization.yaml
+!/clusters/talos-cluster/apps/hello-hwg/
+!/clusters/talos-cluster/apps/hello-hwg/namespace.yaml
+!/clusters/talos-cluster/apps/hello-hwg/deployment.yaml
+!/clusters/talos-cluster/apps/hello-hwg/service.yaml
+!/clusters/talos-cluster/apps/hello-hwg/networkpolicy-default-deny.yaml
+!/clusters/talos-cluster/apps/hello-hwg/ciliumnetworkpolicy.yaml
+!/clusters/talos-cluster/apps/hello-hwg/kustomization.yaml
 !/clusters/talos-cluster/apps/kustomization-source-rotator.yaml
 !/clusters/talos-cluster/apps/kustomization-vault-config-managed.yaml
 !/clusters/talos-cluster/apps/source-rotator/
