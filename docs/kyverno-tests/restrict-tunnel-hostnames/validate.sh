@@ -8,7 +8,7 @@ VALUES="${TEST_DIR}/fixtures/values.yaml"
 KYVERNO_VERSION="v1.18.2"
 KYVERNO_SHA256="cb2feb8356149fd2fe774c894ccf0969f4a60a83867dd913af724f74ffbbc18b"
 
-for command_name in curl python3 rg sha256sum tar; do
+for command_name in curl python3 sha256sum tar; do
   command -v "${command_name}" >/dev/null || {
     echo "ERROR: required command not found: ${command_name}" >&2
     exit 2
@@ -89,7 +89,7 @@ tar -xzf "${KYVERNO_ARCHIVE}" -C "${RUNNER_TMP}" kyverno
 chmod +x "${RUNNER_TMP}/kyverno"
 KYVERNO="${RUNNER_TMP}/kyverno"
 
-"${KYVERNO}" version | rg -Fx "Version: ${KYVERNO_VERSION#v}" >/dev/null || {
+"${KYVERNO}" version | grep -Fxq "Version: ${KYVERNO_VERSION#v}" >/dev/null || {
   echo "ERROR: downloaded Kyverno CLI did not report ${KYVERNO_VERSION}" >&2
   exit 2
 }
