@@ -27,6 +27,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0019 | Vault guards 2 and 3 retain authored-file-derived assertions | Open | **High** |
 | TD-0020 | Render-anchored Vault guards are not runnable offline | Open | Low |
 | TD-0021 | Vault guard 1 CNP assertion does not consume owning Flux transforms | Open | **High** |
+| TD-0022 | PF-5: cft3a-MVP ingress hardening and proof backlog | Open | **High** |
 
 ---
 
@@ -1196,6 +1197,47 @@ explicitly about source content.
 - `clusters/talos-cluster/apps/vault/base/ciliumnetworkpolicy-egress-github-oidc.yaml`
 - `clusters/talos-cluster/apps/vault-kustomization.yaml`
 - `clusters/talos-cluster/kustomization.yaml`
+
+---
+
+## TD-0022 — PF-5: cft3a-MVP ingress hardening and proof backlog
+
+**Opened:** 2026-08-29 · **Status:** Open · **Priority:** High
+
+### Gap
+
+The cft3a-MVP deliberately ships the correctness and breakage controls needed
+for autonomous hwg app publishing today, while deferring the full rev.c proof
+and resilience burden. PF-5 comprises exactly these remaining items:
+
+- an exhaustive negative-fixture matrix beyond the MVP core set;
+- behavioral proof that the hwg Traefik ignores a valid cross-class object;
+- a cross-org dataplane negative beyond the MVP RBAC-negative checks;
+- a named workflow-health evaluator that accepts only the known
+  `org-adr-auto-sync.yaml` terminal signature;
+- a PodDisruptionBudget and hard cross-node spread for Traefik, replacing the
+  MVP's two replicas with soft spread; and
+- PF-4 hostname-conflict enforcement, already deferred by owner ruling.
+
+### Impact
+
+The MVP enforces org/class admission, hostname shape, numeric TCP 8080 Service
+backends, exact proxy network identities, and scoped informer RBAC. The deferred
+items leave proof depth, disruption resilience, and duplicate-host ownership
+below the full rev.c target. In particular, admission of two otherwise-valid
+Ingresses claiming the same hostname remains possible until PF-4 is designed.
+
+### Closure criteria
+
+Close only when every listed item is implemented and its live or offline proof
+is recorded. Do not close PF-5 merely because the autonomous public request
+succeeds; that is the MVP gate, not the hardening target.
+
+### References
+
+- `_handoff/steps/cft3a-mvp-DONE.md`
+- `docs/runbooks/operate-hwg-self-service-ingress.md`
+- `docs/kyverno-tests/restrict-tunnel-hostnames/README.md`
 
 ---
 
