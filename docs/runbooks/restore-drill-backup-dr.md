@@ -246,7 +246,7 @@ Production restore is not a normal drill:
 Once capture automation exists, alert on:
 
 - newest Vault Raft snapshot older than 90 minutes
-- newest etcd snapshot older than 8 hours
+- newest etcd snapshot older than 26 hours
 - any failed snapshot upload or checksum mismatch
 - Stage-1 server disk, scrub, capacity, TLS certificate, or service-health
   failures

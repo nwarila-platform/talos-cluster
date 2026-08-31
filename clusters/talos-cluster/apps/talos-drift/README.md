@@ -2,7 +2,9 @@
 
 This app runs an hourly in-cluster CronJob with a static Talos `os:reader`
 talosconfig and a Kubernetes ServiceAccount that can only read the cluster
-version/node/Flux health signals plus create namespace-local warning Events.
+version/node/Flux health signals, get the exact
+`dr-etcd-backup/etcd-snapshot` CronJob, and create namespace-local warning
+Events.
 
 The checker covers:
 
@@ -14,6 +16,14 @@ The checker covers:
   Kubernetes Node status.
 - Flux `Kustomization` and `HelmRelease` Ready status, suspension, stalled
   conditions, and drift-related status messages.
+- The etcd snapshot CronJob's `status.lastSuccessfulTime`, failing closed with
+  a distinct `EtcdSnapshotStale` Event when it is absent, malformed,
+  future-dated, unreadable, or older than 26 hours.
+
+The freshness check observes a successful Job exit, not the snapshot artifact.
+It cannot prove that the PVC contains a decryptable snapshot. Warning Events
+and a failed guard Job are detection signals only; no external paging sink is
+configured.
 
 It does not cover Talos machine config drift. Talos `machineconfig` contains
 secrets and is admin-only, so a credential that can read it is not a strict

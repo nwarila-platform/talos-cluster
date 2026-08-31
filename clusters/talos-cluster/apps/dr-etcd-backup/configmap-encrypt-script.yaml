@@ -22,6 +22,8 @@ data:
 
     SNAP=/work/etcd.db
     MIN_BYTES=10000000
+    SOPS_ENVELOPE_BYTES=1009
+    FREE_SPACE_MARGIN_BYTES=134217728
 
     [ -s "$SNAP" ] || { echo "FATAL: $SNAP missing or empty" >&2; exit 1; }
     SIZE=$(stat -c%s "$SNAP")
@@ -32,16 +34,98 @@ data:
 
     STAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
     OUT="/data/etcd-$STAMP.db.sops.json"
-    sops --encrypt --age "$AGE_RECIPIENT" \
-      --input-type binary --output-type json "$SNAP" > "$OUT.partial"
-    mv "$OUT.partial" "$OUT"
-    echo "encrypted: $SIZE bytes -> $OUT ($(stat -c%s "$OUT") bytes)"
+    TMP="$OUT.$$.partial"
+
+    cleanup() {
+      rm -f -- "$TMP"
+    }
+    trap cleanup EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    # concurrencyPolicy does not cover Jobs created manually from the CronJob.
+    # Locking the mounted directory allocates no lock artifact on a full volume.
+    exec 9</data
+    flock -n 9 || { echo "FATAL: another backup run holds /data" >&2; exit 1; }
+
+    [ ! -e "$OUT" ] || {
+      echo "FATAL: refusing to overwrite existing finalized snapshot: $OUT" >&2
+      exit 1
+    }
+
+    # Under the directory lock, no cooperating producer can own a partial.
+    # Partials are never finalized backups and never count toward retention.
+    for partial in /data/*.partial; do
+      [ -f "$partial" ] || continue
+      partial_size=$(stat -c%s -- "$partial")
+      echo "removing partial: $partial ($partial_size bytes)"
+      rm -- "$partial"
+    done
+
+    available_bytes() {
+      df_output=$(df -Pk /data) || return 1
+      available_kib=$(printf '%s\n' "$df_output" | awk 'NR == 2 { print $4 }')
+      case "$available_kib" in
+        ''|*[!0-9]*) return 1 ;;
+      esac
+      printf '%s\n' "$((available_kib * 1024))"
+    }
+
+    PROJECTED_BYTES=$(( ((SIZE + 2) / 3) * 4 + SOPS_ENVELOPE_BYTES ))
+    REQUIRED_BYTES=$((PROJECTED_BYTES + FREE_SPACE_MARGIN_BYTES))
+    if ! AVAILABLE_BYTES=$(available_bytes); then
+      echo "FATAL: could not measure available bytes on /data" >&2
+      exit 1
+    fi
+    echo "capacity preflight: raw=$SIZE projected_sops=$PROJECTED_BYTES margin=$FREE_SPACE_MARGIN_BYTES required=$REQUIRED_BYTES available=$AVAILABLE_BYTES bytes"
+    if [ "$AVAILABLE_BYTES" -lt "$REQUIRED_BYTES" ]; then
+      echo "FATAL: insufficient free space on /data: available $AVAILABLE_BYTES bytes; require $REQUIRED_BYTES bytes (projected SOPS $PROJECTED_BYTES + margin $FREE_SPACE_MARGIN_BYTES)" >&2
+      exit 1
+    fi
+
+    if ! sops --encrypt --age "$AGE_RECIPIENT" \
+      --input-type binary --output-type json "$SNAP" > "$TMP"; then
+      echo "FATAL: sops encryption failed for $SNAP" >&2
+      exit 1
+    fi
+    TMP_SIZE=$(stat -c%s -- "$TMP")
+    if [ "$TMP_SIZE" -lt "$SIZE" ]; then
+      echo "FATAL: encrypted output is implausibly small: $TMP_SIZE bytes for a $SIZE-byte snapshot" >&2
+      exit 1
+    fi
+
+    [ ! -e "$OUT" ] || {
+      echo "FATAL: refusing to overwrite existing finalized snapshot: $OUT" >&2
+      exit 1
+    }
+    mv -n -- "$TMP" "$OUT"
+    [ ! -e "$TMP" ] || {
+      echo "FATAL: refusing to overwrite existing finalized snapshot: $OUT" >&2
+      exit 1
+    }
+    OUT_SIZE=$(stat -c%s -- "$OUT")
+    echo "encrypted: $SIZE bytes -> $OUT ($OUT_SIZE bytes)"
+
+    if ! PRE_PRUNE_FREE_BYTES=$(available_bytes); then
+      echo "FATAL: could not measure pre-prune available bytes on /data" >&2
+      exit 1
+    fi
+    echo "pre-prune free bytes: $PRE_PRUNE_FREE_BYTES"
 
     # Local retention: newest 14 dailies. The Longhorn RecurringJob keeps its
     # own 14 volume backups on the Synology; this only bounds the live volume.
-    ls -1 /data/etcd-*.db.sops.json | sort | head -n -14 | while read -r old; do
+    find /data -maxdepth 1 -type f -name 'etcd-*.db.sops.json' -print | sort | head -n -14 | while IFS= read -r old; do
+      old_size=$(stat -c%s -- "$old")
+      echo "pruning final: $old ($old_size bytes)"
       rm -- "$old"
-      echo "pruned: $old"
     done
 
-    df -k /data | tail -1
+    FINAL_COUNT=$(find /data -maxdepth 1 -type f -name 'etcd-*.db.sops.json' -print | wc -l | tr -d ' ')
+    NEWEST_FINAL=$(find /data -maxdepth 1 -type f -name 'etcd-*.db.sops.json' -print | sort | tail -n 1)
+    if ! FINAL_FREE_BYTES=$(available_bytes); then
+      echo "FATAL: could not measure final available bytes on /data" >&2
+      exit 1
+    fi
+    echo "finalized snapshots: $FINAL_COUNT; free bytes: $FINAL_FREE_BYTES"
+    echo "newest finalized snapshot: $NEWEST_FINAL"

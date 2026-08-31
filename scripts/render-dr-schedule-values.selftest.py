@@ -72,7 +72,7 @@ def base_files(renderer: Any) -> dict[str, str]:
             "data:",
             "  encrypt.sh: |",
             "    #!/bin/sh",
-            "    ls -1 /data/etcd-*.db.sops.json | sort | head -n -21 | while read -r old; do",
+            "    find /data -maxdepth 1 -type f -name 'etcd-*.db.sops.json' -print | sort | head -n -21 | while IFS= read -r old; do",
             '      rm -- "$old"',
             "    done",
         ),
@@ -85,7 +85,7 @@ def base_files(renderer: Any) -> dict[str, str]:
             "  local dailies, and refuses snapshots smaller than 10 MB.",
             "  `etcd-daily-backup` RecurringJob (03:47 UTC, retain 14) to the volume;",
             "",
-            f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 21 local + 14 Synology copies",
+            f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 21 local + 14 Synology copies",
             "  is a few GB - negligible on both tiers.",
         ),
         str(renderer.DR_STAGE1_RUNBOOK): lines(
@@ -219,7 +219,7 @@ def target_lines(renderer: Any) -> dict[str, tuple[Path, str]]:
         ),
         "D10": (
             renderer.ADR_0026,
-            f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 21 local + 14 Synology copies",
+            f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 21 local + 14 Synology copies",
         ),
         "D11": (
             renderer.ARCHITECTURE,
@@ -504,7 +504,7 @@ def check_source_errors(renderer: Any) -> None:
         expected_substring="must occur exactly once, found 0",
     )
     duplicate_prune = base_files(renderer)[str(renderer.ETCD_ENCRYPT_SCRIPT)] + (
-        "    ls -1 /data/etcd-*.db.sops.json | sort | head -n -14 | while read -r old; do\n"
+        "    find /data -maxdepth 1 -type f -name 'etcd-*.db.sops.json' -print | sort | head -n -14 | while IFS= read -r old; do\n"
     )
     assert_raises_render_error(
         renderer,
@@ -569,7 +569,7 @@ def check_mutation_matrix(renderer: Any) -> None:
         {
             "D2": "  `etcd-daily-backup` RecurringJob (03:47 UTC, retain 9) to the volume;",
             "D8": '    EtcdDailyBackup["Longhorn RecurringJob etcd-daily-backup<br/>backup cron 47 3 daily, retain 9<br/>detached-volume backup enabled"]',
-            "D10": f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 21 local + 9 Synology copies",
+            "D10": f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 21 local + 9 Synology copies",
         },
     )
     check_source_mutation(
@@ -603,7 +603,7 @@ def check_mutation_matrix(renderer: Any) -> None:
         "head -n -9",
         {
             "D9": "  `etcd-snapshots` PVC (`longhorn-etcd-snapshot` StorageClass), prunes to 9",
-            "D10": f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 9 local + 14 Synology copies",
+            "D10": f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 9 local + 14 Synology copies",
             "D11": '    EtcdPVC["PVC etcd-snapshots<br/>storageClassName longhorn-etcd-snapshot<br/>9 encrypted local dailies"]',
         },
     )
@@ -623,7 +623,7 @@ def check_d10_segment_order(renderer: Any) -> None:
         actual_lines = rendered_target_lines(renderer, before, after)
         assert_equal(
             actual_lines["D10"],
-            f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 5 local + 8 Synology copies",
+            f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 5 local + 8 Synology copies",
             "D10 local/Synology segment order",
         )
 

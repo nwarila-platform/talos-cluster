@@ -28,6 +28,9 @@ jobs:
           python scripts/test-talos-drift-readonly.py
           python scripts/render-talos-drift-expected.py --check
 
+      - name: Test etcd backup producer failure and ordering paths
+        run: python scripts/test-dr-etcd-backup.py
+
       - name: Install lint tools
         run: |
           sudo apt-get update

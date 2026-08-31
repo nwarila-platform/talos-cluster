@@ -11,13 +11,15 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 
 SERVICEACCOUNT_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 TALOS_LOG_CONTAINER = "talos-version"
+ETCD_SNAPSHOT_CRONJOB_PATH = "/apis/batch/v1/namespaces/dr-etcd-backup/cronjobs/etcd-snapshot"
+ETCD_SNAPSHOT_MAX_AGE = timedelta(hours=26)
 
 
 def parse_expected_nodes(value: str) -> dict[str, str]:
@@ -154,6 +156,37 @@ def check_flux_resources(kind: str, payload: dict[str, Any]) -> list[str]:
     return problems
 
 
+def check_etcd_snapshot_freshness(payload: dict[str, Any], now: datetime) -> str | None:
+    ref = "etcd snapshot CronJob dr-etcd-backup/etcd-snapshot"
+    status = payload.get("status")
+    if status is None:
+        return f"{ref} status.lastSuccessfulTime is absent"
+    if not isinstance(status, dict):
+        return f"{ref} has malformed status {status!r}"
+    value = status.get("lastSuccessfulTime")
+    if value is None:
+        return f"{ref} status.lastSuccessfulTime is absent"
+    if not isinstance(value, str) or not value:
+        return f"{ref} has malformed status.lastSuccessfulTime {value!r}"
+
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        timestamp = datetime.fromisoformat(normalized)
+    except ValueError:
+        return f"{ref} has malformed status.lastSuccessfulTime {value!r}"
+    if timestamp.tzinfo is None:
+        return f"{ref} has malformed status.lastSuccessfulTime {value!r}: timezone is required"
+
+    timestamp = timestamp.astimezone(timezone.utc)
+    now = now.astimezone(timezone.utc)
+    if timestamp > now:
+        return f"{ref} status.lastSuccessfulTime {value} is in the future"
+    age = now - timestamp
+    if age > ETCD_SNAPSHOT_MAX_AGE:
+        return f"{ref} status.lastSuccessfulTime {value} is older than 26 hours (age {age})"
+    return None
+
+
 class KubernetesClient:
     def __init__(self, api_server: str, token: str, ca_path: Path) -> None:
         self.api_server = api_server.rstrip("/")
@@ -241,6 +274,14 @@ def emit_event(client: KubernetesClient, namespace: str, pod_name: str, pod_uid:
         print(f"WARNING: failed to emit Kubernetes Event: {exc}", file=sys.stderr)
 
 
+def collect_etcd_snapshot_problem(client: KubernetesClient, now: datetime) -> str | None:
+    try:
+        payload = client.get_json(ETCD_SNAPSHOT_CRONJOB_PATH)
+    except Exception as exc:  # noqa: BLE001 - an unreadable freshness signal must fail closed.
+        return f"etcd snapshot freshness API read failed: {exc}"
+    return check_etcd_snapshot_freshness(payload, now)
+
+
 def collect_problems(client: KubernetesClient, namespace: str, pod_name: str) -> list[str]:
     expected_nodes = parse_expected_nodes(os.environ["EXPECTED_NODES"])
     expected_talos = os.environ["TALOS_VERSION"]
@@ -263,7 +304,7 @@ def collect_problems(client: KubernetesClient, namespace: str, pod_name: str) ->
     return problems
 
 
-def main() -> int:
+def main(now: datetime | None = None) -> int:
     namespace = os.environ.get("POD_NAMESPACE", "talos-drift")
     pod_name = os.environ.get("POD_NAME")
     pod_uid = os.environ.get("POD_UID", "")
@@ -271,7 +312,21 @@ def main() -> int:
         print("DRIFT CHECK ERROR: POD_NAME is not set", file=sys.stderr)
         return 2
 
-    client = KubernetesClient.in_cluster()
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    try:
+        client = KubernetesClient.in_cluster()
+    except Exception as exc:  # noqa: BLE001 - missing API access is a check failure.
+        print(f"DRIFT CHECK ERROR: Kubernetes client initialization failed: {exc}", file=sys.stderr)
+        return 2
+
+    etcd_problem = collect_etcd_snapshot_problem(client, now)
+    if etcd_problem:
+        print("ETCD SNAPSHOT STALE:")
+        print(f"- {etcd_problem}")
+        emit_event(client, namespace, pod_name, pod_uid, "EtcdSnapshotStale", etcd_problem)
+
     try:
         problems = collect_problems(client, namespace, pod_name)
         reason = "DriftDetected"
@@ -285,9 +340,10 @@ def main() -> int:
         for problem in problems:
             print(f"- {problem}")
         emit_event(client, namespace, pod_name, pod_uid, reason, "; ".join(problems))
+    if etcd_problem or problems:
         return 1
 
-    print("No drift detected across read-only coverage: Kubernetes/Talos version pins, node InternalIPs, and Flux Ready state.")
+    print("No drift detected across read-only coverage: etcd snapshot freshness, Kubernetes/Talos version pins, node InternalIPs, and Flux Ready state.")
     return 0
 
 
