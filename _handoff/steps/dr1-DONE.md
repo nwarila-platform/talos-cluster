@@ -28,8 +28,10 @@
   malformed, future-dated, unreadable, or older than 26 hours. It emits a
   separate `EtcdSnapshotStale` Event without putting Event delivery on the
   exit-code path.
-- The retention renderer, hermetic producer fixtures, drift-check fixtures,
-  sizing documentation, and 26-hour runbook threshold match the implementation.
+- The retention renderer, pinned-image real-tool producer fixture,
+  differential wrapper checks, fault-injection producer fixtures, drift-check
+  fixtures, sizing documentation, and 26-hour runbook threshold match the
+  implementation.
 
 For the measured 695,771,168-byte raw snapshot, the preflight projects a
 927,695,901-byte SOPS artifact and requires 1,061,913,629 available bytes after
@@ -60,17 +62,27 @@ Final free bytes:
 
 ## Local Evidence
 
-- The producer fixture proves lock contention, lock release after process-group
-  death, same-second no-clobber, capacity failure, SOPS failure, implausibly
-  small output, independent partial cleanup, and write-then-prune behavior with
-  0, 1, 14, and 15 pre-existing finals plus mixed legacy names.
+- The producer fixture runs the ConfigMap-extracted script with the pinned
+  image's real shell, coreutils, findutils, util-linux, and SOPS to prove rc=0,
+  retention of the new artifact, and write-then-prune behavior with 0, 1, 14,
+  and 15 canonical pre-existing finals. Differential checks compare every
+  normal `date`, `df`, `find`, and SOPS wrapper path with the real tool.
+  Separate fault fixtures prove lock contention, lock release after
+  process-group death, same-second no-clobber, capacity failure, SOPS failure,
+  implausibly small output, and independent partial cleanup.
 - The drift fixture proves fresh, absent, exact 26-hour boundary, stale,
   malformed, API-read failure, unrelated-drift-only, combined stale and drift,
   future timestamp, distinct Event, and Event-POST-failure behavior.
 - Final-commit and live-cluster gate attestation remains owner-run. This ledger
-  does not claim evidence from an operator-local path; the required offline
-  command is `kubectl kustomize clusters/talos-cluster`, followed by each named
-  repository guard and fixture against the final commit SHA.
+  does not claim evidence from an operator-local path. Against the final commit
+  SHA, the required offline commands are `kubectl kustomize
+  clusters/talos-cluster`, `python3 scripts/test-dr-etcd-backup.py`, `python3
+  scripts/test-talos-drift-readonly.py`, `python3
+  scripts/render-dr-schedule-values.py --check`, `python3
+  scripts/render-talos-drift-expected.py --check`, `python3
+  scripts/render-scripts-readme-counts.py --check`, `python3
+  scripts/check-text-encoding.py`, `python3 scripts/check-doc-links.py`, and
+  `python3 scripts/check-sops-encrypted.py`.
 
 ## Accepted Residuals and Follow-Up
 

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import shutil
@@ -13,6 +15,7 @@ import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
@@ -23,11 +26,17 @@ CONFIGMAP = ROOT / "clusters/talos-cluster/apps/dr-etcd-backup/configmap-encrypt
 APP = ROOT / "clusters/talos-cluster/apps/dr-etcd-backup"
 ADR_0014 = ROOT / "docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md"
 ADR_0026 = ROOT / "docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md"
+DR_RUNBOOK = ROOT / "docs/runbooks/dr-stage1-backup.md"
 TECH_DEBT = ROOT / "docs/tech-debt.md"
 LEDGER = ROOT / "_handoff/steps/dr1-DONE.md"
-STAMP = "2026-08-31T030000Z"
 FINAL_SUFFIX = ".db.sops.json"
 MIN_SNAPSHOT_BYTES = 10_000_000
+PINNED_SOPS_IMAGE = (
+    "ghcr.io/getsops/sops@sha256:"
+    "0bc8915bce25ea3bf0f3e27a74cb5ad092488e6e5245af384816d628ed7fd426"
+)
+AGE_RECIPIENT = "age18scjc2mepug263cnqmkxe6drne6mqs5h77y9j3fh3fuxshxesuhsyh0vhx"
+PINNED_SOPS_SHA256 = "154dfe4cd70554bdd82b98e4cd4acf191d43d01ead6f00a73477aa44c4ac42ef"
 
 
 def read(path: Path) -> str:
@@ -61,6 +70,27 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def configured_pinned_sops() -> Path:
+    configured = os.environ.get("DR1_PINNED_SOPS")
+    if configured:
+        binary = Path(configured).resolve()
+    else:
+        configured_rootfs = os.environ.get("DR1_PINNED_ROOTFS")
+        if not configured_rootfs:
+            raise AssertionError(
+                "set DR1_PINNED_SOPS or DR1_PINNED_ROOTFS so fixtures use the pinned real SOPS binary"
+            )
+        binary = Path(configured_rootfs).resolve() / "usr/local/bin/sops"
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise AssertionError(f"pinned SOPS binary is not executable: {binary}")
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    if digest != PINNED_SOPS_SHA256:
+        raise AssertionError(
+            f"pinned SOPS binary digest mismatch: expected {PINNED_SOPS_SHA256}, got {digest}"
+        )
+    return binary
+
+
 @dataclass
 class Fixture:
     root: Path
@@ -69,6 +99,7 @@ class Fixture:
     bin: Path
     script: Path
     tool_markers: dict[str, Path]
+    date_output: Path
 
     @classmethod
     def create(cls, root: Path) -> "Fixture":
@@ -94,12 +125,14 @@ class Fixture:
             bin_dir / "date",
             """#!/bin/sh
 printf 'called\n' >>"${DATE_MARKER:?}"
-if [ "${2:-}" = "-d" ]; then
-  [ "${3:-}" != "${TEST_REJECT_DATE:-}" ] || exit 1
-  printf '%s\n' "${3:?}"
-  exit 0
+date_output=$("${REAL_DATE:?}" "$@")
+date_status=$?
+[ "$date_status" -eq 0 ] || exit "$date_status"
+printf '%s\n' "$date_output" >>"${DATE_OUTPUT_MARKER:?}"
+if [ "${DATE_CREATE_OUT:-0}" = 1 ]; then
+  printf '%s' 'existing-final' >"${FIXTURE_DATA:?}/etcd-$date_output.db.sops.json"
 fi
-printf '%s\n' "${TEST_STAMP:?}"
+printf '%s\n' "$date_output"
 """,
         )
         write_executable(
@@ -108,19 +141,21 @@ printf '%s\n' "${TEST_STAMP:?}"
 printf 'called\n' >>"${DF_MARKER:?}"
 if [ -n "${DF_MUTATE_ON_CALL:-}" ]; then
   calls=$(wc -l <"$DF_MARKER")
+  stamp=$(tail -n 1 "${DATE_OUTPUT_MARKER:?}")
+  out_path="${FIXTURE_DATA:?}/etcd-$stamp.db.sops.json"
   if [ -n "${DF_REMOVE_OUT_ON_CALL:-}" ] && [ "$calls" -eq "$DF_REMOVE_OUT_ON_CALL" ]; then
-    rm -f -- "${DF_OUT_PATH:?}"
+    rm -f -- "$out_path"
   fi
   if [ "$calls" -eq "$DF_MUTATE_ON_CALL" ]; then
     case "${DF_MUTATION:?}" in
-      remove-out) rm -f -- "${DF_OUT_PATH:?}" ;;
-      directory-out) rm -f -- "${DF_OUT_PATH:?}"; mkdir -- "${DF_OUT_PATH:?}" ;;
-      empty-out) : >"${DF_OUT_PATH:?}" ;;
-      small-out) printf 'x' >"${DF_OUT_PATH:?}" ;;
+      remove-out) rm -f -- "$out_path" ;;
+      directory-out) rm -f -- "$out_path"; mkdir -- "$out_path" ;;
+      empty-out) : >"$out_path" ;;
+      small-out) printf 'x' >"$out_path" ;;
       add-finals)
         day=1
         while [ "$day" -le 14 ]; do
-          printf 'late-final' >"${DF_DATA_PATH:?}/etcd-2026-07-$(printf '%02d' "$day")T030000Z.db.sops.json"
+          printf 'late-final' >"${FIXTURE_DATA:?}/etcd-2000-01-$(printf '%02d' "$day")T030000Z.db.sops.json"
           day=$((day + 1))
         done
         ;;
@@ -128,8 +163,11 @@ if [ -n "${DF_MUTATE_ON_CALL:-}" ]; then
     esac
   fi
 fi
+if [ -z "${TEST_AVAILABLE_KIB:-}" ]; then
+  exec "${REAL_DF:?}" "$@"
+fi
 printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
-printf 'fixture 20000000 0 %s 0%% %s\n' "${TEST_AVAILABLE_KIB:-20000000}" "${2:-${1:-unknown}}"
+printf 'fixture 20000000 0 %s 0%% %s\n' "$TEST_AVAILABLE_KIB" "${2:-${1:-unknown}}"
 """,
         )
         write_executable(
@@ -140,33 +178,55 @@ if [ "${SOPS_FAIL:-0}" = 1 ]; then
   echo 'injected sops failure' >&2
   exit 42
 fi
+if [ -z "${SOPS_SIZE_DELTA:-}" ]; then
+  cd /
+  exec "${REAL_SOPS:?}" "$@"
+fi
 input=
 for argument do
   input=$argument
 done
 size=$(stat -c%s "$input")
-output_size=$((size + ${SOPS_SIZE_DELTA:-1009}))
+output_size=$((size + SOPS_SIZE_DELTA))
 python3 -c 'import os, sys; os.ftruncate(1, int(sys.argv[1]))' "$output_size"
 """,
         )
         tool_markers = {name: root / f"{name}-called" for name in ("date", "df", "sops")}
-        return cls(root=root, data=data, work=work, bin=bin_dir, script=script, tool_markers=tool_markers)
+        return cls(
+            root=root,
+            data=data,
+            work=work,
+            bin=bin_dir,
+            script=script,
+            tool_markers=tool_markers,
+            date_output=root / "date-output",
+        )
 
     def environment(self, overrides: dict[str, str] | None = None) -> dict[str, str]:
         env = os.environ.copy()
         env.update(
             {
-                "AGE_RECIPIENT": "age1fixture",
+                "AGE_RECIPIENT": AGE_RECIPIENT,
                 "PATH": f"{self.bin}:{env['PATH']}",
-                "TEST_STAMP": STAMP,
                 "DATE_MARKER": str(self.tool_markers["date"]),
+                "DATE_OUTPUT_MARKER": str(self.date_output),
                 "DF_MARKER": str(self.tool_markers["df"]),
                 "SOPS_MARKER": str(self.tool_markers["sops"]),
+                "FIXTURE_DATA": str(self.data),
+                "REAL_DATE": shutil.which("date") or "/usr/bin/date",
+                "REAL_DF": shutil.which("df") or "/usr/bin/df",
+                "REAL_SOPS": str(configured_pinned_sops()),
             }
         )
         if overrides:
             env.update(overrides)
         return env
+
+    def generated_out(self) -> Path:
+        stamps = self.date_output.read_text(encoding="utf-8").splitlines()
+        if not stamps:
+            raise AssertionError("date wrapper recorded no successful output")
+        return final_path(self.data, stamps[-1])
 
     def assert_tool_invocations(self, expected_tools: set[str]) -> None:
         actual_tools = {name for name, marker in self.tool_markers.items() if marker.is_file() and marker.stat().st_size}
@@ -201,9 +261,11 @@ def final_path(data: Path, stamp: str) -> Path:
 
 def seed_finals(data: Path, count: int) -> list[Path]:
     finals: list[Path] = []
-    for day in range(1, count + 1):
-        path = final_path(data, f"2026-08-{day:02d}T030000Z")
-        path.write_bytes(f"final-{day:02d}".encode())
+    now = datetime.now(timezone.utc)
+    for index in range(count):
+        stamp = (now - timedelta(days=count - index + 1)).strftime("%Y-%m-%dT%H%M%SZ")
+        path = final_path(data, stamp)
+        path.write_bytes(f"final-{index + 1:02d}".encode())
         finals.append(path)
     return finals
 
@@ -219,6 +281,352 @@ def seed_mixed_nonfinals(data: Path) -> tuple[list[Path], Path]:
     legacy_final = data / "etcd-legacy.db.sops"
     legacy_final.write_bytes(b"legacy-final")
     return partials, legacy_final
+
+
+@dataclass(frozen=True)
+class RealToolBackend:
+    """Execute the producer with no PATH stubs."""
+
+    kind: str
+    rootfs: Path | None = None
+    runtime: str | None = None
+
+    @classmethod
+    def discover(cls) -> "RealToolBackend":
+        configured_rootfs = os.environ.get("DR1_PINNED_ROOTFS")
+        if configured_rootfs:
+            rootfs = Path(configured_rootfs).resolve()
+            required = (
+                rootfs / "bin/dash",
+                rootfs / "usr/bin/date",
+                rootfs / "usr/bin/find",
+                rootfs / "usr/bin/sort",
+                rootfs / "usr/bin/awk",
+                rootfs / "usr/bin/stat",
+                rootfs / "usr/bin/df",
+                rootfs / "usr/bin/mktemp",
+                rootfs / "usr/bin/flock",
+                rootfs / "usr/local/bin/sops",
+            )
+            missing = [str(path) for path in required if not path.is_file() or not os.access(path, os.X_OK)]
+            if missing:
+                raise AssertionError(f"DR1_PINNED_ROOTFS is incomplete: {missing!r}")
+            return cls(kind="rootfs", rootfs=rootfs)
+
+        for runtime in ("docker", "podman"):
+            executable = shutil.which(runtime)
+            if executable is None:
+                continue
+            probe = subprocess.run(
+                [executable, "info"],
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=15,
+            )
+            if probe.returncode == 0:
+                return cls(kind="container", runtime=executable)
+
+        if os.environ.get("DR1_PINNED_SOPS"):
+            configured_pinned_sops()
+            required_commands = ("date", "find", "sort", "awk", "stat", "df", "mktemp", "flock")
+            missing = [command for command in required_commands if shutil.which(command) is None]
+            if missing:
+                raise AssertionError(f"host real-tool fallback is missing commands: {missing!r}")
+            return cls(kind="host")
+
+        raise AssertionError(
+            "no real-tool backend; set DR1_PINNED_ROOTFS, set DR1_PINNED_SOPS for host coreutils, "
+            "or provide a working docker/podman"
+        )
+
+    def run(self, case_root: Path, script: Path) -> subprocess.CompletedProcess[str]:
+        work = case_root / "work"
+        data = case_root / "data"
+        if self.kind == "container":
+            assert self.runtime is not None
+            command = [
+                self.runtime,
+                "run",
+                "--rm",
+                "--network=none",
+                "--cap-drop=ALL",
+                "--security-opt=no-new-privileges",
+                "--entrypoint=/bin/sh",
+                "--env",
+                f"AGE_RECIPIENT={AGE_RECIPIENT}",
+                "--volume",
+                f"{work}:/work:rw",
+                "--volume",
+                f"{data}:/data:rw",
+                "--volume",
+                f"{script}:/opt/etcd-backup/encrypt.sh:ro",
+                PINNED_SOPS_IMAGE,
+                "/opt/etcd-backup/encrypt.sh",
+            ]
+        else:
+            source = read(script).replace("/work", str(work)).replace("/data", str(data))
+            direct_script = case_root / "encrypt-direct.sh"
+            write_executable(direct_script, source)
+            if self.rootfs is not None:
+                command = [str(self.rootfs / "bin/dash"), str(direct_script)]
+            else:
+                command = ["/bin/sh", str(direct_script)]
+
+        environment = {
+            "AGE_RECIPIENT": AGE_RECIPIENT,
+            "HOME": str(case_root),
+            "LC_ALL": "C",
+        }
+        if self.rootfs is not None:
+            environment["PATH"] = ":".join(
+                (
+                    str(self.rootfs / "usr/local/bin"),
+                    str(self.rootfs / "usr/bin"),
+                    str(self.rootfs / "bin"),
+                )
+            )
+        elif self.kind == "host":
+            pinned_sops = configured_pinned_sops()
+            pinned_bin = case_root / "pinned-bin"
+            pinned_bin.mkdir()
+            (pinned_bin / "sops").symlink_to(pinned_sops)
+            environment["PATH"] = f"{pinned_bin}:{os.defpath}"
+        return subprocess.run(
+            command,
+            cwd=work,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+
+    def sops_binary(self, destination: Path) -> Path:
+        if self.rootfs is not None:
+            binary = self.rootfs / "usr/local/bin/sops"
+        elif self.kind == "host":
+            binary = configured_pinned_sops()
+        else:
+            assert self.runtime is not None
+            created = subprocess.run(
+                [self.runtime, "create", PINNED_SOPS_IMAGE],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=60,
+            )
+            if created.returncode != 0:
+                raise AssertionError(f"could not create pinned SOPS container: {created.stderr}")
+            container_id = created.stdout.strip()
+            try:
+                copied = subprocess.run(
+                    [self.runtime, "cp", f"{container_id}:/usr/local/bin/sops", str(destination)],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=60,
+                )
+                if copied.returncode != 0:
+                    raise AssertionError(f"could not copy pinned SOPS binary: {copied.stderr}")
+            finally:
+                subprocess.run(
+                    [self.runtime, "rm", "-f", container_id],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=30,
+                )
+            destination.chmod(0o755)
+            binary = destination
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        if digest != PINNED_SOPS_SHA256:
+            raise AssertionError(f"pinned SOPS binary digest mismatch: expected {PINNED_SOPS_SHA256}, got {digest}")
+        return binary
+
+
+def case_real_tools_end_to_end() -> None:
+    """The extracted producer must finish with the pinned image's real tools."""
+
+    backend = RealToolBackend.discover()
+    configured_tmpdir = os.environ.get("DR1_REAL_TMPDIR")
+    temp_parent = Path(configured_tmpdir) if configured_tmpdir else None
+    with tempfile.TemporaryDirectory(prefix="dr-etcd-real-tools-", dir=temp_parent) as tmp:
+        fixture_root = Path(tmp)
+        source_script = fixture_root / "encrypt.sh"
+        write_executable(source_script, extract_encrypt_script())
+
+        for count in (0, 1, 14, 15):
+            case_root = fixture_root / f"finals-{count}"
+            data = case_root / "data"
+            work = case_root / "work"
+            data.mkdir(parents=True)
+            work.mkdir()
+            snapshot = work / "etcd.db"
+            with snapshot.open("wb") as stream:
+                stream.truncate(MIN_SNAPSHOT_BYTES + 1)
+
+            now = datetime.now(timezone.utc)
+            existing: set[str] = set()
+            for age_days in range(count, 0, -1):
+                stamp = (now - timedelta(days=age_days + 1)).strftime("%Y-%m-%dT%H%M%SZ")
+                path = final_path(data, stamp)
+                path.write_bytes(f"pre-existing-{age_days:02d}".encode())
+                existing.add(path.name)
+
+            result = backend.run(case_root, source_script)
+            assert result.returncode == 0, (
+                f"real-tool run with {count} pre-existing finals returned {result.returncode}\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            )
+            retained = sorted(data.glob(f"etcd-*{FINAL_SUFFIX}"))
+            new_artifacts = [path for path in retained if path.name not in existing]
+            assert len(new_artifacts) == 1, (
+                f"real-tool run with {count} finals retained new artifacts {new_artifacts!r}"
+            )
+            assert new_artifacts[0].stat().st_size >= MIN_SNAPSHOT_BYTES
+            assert len(retained) == min(count + 1, 14)
+            assert f"terminal artifact assertion passed: {new_artifacts[0]}" in result.stdout
+
+
+def case_date_stub_matches_real_tool() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-date-fidelity-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        arguments = ("-u", "+%Y-%m-%dT%H%M%SZ")
+        before = subprocess.run(
+            [shutil.which("date") or "/usr/bin/date", *arguments],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        stub = subprocess.run(
+            [str(fixture.bin / "date"), *arguments],
+            env=fixture.environment(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        after = subprocess.run(
+            [shutil.which("date") or "/usr/bin/date", *arguments],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert before.returncode == stub.returncode == after.returncode == 0
+        assert stub.stderr == before.stderr == after.stderr
+        assert stub.stdout in {before.stdout, after.stdout}
+
+
+def case_df_stub_matches_real_tool() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-df-fidelity-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        arguments = ("-Pk", str(fixture.data))
+        stub = subprocess.run(
+            [str(fixture.bin / "df"), *arguments],
+            env=fixture.environment(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        real = subprocess.run(
+            [shutil.which("df") or "/usr/bin/df", *arguments],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert (stub.returncode, stub.stdout, stub.stderr) == (real.returncode, real.stdout, real.stderr)
+
+
+def case_find_wrapper_matches_real_tool() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-find-fidelity-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        seed_finals(fixture.data, 1)
+        install_find_stub(fixture)
+        arguments = (
+            str(fixture.data),
+            "-maxdepth",
+            "1",
+            "-type",
+            "f",
+            "-name",
+            "etcd-*.db.sops.json",
+            "-print",
+        )
+        stub = subprocess.run(
+            [str(fixture.bin / "find"), *arguments],
+            env=fixture.environment(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        real = subprocess.run(
+            [shutil.which("find") or "/usr/bin/find", *arguments],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert (stub.returncode, stub.stdout, stub.stderr) == (real.returncode, real.stdout, real.stderr)
+
+
+def sops_output_shape(output: bytes) -> object:
+    def shape(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: shape(item) for key, item in sorted(value.items())}
+        if isinstance(value, list):
+            return [shape(item) for item in value]
+        return type(value).__name__
+
+    return shape(json.loads(output))
+
+
+def case_sops_stub_matches_real_tool() -> None:
+    backend = RealToolBackend.discover()
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-sops-fidelity-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        real_sops = backend.sops_binary(fixture.root / "pinned-sops")
+        arguments = (
+            "--encrypt",
+            "--age",
+            AGE_RECIPIENT,
+            "--input-type",
+            "binary",
+            "--output-type",
+            "json",
+            str(fixture.work / "etcd.db"),
+        )
+        stub = subprocess.run(
+            [str(fixture.bin / "sops"), *arguments],
+            cwd="/",
+            env=fixture.environment(),
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        real = subprocess.run(
+            [str(real_sops), *arguments],
+            cwd="/",
+            env={"HOME": str(fixture.root), "PATH": os.environ["PATH"]},
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        assert stub.returncode == real.returncode == 0, (stub.stderr, real.stderr)
+        assert sops_output_shape(stub.stdout) == sops_output_shape(real.stdout)
+        for name, output in (("stub", stub.stdout), ("real", real.stdout)):
+            ciphertext = fixture.root / f"{name}.json"
+            ciphertext.write_bytes(output)
+            status = subprocess.run(
+                [str(real_sops), "filestatus", "--input-type", "json", str(ciphertext)],
+                cwd="/",
+                env={"HOME": str(fixture.root), "PATH": os.environ["PATH"]},
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+            assert status.returncode == 0, status.stderr
+            assert json.loads(status.stdout) == {"encrypted": True}
 
 
 def install_find_stub(
@@ -246,7 +654,9 @@ fi
 if {omit_condition}; then
   "{real_find}" "$@" >"{capture}" || exit $?
   while IFS= read -r found; do
-    [ "$found" = "${{FIND_OUT_PATH:?}}" ] || printf '%s\\n' "$found"
+    stamp=$(tail -n 1 "${{DATE_OUTPUT_MARKER:?}}")
+    out_path="${{FIXTURE_DATA:?}}/etcd-$stamp.db.sops.json"
+    [ "$found" = "$out_path" ] || printf '%s\\n' "$found"
   done <"{capture}"
   exit 0
 fi
@@ -257,6 +667,12 @@ exec "{real_find}" "$@"
 
 def assert_source_contract() -> None:
     source = extract_encrypt_script()
+    cronjob = load_yaml(APP / "cronjob.yaml")
+    containers = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
+    encrypt_container = next(container for container in containers if container.get("name") == "encrypt")
+    assert encrypt_container["image"] == PINNED_SOPS_IMAGE
+    recipient_env = next(item for item in encrypt_container["env"] if item.get("name") == "AGE_RECIPIENT")
+    assert recipient_env["value"] == AGE_RECIPIENT
     required = (
         "exec 9</data",
         'flock -n 9 || { echo "FATAL: another backup run holds /data" >&2; exit 1; }',
@@ -270,7 +686,12 @@ def assert_source_contract() -> None:
         'terminal_failure "$OUT is empty"',
         'terminal_failure "$OUT is absent from the retained finalized set"',
         'terminal_failure "retained finalized count $FINAL_COUNT exceeds $RETAINED_LIMIT"',
-        'date -u -d "$candidate_stamp" +%Y-%m-%dT%H%M%SZ',
+        'valid_final_stamp "$candidate_stamp"',
+        '[ "$month_value" -ge 1 ] && [ "$month_value" -le 12 ]',
+        '[ "$day_value" -ge 1 ] && [ "$day_value" -le "$maximum_day" ]',
+        '[ "$hour_value" -le 23 ]',
+        '[ "$minute_value" -le 59 ]',
+        '[ "$second_value" -le 59 ]',
     )
     for fragment in required:
         if fragment not in source:
@@ -282,7 +703,14 @@ def assert_source_contract() -> None:
     trap_index = source.index("trap cleanup EXIT")
     if not lock_index < temp_index < trap_index:
         raise AssertionError("lock must precede unique TMP creation and EXIT trap installation")
-    forbidden = (".backup.lock", "-mmin", "find -newer", "db.sops\"", 'TMP="$OUT.$$.partial"')
+    forbidden = (
+        ".backup.lock",
+        "-mmin",
+        "find -newer",
+        "db.sops\"",
+        'TMP="$OUT.$$.partial"',
+        "date -u -d",
+    )
     for fragment in forbidden:
         if fragment in source:
             raise AssertionError(f"forbidden producer contract: {fragment}")
@@ -352,6 +780,43 @@ def check_r13_precision_corrections() -> None:
     assert "109 MB snapshot" not in read(APP / "talosconfig.sops.yaml")
 
 
+def check_remediation_evidence_claims() -> None:
+    ledger = compact(LEDGER)
+    assert "pinned-image real-tool producer fixture" in ledger
+    assert "Differential checks compare every normal `date`, `df`, `find`, and SOPS wrapper path" in ledger
+    assert "prove rc=0, retention of the new artifact, and write-then-prune behavior" in ledger
+    assert "0, 1, 14, and 15 canonical pre-existing finals" in ledger
+    assert "hermetic producer fixtures" not in ledger
+
+
+def check_operator_wedge_recovery() -> None:
+    runbook = compact(DR_RUNBOOK)
+    assert "FATAL: invalid finalized snapshot name" in runbook
+    assert "FATAL: future finalized snapshot ... sorts after current output" in runbook
+    assert "copy the file to approved offline quarantine" in runbook
+    assert "first verify node UTC time is correct" in runbook
+    assert "quarantine or remove the future artifact" in runbook
+    assert "terminal artifact assertion passed" in runbook
+    assert "lastSuccessfulTime" in runbook
+
+
+def check_exit_gate_commands_are_named() -> None:
+    ledger = compact(LEDGER)
+    required_commands = (
+        "kubectl kustomize clusters/talos-cluster",
+        "python3 scripts/test-dr-etcd-backup.py",
+        "python3 scripts/test-talos-drift-readonly.py",
+        "python3 scripts/render-dr-schedule-values.py --check",
+        "python3 scripts/render-talos-drift-expected.py --check",
+        "python3 scripts/render-scripts-readme-counts.py --check",
+        "python3 scripts/check-text-encoding.py",
+        "python3 scripts/check-doc-links.py",
+        "python3 scripts/check-sops-encrypted.py",
+    )
+    for command in required_commands:
+        assert command in ledger
+
+
 def case_lock_held_touches_nothing() -> None:
     with tempfile.TemporaryDirectory(prefix=".dr-etcd-lock-held-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
@@ -401,7 +866,7 @@ exit 1
         while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.01)
         assert ready.exists(), "contender did not reach flock"
-        collided = Path(f"{final_path(fixture.data, STAMP)}.{process.pid}.partial")
+        collided = fixture.data / f"winner.{process.pid}.partial"
         collided.write_bytes(b"winner-in-flight-ciphertext")
         release.touch()
         stdout, stderr = process.communicate(timeout=5)
@@ -437,16 +902,15 @@ def case_lock_released_after_process_death() -> None:
                 os.killpg(holder.pid, signal.SIGKILL)
                 holder.wait(timeout=5)
         assert result.returncode == 0, result.stderr
-        assert final_path(fixture.data, STAMP).is_file()
+        assert fixture.generated_out().is_file()
 
 
 def case_same_second_out_is_not_clobbered() -> None:
     with tempfile.TemporaryDirectory(prefix=".dr-etcd-no-clobber-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
-        out = final_path(fixture.data, STAMP)
-        out.write_bytes(b"existing-final")
         partials, _legacy = seed_mixed_nonfinals(fixture.data)
-        result = fixture.run(expected_tools={"date"})
+        result = fixture.run(expected_tools={"date"}, DATE_CREATE_OUT="1")
+        out = fixture.generated_out()
         assert result.returncode != 0
         assert f"FATAL: refusing to overwrite existing finalized snapshot: {out}" in result.stderr
         assert out.read_bytes() == b"existing-final"
@@ -474,7 +938,7 @@ def case_capacity_failure_preserves_finals() -> None:
         assert existing.read_bytes() == original
         assert all(not path.exists() for path in partials)
         assert not marker.exists()
-        assert not final_path(fixture.data, STAMP).exists()
+        assert not fixture.generated_out().exists()
 
 
 def case_sops_failure_preserves_finals_and_cleans_tmp() -> None:
@@ -489,7 +953,7 @@ def case_sops_failure_preserves_finals_and_cleans_tmp() -> None:
         assert existing.read_bytes() == original
         assert all(not path.exists() for path in partials)
         assert not list(fixture.data.glob("*.partial"))
-        assert not final_path(fixture.data, STAMP).exists()
+        assert not fixture.generated_out().exists()
 
 
 def case_implausibly_small_ciphertext_is_rejected() -> None:
@@ -505,19 +969,18 @@ def case_implausibly_small_ciphertext_is_rejected() -> None:
         assert "FATAL: encrypted output is implausibly small" in result.stderr
         assert existing.read_bytes() == original
         assert not list(fixture.data.glob("*.partial"))
-        assert not final_path(fixture.data, STAMP).exists()
+        assert not fixture.generated_out().exists()
 
 
 def case_terminal_assertion_rejects_missing_own_out() -> None:
     with tempfile.TemporaryDirectory(prefix=".dr-etcd-terminal-assert-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
-        out = final_path(fixture.data, STAMP)
         result = fixture.run(
             expected_tools={"date", "df", "sops"},
             DF_MUTATE_ON_CALL="3",
             DF_MUTATION="remove-out",
-            DF_OUT_PATH=str(out),
         )
+        out = fixture.generated_out()
         assert result.returncode != 0
         assert "FATAL: terminal artifact assertion failed" in result.stderr
         assert not out.exists()
@@ -526,12 +989,10 @@ def case_terminal_assertion_rejects_missing_own_out() -> None:
 def case_terminal_assertion_rejects_bad_own_out(mutation: str, diagnostic: str) -> None:
     with tempfile.TemporaryDirectory(prefix=f".dr-etcd-terminal-{mutation}-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
-        out = final_path(fixture.data, STAMP)
         result = fixture.run(
             expected_tools={"date", "df", "sops"},
             DF_MUTATE_ON_CALL="3",
             DF_MUTATION=mutation,
-            DF_OUT_PATH=str(out),
         )
         assert result.returncode != 0
         assert "FATAL: terminal artifact assertion failed" in result.stderr
@@ -541,13 +1002,10 @@ def case_terminal_assertion_rejects_bad_own_out(mutation: str, diagnostic: str) 
 def case_terminal_assertion_rejects_retained_count_over_limit() -> None:
     with tempfile.TemporaryDirectory(prefix=".dr-etcd-terminal-count-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
-        out = final_path(fixture.data, STAMP)
         result = fixture.run(
             expected_tools={"date", "df", "sops"},
             DF_MUTATE_ON_CALL="3",
             DF_MUTATION="add-finals",
-            DF_OUT_PATH=str(out),
-            DF_DATA_PATH=str(fixture.data),
         )
         assert result.returncode != 0
         assert "FATAL: terminal artifact assertion failed: retained finalized count 15 exceeds 14" in result.stderr
@@ -556,12 +1014,9 @@ def case_terminal_assertion_rejects_retained_count_over_limit() -> None:
 def case_terminal_assertion_requires_own_out_in_inventory() -> None:
     with tempfile.TemporaryDirectory(prefix=".dr-etcd-terminal-membership-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
-        out = final_path(fixture.data, STAMP)
         install_find_stub(fixture, omit_out_on_call=6)
-        result = fixture.run(
-            expected_tools={"date", "df", "sops"},
-            FIND_OUT_PATH=str(out),
-        )
+        result = fixture.run(expected_tools={"date", "df", "sops"})
+        out = fixture.generated_out()
         assert result.returncode != 0
         assert f"FATAL: terminal artifact assertion failed: {out} is absent from the retained finalized set" in result.stderr
         assert out.is_file() and out.stat().st_size >= MIN_SNAPSHOT_BYTES
@@ -580,14 +1035,15 @@ def case_find_failure_fails_closed(fail_on_call: int) -> None:
         expected_survivors = 14 if fail_on_call <= 4 else 13
         assert len(surviving) == expected_survivors
         assert all(before[name] == content for name, content in surviving.items())
-        assert final_path(fixture.data, STAMP).exists() is (fail_on_call >= 3)
+        assert fixture.generated_out().exists() is (fail_on_call >= 3)
 
 
 def case_future_final_is_rejected_before_publication() -> None:
     with tempfile.TemporaryDirectory(prefix=".dr-etcd-future-final-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
+        now = datetime.now(timezone.utc)
         future_finals = [
-            final_path(fixture.data, f"2026-09-{day:02d}T030000Z")
+            final_path(fixture.data, (now + timedelta(days=day + 1)).strftime("%Y-%m-%dT%H%M%SZ"))
             for day in range(1, 15)
         ]
         for path in future_finals:
@@ -597,7 +1053,7 @@ def case_future_final_is_rejected_before_publication() -> None:
         assert result.returncode != 0
         assert "FATAL: future finalized snapshot" in result.stderr
         assert {path.name: path.read_bytes() for path in future_finals} == before
-        assert not final_path(fixture.data, STAMP).exists()
+        assert not fixture.generated_out().exists()
 
 
 def case_newline_final_name_is_rejected() -> None:
@@ -611,20 +1067,43 @@ def case_newline_final_name_is_rejected() -> None:
         assert result.returncode != 0
         assert "FATAL: invalid finalized snapshot name" in result.stderr
         assert {path.name: path.read_bytes() for path in (*ordinary, malformed)} == before
-        assert not final_path(fixture.data, STAMP).exists()
+        assert not fixture.generated_out().exists()
 
 
 def case_impossible_calendar_final_name_is_rejected() -> None:
-    with tempfile.TemporaryDirectory(prefix=".dr-etcd-calendar-final-", dir=ROOT) as tmp:
+    invalid_stamps = (
+        "0000-01-01T000000Z",
+        "2026-00-01T000000Z",
+        "2026-13-01T000000Z",
+        "2026-01-00T000000Z",
+        "2026-02-29T000000Z",
+        "2026-02-30T030000Z",
+        "2026-04-31T000000Z",
+        "2026-01-01T240000Z",
+        "2026-01-01T006000Z",
+        "2026-01-01T000060Z",
+    )
+    for invalid_stamp in invalid_stamps:
+        with tempfile.TemporaryDirectory(prefix=".dr-etcd-calendar-final-", dir=ROOT) as tmp:
+            fixture = Fixture.create(Path(tmp))
+            malformed = final_path(fixture.data, invalid_stamp)
+            malformed.write_bytes(b"impossible-calendar-final")
+            result = fixture.run(expected_tools={"date"})
+            assert result.returncode != 0
+            assert f"FATAL: invalid finalized snapshot name: {malformed}" in result.stderr
+            assert malformed.read_bytes() == b"impossible-calendar-final"
+            assert not fixture.generated_out().exists()
+
+
+def case_leap_day_final_name_is_accepted() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-leap-final-", dir=ROOT) as tmp:
         fixture = Fixture.create(Path(tmp))
-        invalid_stamp = "2026-02-30T030000Z"
-        malformed = final_path(fixture.data, invalid_stamp)
-        malformed.write_bytes(b"impossible-calendar-final")
-        result = fixture.run(expected_tools={"date"}, TEST_REJECT_DATE=invalid_stamp)
-        assert result.returncode != 0
-        assert f"FATAL: invalid finalized snapshot name: {malformed}" in result.stderr
-        assert malformed.read_bytes() == b"impossible-calendar-final"
-        assert not final_path(fixture.data, STAMP).exists()
+        leap_final = final_path(fixture.data, "2024-02-29T235959Z")
+        leap_final.write_bytes(b"leap-day-final")
+        result = fixture.run(expected_tools={"date", "df", "sops"})
+        assert result.returncode == 0, result.stderr
+        assert leap_final.read_bytes() == b"leap-day-final"
+        assert fixture.generated_out().is_file()
 
 
 def case_non_executable_stub_is_rejected(tool: str) -> None:
@@ -660,7 +1139,7 @@ def case_final_count(count: int) -> None:
 
         finals = sorted(fixture.data.glob(f"etcd-*{FINAL_SUFFIX}"))
         assert len(finals) == min(count + 1, 14)
-        newest = final_path(fixture.data, STAMP)
+        newest = fixture.generated_out()
         assert newest in finals
         assert f"newest finalized snapshot: {newest}" in result.stdout
         assert f"finalized snapshots: {len(finals)}" in result.stdout
@@ -676,6 +1155,11 @@ def case_final_count(count: int) -> None:
 
 def main() -> int:
     cases: list[tuple[str, Callable[[], None]]] = [
+        ("real-tool end-to-end with 0/1/14/15 finals", case_real_tools_end_to_end),
+        ("date stub matches real tool", case_date_stub_matches_real_tool),
+        ("df stub matches real tool", case_df_stub_matches_real_tool),
+        ("find wrapper matches real tool", case_find_wrapper_matches_real_tool),
+        ("SOPS stub matches real pinned tool", case_sops_stub_matches_real_tool),
         ("source contract", assert_source_contract),
         ("R1 ledger claims", check_r1_ledger_claims),
         ("R4 threshold annotation", check_r4_threshold_annotation),
@@ -684,6 +1168,9 @@ def main() -> int:
         ("R11 dr2 technical debt", check_r11_dr2_technical_debt),
         ("R12 evidence honesty", check_r12_evidence_honesty),
         ("R13 precision corrections", check_r13_precision_corrections),
+        ("remediation evidence claims", check_remediation_evidence_claims),
+        ("operator wedge recovery", check_operator_wedge_recovery),
+        ("exit-gate commands are named", check_exit_gate_commands_are_named),
         ("lock held touches nothing", case_lock_held_touches_nothing),
         ("lock refusal preserves colliding winner partial", case_lock_refusal_cannot_unlink_colliding_partial),
         ("lock released after process death", case_lock_released_after_process_death),
@@ -716,6 +1203,7 @@ def main() -> int:
         ("future finalized names fail closed", case_future_final_is_rejected_before_publication),
         ("newline finalized name fails closed", case_newline_final_name_is_rejected),
         ("impossible calendar finalized name fails closed", case_impossible_calendar_final_name_is_rejected),
+        ("valid leap-day finalized name is accepted", case_leap_day_final_name_is_accepted),
         *((f"non-executable {tool} stub is rejected", lambda tool=tool: case_non_executable_stub_is_rejected(tool)) for tool in ("date", "df", "sops")),
         *((f"write-then-prune with {count} finals", lambda count=count: case_final_count(count)) for count in (0, 1, 14, 15)),
     ]

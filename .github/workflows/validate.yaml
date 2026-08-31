@@ -29,7 +29,16 @@ jobs:
           python scripts/render-talos-drift-expected.py --check
 
       - name: Test etcd backup producer failure and ordering paths
-        run: python scripts/test-dr-etcd-backup.py
+        run: |
+          set -euo pipefail
+          image='ghcr.io/getsops/sops@sha256:0bc8915bce25ea3bf0f3e27a74cb5ad092488e6e5245af384816d628ed7fd426'
+          pinned_sops="${RUNNER_TEMP}/dr1-pinned-sops"
+          container_id=$(docker create "${image}")
+          trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true' EXIT
+          docker cp "${container_id}:/usr/local/bin/sops" "${pinned_sops}"
+          chmod +x "${pinned_sops}"
+          printf '%s  %s\n' '154dfe4cd70554bdd82b98e4cd4acf191d43d01ead6f00a73477aa44c4ac42ef' "${pinned_sops}" | sha256sum -c -
+          DR1_PINNED_SOPS="${pinned_sops}" python scripts/test-dr-etcd-backup.py
 
       - name: Install lint tools
         run: |
