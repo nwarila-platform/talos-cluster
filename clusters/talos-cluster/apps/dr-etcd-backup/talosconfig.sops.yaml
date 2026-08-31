@@ -4,7 +4,7 @@
 # (client cert O=os:etcd:backup, expires 2028-07-10 - rotation is booked in
 # the ADR-0006 amendment). The role authorizes `talosctl etcd snapshot` and
 # NOTHING else - config reads and node lifecycle ops are PermissionDenied
-# (both verified live 2026-07-11, including a real 109 MB snapshot).
+# (both verified live 2026-07-11, including a successful real snapshot capture).
 #
 # Encrypted with SOPS (repo age key); Flux decrypts at reconcile via the
 # sops-age Secret. NOTE: the SOPS MAC covers metadata.name - renaming this

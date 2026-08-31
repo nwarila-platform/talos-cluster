@@ -4,10 +4,15 @@
 # target daily (retain 14). Local retention on the volume itself is the
 # snapshot CronJob's job.
 #
-# 16Gi sizing: the 2026-08-31 raw snapshot measured 695,771,168 bytes
+# 32Gi sizing: the 2026-08-31 raw snapshot measured 695,771,168 bytes
 # (663.539 MiB), and the current SOPS binary store projects to 927,695,901
 # bytes (884.720 MiB). Fourteen finals use 12.096 GiB; the preservation-safe
 # 15-artifact pre-prune peak is 12.960 GiB before filesystem overhead.
+# Peak ceiling after the 128 MiB margin: 2,281,701,376 bytes (2,176 MiB) per
+# artifact. Compounding the one observed 11.2% growth interval every 40 days
+# reaches that ceiling in approximately 339 days; this is a planning horizon,
+# not a forecast, because a defrag may flatten it.
+# Three Longhorn replicas allocate 96 GiB nominal for this 32 GiB request.
 # Expansion from the former 5Gi request is supported but cannot be rolled back
 # by shrinking this PVC.
 apiVersion: v1
@@ -24,4 +29,4 @@ spec:
   storageClassName: longhorn-etcd-snapshot
   resources:
     requests:
-      storage: 16Gi
+      storage: 32Gi

@@ -110,7 +110,8 @@ spec:
                 defaultMode: 0440
             - name: work
               emptyDir:
-                sizeLimit: 1Gi
+                # The 695,771,168-byte measured raw snapshot uses 32.4% of 2 GiB.
+                sizeLimit: 2Gi
             - name: data
               persistentVolumeClaim:
                 claimName: etcd-snapshots

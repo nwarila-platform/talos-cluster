@@ -28,6 +28,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0020 | Render-anchored Vault guards are not runnable offline | Open | Low |
 | TD-0021 | Vault guard 1 CNP assertion does not consume owning Flux transforms | Open | **High** |
 | TD-0022 | PF-5: cft3a-MVP ingress hardening and proof backlog | Open | **High** |
+| TD-0023 | Reconcile etcd snapshot cadence, retention, and staleness threshold | Open | **High** |
 
 ---
 
@@ -1238,6 +1239,43 @@ succeeds; that is the MVP gate, not the hardening target.
 - `_handoff/steps/cft3a-mvp-DONE.md`
 - `docs/runbooks/operate-hwg-self-service-ingress.md`
 - `docs/kyverno-tests/restrict-tunnel-hostnames/README.md`
+
+---
+
+## TD-0023 — Reconcile etcd snapshot cadence, retention, and staleness threshold
+
+**Opened:** 2026-08-31 · **Status:** Open · **Priority:** High · **Tracking:** dr2 ·
+**See:** [ADR-0014](decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md);
+[ADR-0026](decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md)
+
+### Gap
+
+ADR-0014 retains a 6-hour cadence and all runs for 14 days, while the deployed
+implementation is daily/14-artifact retention. Its original 8-hour freshness
+threshold matched the design cadence but false-alerts continuously against the
+daily implementation, whose guard and runbook therefore use a 26-hour
+threshold. ADR-0014 marks only that threshold as superseded pending dr2; the
+cadence and retention decision has not been changed by fiat.
+
+Restoring the ADR cadence without redesign would retain 56 current-size
+artifacts, approximately 48.4 GiB before filesystem and Longhorn overhead, and
+would exceed the 32 GiB incident-remediation PVC. Ratifying daily retention
+instead would reduce the recovery-point objective and requires an explicit
+decision rather than silent drift.
+
+### Closure criteria
+
+Close only after a repository ADR explicitly chooses the cadence and retention,
+sizes both the local and Synology tiers for that choice, and makes the guard,
+runbook, architecture documentation, and schedule renderer agree. The chosen
+freshness threshold must include documented grace and a negative boundary
+fixture.
+
+### References
+
+- ADR-0014
+- ADR-0026
+- `_handoff/steps/dr1-DONE.md`
 
 ---
 

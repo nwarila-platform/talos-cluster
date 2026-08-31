@@ -184,6 +184,7 @@ def test_fresh_timestamp(checker: ModuleType) -> None:
     assert rc == 0
     assert reasons(client) == []
     assert "No drift detected" in stdout
+    assert "etcd snapshot CronJob freshness" in stdout
     assert stderr == ""
 
 
@@ -216,6 +217,21 @@ def test_malformed_timestamp_fails_closed(checker: ModuleType) -> None:
     assert rc != 0
     assert reasons(client) == ["EtcdSnapshotStale"]
     assert "malformed status.lastSuccessfulTime" in stdout
+
+
+def test_iso8601_superset_timestamps_fail_closed(checker: ModuleType) -> None:
+    malformed_values = (
+        "20260831T110000+00:00",
+        "2026-08-31 11:00:00+00:00",
+        "2026-08-31X11:00:00+00:00",
+        "2026-W36-1T11:00:00+00:00",
+    )
+    for value in malformed_values:
+        client = FakeClient(checker, value)
+        rc, stdout, _stderr = run_main(checker, client)
+        assert rc != 0, value
+        assert reasons(client) == ["EtcdSnapshotStale"], value
+        assert "malformed status.lastSuccessfulTime" in stdout, value
 
 
 def test_api_read_failure_fails_closed(checker: ModuleType) -> None:
@@ -282,6 +298,7 @@ def main() -> int:
         ("26-hour boundary", lambda: test_26_hour_boundary_is_fresh(checker)),
         ("stale etcd timestamp", lambda: test_stale_timestamp_fails_closed(checker)),
         ("malformed etcd timestamp", lambda: test_malformed_timestamp_fails_closed(checker)),
+        ("ISO-8601 superset timestamps rejected", lambda: test_iso8601_superset_timestamps_fail_closed(checker)),
         ("CronJob API read failure", lambda: test_api_read_failure_fails_closed(checker)),
         ("unrelated drift only", lambda: test_unrelated_drift_only_stays_distinct(checker)),
         ("combined stale and unrelated drift", lambda: test_combined_stale_and_unrelated_drift_emits_two_events(checker)),

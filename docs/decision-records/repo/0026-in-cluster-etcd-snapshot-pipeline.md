@@ -216,6 +216,9 @@ Chosen option: **Option 1.**
   `EtcdSnapshotStale` Event when `lastSuccessfulTime` is absent, malformed,
   future-dated, unreadable, or older than 26 hours. This is detection, not
   paging: no external Event or failed-Job notification sink exists.
+- The freshness guard observes CronJob success status, not the snapshot
+  artifact. It cannot prove that the PVC contains a decryptable snapshot;
+  artifact validation and a sacrificial restore drill remain separate gates.
 - The talosctl image digest is pinned in two places (talos-drift and this
   CronJob) and must move in lockstep with Talos upgrades.
 - Restore remains **undrilled** end-to-end for this pipeline's artifacts; the
@@ -223,9 +226,14 @@ Chosen option: **Option 1.**
 
 ### Neutral
 
-- 663.539 MiB snapshot → ~884.720 MiB SOPS artifact daily; 14 local + 14 Synology copies
-  consume 12.096 GiB on the PVC at steady state and 12.960 GiB at the safe
-  15-artifact pre-prune peak, before filesystem and Longhorn overhead.
+- 663.539 MiB snapshot → ~884.720 MiB SOPS artifact daily; 14 local artifacts
+  and 14 Synology copies are retained. The local set uses 12.096 GiB on the PVC
+  at steady state and 12.960 GiB at the safe 15-artifact pre-prune peak. The
+  Synology set adds approximately 12.096 GiB before backup-store overhead.
+- The 32 GiB PVC's margin-adjusted 15-artifact ceiling is 2,281,701,376 bytes
+  per artifact. Repeating the single observed 11.2% growth interval every 40
+  days reaches that ceiling in approximately 339 days; this is a planning
+  horizon rather than a forecast.
 - The GitHub Actions surface shrinks by one workflow with 0 lifetime
   successes.
 

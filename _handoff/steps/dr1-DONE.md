@@ -8,17 +8,19 @@
 
 ## Delivered
 
-- The etcd producer now takes a non-blocking exclusive lock on the mounted
-  `/data` directory before any artifact mutation. A contending run exits
-  non-zero without touching partials or finals, and kernel descriptor cleanup
-  releases the lock when the pod dies.
+- After validating the raw snapshot, the etcd producer takes a non-blocking
+  exclusive lock on `/data` before deriving any artifact path or installing a
+  cleanup trap. A contending run exits non-zero before invoking `date` or
+  arming cleanup, so every partial and final remains untouched; kernel
+  descriptor cleanup releases the lock when the pod dies.
 - The producer removes partials independently, checks
   `ceil(raw_bytes / 3) * 4 + 1,009 + 134,217,728` bytes of free space,
-  encrypts to a PID-scoped temporary path, rejects implausibly small output,
-  publishes without clobbering, and only then prunes finalized artifacts to
-  the newest 14. Every deletion log records path and measured size immediately
-  before `rm`.
-- The PVC request is 16Gi. The current `.db.sops.json` contract and explicit
+  encrypts to an atomically created, run-unique temporary path, rejects
+  implausibly small output, publishes without clobbering, and only then prunes
+  canonical finalized artifacts to the newest 14. A terminal assertion proves
+  the run's own artifact survived and the retained set remains bounded. Every
+  deletion log records path and measured size immediately before `rm`.
+- The PVC request is 32Gi. The current `.db.sops.json` contract and explicit
   SOPS JSON output are unchanged.
 - A Role in `dr-etcd-backup` grants only `get` on batch CronJob
   `etcd-snapshot`, bound to ServiceAccount `talos-drift/talos-drift`.
@@ -31,7 +33,11 @@
 
 For the measured 695,771,168-byte raw snapshot, the preflight projects a
 927,695,901-byte SOPS artifact and requires 1,061,913,629 available bytes after
-adding the 128 MiB safety margin.
+adding the 128 MiB safety margin. At the 15-artifact peak, the margin-adjusted
+32 GiB ceiling is 2,281,701,376 bytes (2,176 MiB) per artifact. Compounding the
+single observed 11.2% growth interval every 40 days reaches that ceiling in
+approximately 339 days; this is a planning horizon, not a forecast. Three
+Longhorn replicas allocate 96 GiB nominal for the 32 GiB request.
 
 ## Artifact Path and Size Ledger
 
@@ -61,10 +67,10 @@ Final free bytes:
 - The drift fixture proves fresh, absent, exact 26-hour boundary, stale,
   malformed, API-read failure, unrelated-drift-only, combined stale and drift,
   future timestamp, distinct Event, and Event-POST-failure behavior.
-- The full root Kustomize render, exact RBAC render assertions, DR value
-  renderer and selftest, repository selftests, and focused Python syntax checks
-  are recorded with their exact commands and output in
-  `/home/hellbomb/dr1-exchange/DR1-P3-REPORT.md`.
+- Final-commit and live-cluster gate attestation remains owner-run. This ledger
+  does not claim evidence from an operator-local path; the required offline
+  command is `kubectl kustomize clusters/talos-cluster`, followed by each named
+  repository guard and fixture against the final commit SHA.
 
 ## Accepted Residuals and Follow-Up
 
@@ -78,8 +84,11 @@ Final free bytes:
 - The restore runbook requires a snapshot manifest that this pipeline still
   does not produce. Artifact validation and a sacrificial restore drill remain
   separate gates.
-- **dr2:** reconcile the daily/14-artifact implementation with ADR-0014, which
-  still requires every 6 hours, all runs for 14 days. ADR-0014 was not edited.
+- **dr2 / TD-0023:** reconcile the daily/14-artifact implementation and its
+  26-hour guard with ADR-0014, which still requires every 6 hours, all runs for
+  14 days, and originally paired that cadence with an 8-hour threshold.
+  ADR-0014 now marks only the threshold as superseded pending dr2; its cadence
+  remains unchanged.
 - P2 observed Talos v1.13.5 versus pinned v1.13.7 and Kubernetes v1.36.2 versus
   pinned v1.36.3. That unrelated version drift was not changed in dr1.
 
@@ -88,9 +97,9 @@ Final free bytes:
 These gates cannot be completed without changing or reading live cluster state
 and therefore remain owner-run after Flux applies the committed manifests:
 
-1. Verify the resize at PVC request, PVC status, PV capacity, Longhorn
-   `spec.size`, mounted `df`, and all three healthy replicas; shrinking is not
-   a rollback option.
+1. Verify 32Gi at PVC request, PVC status, PV capacity, Longhorn `spec.size`,
+   and mounted `df`, plus all three healthy replicas; shrinking is not a
+   rollback option.
 2. Record the deployment/manual-run timestamp, run the CronJob, and prove
    `lastSuccessfulTime` advances past that timestamp.
 3. Append every producer-reported path and size plus the newest retained final
@@ -105,5 +114,5 @@ and therefore remain owner-run after Flux applies the committed manifests:
 
 Revert the implementation commit and reconcile Flux to restore the producer,
 RBAC, guard, and documentation. The PVC expansion is one-way: do not attempt to
-shrink the existing claim from 16Gi to 5Gi. If producer rollback is required,
+shrink the existing claim from 32Gi to 5Gi. If producer rollback is required,
 leave the expanded claim in place while reverting the other resources.

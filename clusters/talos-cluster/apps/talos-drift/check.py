@@ -20,6 +20,11 @@ SERVICEACCOUNT_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 TALOS_LOG_CONTAINER = "talos-version"
 ETCD_SNAPSHOT_CRONJOB_PATH = "/apis/batch/v1/namespaces/dr-etcd-backup/cronjobs/etcd-snapshot"
 ETCD_SNAPSHOT_MAX_AGE = timedelta(hours=26)
+RFC3339_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
+    r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?"
+    r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+)
 
 
 def parse_expected_nodes(value: str) -> dict[str, str]:
@@ -167,6 +172,8 @@ def check_etcd_snapshot_freshness(payload: dict[str, Any], now: datetime) -> str
     if value is None:
         return f"{ref} status.lastSuccessfulTime is absent"
     if not isinstance(value, str) or not value:
+        return f"{ref} has malformed status.lastSuccessfulTime {value!r}"
+    if RFC3339_TIMESTAMP.fullmatch(value) is None:
         return f"{ref} has malformed status.lastSuccessfulTime {value!r}"
 
     normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
@@ -343,7 +350,7 @@ def main(now: datetime | None = None) -> int:
     if etcd_problem or problems:
         return 1
 
-    print("No drift detected across read-only coverage: etcd snapshot freshness, Kubernetes/Talos version pins, node InternalIPs, and Flux Ready state.")
+    print("No drift detected across read-only coverage: etcd snapshot CronJob freshness, Kubernetes/Talos version pins, node InternalIPs, and Flux Ready state.")
     return 0
 
 

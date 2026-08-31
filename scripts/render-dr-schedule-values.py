@@ -139,13 +139,10 @@ def recurringjob_retain(path: Path) -> int:
 
 
 def etcd_local_retention(path: Path) -> int:
-    pattern = (
-        r"(?m)^    find /data -maxdepth 1 -type f -name 'etcd-\*\.db\.sops\.json' -print "
-        r"\| sort \| head -n -([0-9]+) \| while IFS= read -r old; do$"
-    )
+    pattern = r"(?m)^    RETAINED_LIMIT=([0-9]+)$"
     matches = re.findall(pattern, read_text(path))
     if len(matches) != 1:
-        raise RenderError(f"{path} etcd local retention prune line must occur exactly once, found {len(matches)}")
+        raise RenderError(f"{path} etcd local retention limit must occur exactly once, found {len(matches)}")
     return int(matches[0])
 
 
@@ -192,7 +189,10 @@ def render_adr_0026(text: str, values: DrScheduleValues) -> str:
         "ADR-0026 etcd Longhorn backup time and retention",
     )
     rendered = replace_once(
-        r"^(- 663\.539 MiB snapshot \N{RIGHTWARDS ARROW} ~884\.720 MiB SOPS artifact daily; )([0-9]+)( local \+ )([0-9]+)( Synology copies)$",
+        (
+            r"^(- 663\.539 MiB snapshot \N{RIGHTWARDS ARROW} ~884\.720 MiB SOPS artifact daily; )"
+            r"([0-9]+)( local artifacts\n  and )([0-9]+)( Synology copies are retained\.)"
+        ),
         rf"\g<1>{values.etcd_local_retain}\g<3>{values.etcd_longhorn_retain}\g<5>",
         rendered,
         "ADR-0026 etcd local and Synology retention",

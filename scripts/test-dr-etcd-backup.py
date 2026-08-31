@@ -3,21 +3,46 @@
 
 from __future__ import annotations
 
+import math
 import os
+import shutil
 import signal
 import subprocess
 import tempfile
+import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGMAP = ROOT / "clusters/talos-cluster/apps/dr-etcd-backup/configmap-encrypt-script.yaml"
+APP = ROOT / "clusters/talos-cluster/apps/dr-etcd-backup"
+ADR_0014 = ROOT / "docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md"
+ADR_0026 = ROOT / "docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md"
+TECH_DEBT = ROOT / "docs/tech-debt.md"
+LEDGER = ROOT / "_handoff/steps/dr1-DONE.md"
 STAMP = "2026-08-31T030000Z"
 FINAL_SUFFIX = ".db.sops.json"
 MIN_SNAPSHOT_BYTES = 10_000_000
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def compact(path: Path) -> str:
+    return " ".join(read(path).split())
+
+
+def load_yaml(path: Path) -> dict:
+    value = yaml.safe_load(read(path))
+    if not isinstance(value, dict):
+        raise AssertionError(f"{path} must parse to a YAML mapping")
+    return value
 
 
 def extract_encrypt_script() -> str:
@@ -43,6 +68,7 @@ class Fixture:
     work: Path
     bin: Path
     script: Path
+    tool_markers: dict[str, Path]
 
     @classmethod
     def create(cls, root: Path) -> "Fixture":
@@ -66,11 +92,42 @@ class Fixture:
 
         write_executable(
             bin_dir / "date",
-            "#!/bin/sh\nprintf '%s\\n' \"${TEST_STAMP:?}\"\n",
+            """#!/bin/sh
+printf 'called\n' >>"${DATE_MARKER:?}"
+if [ "${2:-}" = "-d" ]; then
+  [ "${3:-}" != "${TEST_REJECT_DATE:-}" ] || exit 1
+  printf '%s\n' "${3:?}"
+  exit 0
+fi
+printf '%s\n' "${TEST_STAMP:?}"
+""",
         )
         write_executable(
             bin_dir / "df",
             """#!/bin/sh
+printf 'called\n' >>"${DF_MARKER:?}"
+if [ -n "${DF_MUTATE_ON_CALL:-}" ]; then
+  calls=$(wc -l <"$DF_MARKER")
+  if [ -n "${DF_REMOVE_OUT_ON_CALL:-}" ] && [ "$calls" -eq "$DF_REMOVE_OUT_ON_CALL" ]; then
+    rm -f -- "${DF_OUT_PATH:?}"
+  fi
+  if [ "$calls" -eq "$DF_MUTATE_ON_CALL" ]; then
+    case "${DF_MUTATION:?}" in
+      remove-out) rm -f -- "${DF_OUT_PATH:?}" ;;
+      directory-out) rm -f -- "${DF_OUT_PATH:?}"; mkdir -- "${DF_OUT_PATH:?}" ;;
+      empty-out) : >"${DF_OUT_PATH:?}" ;;
+      small-out) printf 'x' >"${DF_OUT_PATH:?}" ;;
+      add-finals)
+        day=1
+        while [ "$day" -le 14 ]; do
+          printf 'late-final' >"${DF_DATA_PATH:?}/etcd-2026-07-$(printf '%02d' "$day")T030000Z.db.sops.json"
+          day=$((day + 1))
+        done
+        ;;
+      *) echo "unknown DF_MUTATION: $DF_MUTATION" >&2; exit 97 ;;
+    esac
+  fi
+fi
 printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
 printf 'fixture 20000000 0 %s 0%% %s\n' "${TEST_AVAILABLE_KIB:-20000000}" "${2:-${1:-unknown}}"
 """,
@@ -78,9 +135,7 @@ printf 'fixture 20000000 0 %s 0%% %s\n' "${TEST_AVAILABLE_KIB:-20000000}" "${2:-
         write_executable(
             bin_dir / "sops",
             """#!/bin/sh
-if [ -n "${SOPS_MARKER:-}" ]; then
-  : >"$SOPS_MARKER"
-fi
+printf 'called\n' >>"${SOPS_MARKER:?}"
 if [ "${SOPS_FAIL:-0}" = 1 ]; then
   echo 'injected sops failure' >&2
   exit 42
@@ -94,27 +149,50 @@ output_size=$((size + ${SOPS_SIZE_DELTA:-1009}))
 python3 -c 'import os, sys; os.ftruncate(1, int(sys.argv[1]))' "$output_size"
 """,
         )
-        return cls(root=root, data=data, work=work, bin=bin_dir, script=script)
+        tool_markers = {name: root / f"{name}-called" for name in ("date", "df", "sops")}
+        return cls(root=root, data=data, work=work, bin=bin_dir, script=script, tool_markers=tool_markers)
 
-    def run(self, **overrides: str) -> subprocess.CompletedProcess[str]:
+    def environment(self, overrides: dict[str, str] | None = None) -> dict[str, str]:
         env = os.environ.copy()
         env.update(
             {
                 "AGE_RECIPIENT": "age1fixture",
                 "PATH": f"{self.bin}:{env['PATH']}",
                 "TEST_STAMP": STAMP,
+                "DATE_MARKER": str(self.tool_markers["date"]),
+                "DF_MARKER": str(self.tool_markers["df"]),
+                "SOPS_MARKER": str(self.tool_markers["sops"]),
             }
         )
-        env.update(overrides)
-        return subprocess.run(
+        if overrides:
+            env.update(overrides)
+        return env
+
+    def assert_tool_invocations(self, expected_tools: set[str]) -> None:
+        actual_tools = {name for name, marker in self.tool_markers.items() if marker.is_file() and marker.stat().st_size}
+        if actual_tools != expected_tools:
+            raise AssertionError(
+                f"stub invocation mismatch: expected {sorted(expected_tools)!r}, got {sorted(actual_tools)!r}"
+            )
+
+    def run(
+        self,
+        *,
+        expected_tools: set[str] | None = None,
+        **overrides: str,
+    ) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
             ["/bin/sh", str(self.script)],
             cwd=self.root,
-            env=env,
+            env=self.environment(overrides),
             text=True,
             capture_output=True,
             check=False,
             timeout=15,
         )
+        if expected_tools is not None:
+            self.assert_tool_invocations(expected_tools)
+        return result
 
 
 def final_path(data: Path, stamp: str) -> Path:
@@ -143,23 +221,135 @@ def seed_mixed_nonfinals(data: Path) -> tuple[list[Path], Path]:
     return partials, legacy_final
 
 
+def install_find_stub(
+    fixture: Fixture,
+    fail_on_call: int | None = None,
+    *,
+    omit_out_on_call: int | None = None,
+) -> None:
+    real_find = shutil.which("find")
+    if real_find is None:
+        raise AssertionError("find is required by the fixture")
+    marker = fixture.root / "find-calls"
+    capture = fixture.root / "find-capture"
+    fail_condition = "false" if fail_on_call is None else f'[ "$calls" -eq {fail_on_call} ]'
+    omit_condition = "false" if omit_out_on_call is None else f'[ "$calls" -eq {omit_out_on_call} ]'
+    write_executable(
+        fixture.bin / "find",
+        f"""#!/bin/sh
+printf 'called\\n' >>"{marker}"
+calls=$(wc -l <"{marker}")
+if {fail_condition}; then
+  echo 'injected find I/O failure' >&2
+  exit 42
+fi
+if {omit_condition}; then
+  "{real_find}" "$@" >"{capture}" || exit $?
+  while IFS= read -r found; do
+    [ "$found" = "${{FIND_OUT_PATH:?}}" ] || printf '%s\\n' "$found"
+  done <"{capture}"
+  exit 0
+fi
+exec "{real_find}" "$@"
+""",
+    )
+
+
 def assert_source_contract() -> None:
     source = extract_encrypt_script()
     required = (
         "exec 9</data",
         'flock -n 9 || { echo "FATAL: another backup run holds /data" >&2; exit 1; }',
+        'RETAINED_LIMIT=14',
+        "FINAL_NAME_PATTERN='etcd-[0-9]",
+        'TMP=$(mktemp "$OUT.XXXXXX.partial")',
         "--input-type binary --output-type json",
         'OUT="/data/etcd-$STAMP.db.sops.json"',
+        'terminal_failure "$OUT does not exist"',
+        'terminal_failure "$OUT is not a regular file"',
+        'terminal_failure "$OUT is empty"',
+        'terminal_failure "$OUT is absent from the retained finalized set"',
+        'terminal_failure "retained finalized count $FINAL_COUNT exceeds $RETAINED_LIMIT"',
+        'date -u -d "$candidate_stamp" +%Y-%m-%dT%H%M%SZ',
     )
     for fragment in required:
         if fragment not in source:
             raise AssertionError(f"missing producer contract: {fragment}")
     if 'echo "pruning final: $old ($old_size bytes)"\n  rm -- "$old"' not in source:
         raise AssertionError("final path and measured size must be logged immediately before rm")
-    forbidden = (".backup.lock", "-mmin", "find -newer", "db.sops\"")
+    lock_index = source.index("flock -n 9")
+    temp_index = source.index('TMP=$(mktemp "$OUT.XXXXXX.partial")')
+    trap_index = source.index("trap cleanup EXIT")
+    if not lock_index < temp_index < trap_index:
+        raise AssertionError("lock must precede unique TMP creation and EXIT trap installation")
+    forbidden = (".backup.lock", "-mmin", "find -newer", "db.sops\"", 'TMP="$OUT.$$.partial"')
     for fragment in forbidden:
         if fragment in source:
             raise AssertionError(f"forbidden producer contract: {fragment}")
+
+
+def check_r1_ledger_claims() -> None:
+    ledger = read(LEDGER)
+    normalized_ledger = compact(LEDGER)
+    assert "PID-scoped" not in ledger
+    assert "before deriving any artifact path or installing a cleanup trap" in normalized_ledger
+    assert "atomically created, run-unique temporary path" in normalized_ledger
+
+
+def check_r4_threshold_annotation() -> None:
+    adr_0014 = read(ADR_0014)
+    normalized_adr_0014 = compact(ADR_0014)
+    assert "| etcd snapshot | Every 6 hours plus before risky platform changes |" in adr_0014
+    assert "SUPERSEDED pending dr2" in normalized_adr_0014
+    assert "implemented daily CronJob uses a 26-hour threshold" in normalized_adr_0014
+
+
+def check_r6_capacity_horizon() -> None:
+    pvc = load_yaml(APP / "pvc.yaml")
+    assert pvc["spec"]["resources"]["requests"]["storage"] == "32Gi"
+    margin_adjusted_limit = (32 * 1024**3 - 128 * 1024**2) // 15
+    assert margin_adjusted_limit == 2_281_701_376
+    horizon_days = math.log(margin_adjusted_limit / 927_695_901, 1.112) * 40
+    assert round(horizon_days) == 339
+    for document in (compact(APP / "pvc.yaml"), compact(LEDGER)):
+        assert "2,281,701,376 bytes (2,176 MiB)" in document
+        assert "approximately 339 days" in document
+        assert "96 GiB nominal" in document
+
+
+def check_r8_work_volume_headroom() -> None:
+    cronjob = load_yaml(APP / "cronjob.yaml")
+    volumes = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"]
+    work = next(volume for volume in volumes if volume.get("name") == "work")
+    assert work["emptyDir"]["sizeLimit"] == "2Gi"
+    assert "695,771,168-byte measured raw snapshot uses 32.4% of 2 GiB" in read(APP / "cronjob.yaml")
+
+
+def check_r11_dr2_technical_debt() -> None:
+    register = read(TECH_DEBT)
+    assert "| TD-0023 | Reconcile etcd snapshot cadence, retention, and staleness threshold | Open | **High** |" in register
+    td_0023 = register.split("## TD-0023", 1)[1]
+    assert "dr2" in td_0023
+    assert "6-hour cadence" in td_0023
+    assert "daily/14-artifact" in td_0023
+    assert "8-hour" in td_0023 and "26-hour" in td_0023
+    assert "48.4 GiB" in td_0023
+
+
+def check_r12_evidence_honesty() -> None:
+    ledger = read(LEDGER)
+    assert "/home/hellbomb" not in ledger
+    assert "Final-commit and live-cluster gate attestation remains owner-run" in ledger
+
+
+def check_r13_precision_corrections() -> None:
+    normalized_adr_0026 = compact(ADR_0026)
+    assert "14 local artifacts and 14 Synology copies are retained" in normalized_adr_0026
+    assert "The local set uses 12.096 GiB on the PVC" in normalized_adr_0026
+    assert "The Synology set adds approximately 12.096 GiB" in normalized_adr_0026
+    assert "observes CronJob success status, not the snapshot artifact" in normalized_adr_0026
+    assert "cannot prove that the PVC contains a decryptable snapshot" in normalized_adr_0026
+    assert "109 MB snapshot" not in read(APP / "talosconfig.sops.yaml")
 
 
 def case_lock_held_touches_nothing() -> None:
@@ -173,7 +363,7 @@ def case_lock_held_touches_nothing() -> None:
             import fcntl
 
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            result = fixture.run()
+            result = fixture.run(expected_tools=set())
         finally:
             os.close(descriptor)
         after = {path.name: path.read_bytes() for path in fixture.data.iterdir()}
@@ -182,6 +372,43 @@ def case_lock_held_touches_nothing() -> None:
         assert before == after
         assert existing.exists()
         assert all(path.exists() for path in partials)
+
+
+def case_lock_refusal_cannot_unlink_colliding_partial() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-lock-collision-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        ready = fixture.root / "flock-ready"
+        release = fixture.root / "flock-release"
+        write_executable(
+            fixture.bin / "flock",
+            """#!/bin/sh
+: >"${FLOCK_READY:?}"
+while [ ! -e "${FLOCK_RELEASE:?}" ]; do
+  sleep 0.01
+done
+exit 1
+""",
+        )
+        process = subprocess.Popen(
+            ["/bin/sh", str(fixture.script)],
+            cwd=fixture.root,
+            env=fixture.environment({"FLOCK_READY": str(ready), "FLOCK_RELEASE": str(release)}),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        deadline = time.monotonic() + 5
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), "contender did not reach flock"
+        collided = Path(f"{final_path(fixture.data, STAMP)}.{process.pid}.partial")
+        collided.write_bytes(b"winner-in-flight-ciphertext")
+        release.touch()
+        stdout, stderr = process.communicate(timeout=5)
+        assert process.returncode != 0, stdout
+        assert f"FATAL: another backup run holds {fixture.data}" in stderr
+        assert collided.read_bytes() == b"winner-in-flight-ciphertext"
+        fixture.assert_tool_invocations(set())
 
 
 def case_lock_released_after_process_death() -> None:
@@ -204,7 +431,7 @@ def case_lock_released_after_process_death() -> None:
             assert holder.stdout.readline().strip() == "READY"
             os.killpg(holder.pid, signal.SIGKILL)
             holder.wait(timeout=5)
-            result = fixture.run()
+            result = fixture.run(expected_tools={"date", "df", "sops"})
         finally:
             if holder.poll() is None:
                 os.killpg(holder.pid, signal.SIGKILL)
@@ -218,10 +445,12 @@ def case_same_second_out_is_not_clobbered() -> None:
         fixture = Fixture.create(Path(tmp))
         out = final_path(fixture.data, STAMP)
         out.write_bytes(b"existing-final")
-        result = fixture.run()
+        partials, _legacy = seed_mixed_nonfinals(fixture.data)
+        result = fixture.run(expected_tools={"date"})
         assert result.returncode != 0
         assert f"FATAL: refusing to overwrite existing finalized snapshot: {out}" in result.stderr
         assert out.read_bytes() == b"existing-final"
+        assert all(not path.exists() for path in partials)
         assert not list(fixture.data.glob("*.partial"))
 
 
@@ -231,8 +460,8 @@ def case_capacity_failure_preserves_finals() -> None:
         existing = seed_finals(fixture.data, 1)[0]
         original = existing.read_bytes()
         partials, _legacy = seed_mixed_nonfinals(fixture.data)
-        marker = fixture.root / "sops-called"
-        result = fixture.run(TEST_AVAILABLE_KIB="1", SOPS_MARKER=str(marker))
+        marker = fixture.tool_markers["sops"]
+        result = fixture.run(expected_tools={"date", "df"}, TEST_AVAILABLE_KIB="1")
         assert result.returncode != 0
         size = MIN_SNAPSHOT_BYTES + 1
         projected = ((size + 2) // 3) * 4 + 1009
@@ -254,7 +483,7 @@ def case_sops_failure_preserves_finals_and_cleans_tmp() -> None:
         existing = seed_finals(fixture.data, 1)[0]
         original = existing.read_bytes()
         partials, _legacy = seed_mixed_nonfinals(fixture.data)
-        result = fixture.run(SOPS_FAIL="1")
+        result = fixture.run(expected_tools={"date", "df", "sops"}, SOPS_FAIL="1")
         assert result.returncode != 0
         assert f"FATAL: sops encryption failed for {fixture.work / 'etcd.db'}" in result.stderr.splitlines()
         assert existing.read_bytes() == original
@@ -268,12 +497,151 @@ def case_implausibly_small_ciphertext_is_rejected() -> None:
         fixture = Fixture.create(Path(tmp))
         existing = seed_finals(fixture.data, 1)[0]
         original = existing.read_bytes()
-        result = fixture.run(SOPS_SIZE_DELTA=f"-{MIN_SNAPSHOT_BYTES}")
+        result = fixture.run(
+            expected_tools={"date", "df", "sops"},
+            SOPS_SIZE_DELTA=f"-{MIN_SNAPSHOT_BYTES}",
+        )
         assert result.returncode != 0
         assert "FATAL: encrypted output is implausibly small" in result.stderr
         assert existing.read_bytes() == original
         assert not list(fixture.data.glob("*.partial"))
         assert not final_path(fixture.data, STAMP).exists()
+
+
+def case_terminal_assertion_rejects_missing_own_out() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-terminal-assert-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        out = final_path(fixture.data, STAMP)
+        result = fixture.run(
+            expected_tools={"date", "df", "sops"},
+            DF_MUTATE_ON_CALL="3",
+            DF_MUTATION="remove-out",
+            DF_OUT_PATH=str(out),
+        )
+        assert result.returncode != 0
+        assert "FATAL: terminal artifact assertion failed" in result.stderr
+        assert not out.exists()
+
+
+def case_terminal_assertion_rejects_bad_own_out(mutation: str, diagnostic: str) -> None:
+    with tempfile.TemporaryDirectory(prefix=f".dr-etcd-terminal-{mutation}-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        out = final_path(fixture.data, STAMP)
+        result = fixture.run(
+            expected_tools={"date", "df", "sops"},
+            DF_MUTATE_ON_CALL="3",
+            DF_MUTATION=mutation,
+            DF_OUT_PATH=str(out),
+        )
+        assert result.returncode != 0
+        assert "FATAL: terminal artifact assertion failed" in result.stderr
+        assert diagnostic in result.stderr
+
+
+def case_terminal_assertion_rejects_retained_count_over_limit() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-terminal-count-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        out = final_path(fixture.data, STAMP)
+        result = fixture.run(
+            expected_tools={"date", "df", "sops"},
+            DF_MUTATE_ON_CALL="3",
+            DF_MUTATION="add-finals",
+            DF_OUT_PATH=str(out),
+            DF_DATA_PATH=str(fixture.data),
+        )
+        assert result.returncode != 0
+        assert "FATAL: terminal artifact assertion failed: retained finalized count 15 exceeds 14" in result.stderr
+
+
+def case_terminal_assertion_requires_own_out_in_inventory() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-terminal-membership-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        out = final_path(fixture.data, STAMP)
+        install_find_stub(fixture, omit_out_on_call=6)
+        result = fixture.run(
+            expected_tools={"date", "df", "sops"},
+            FIND_OUT_PATH=str(out),
+        )
+        assert result.returncode != 0
+        assert f"FATAL: terminal artifact assertion failed: {out} is absent from the retained finalized set" in result.stderr
+        assert out.is_file() and out.stat().st_size >= MIN_SNAPSHOT_BYTES
+
+
+def case_find_failure_fails_closed(fail_on_call: int) -> None:
+    with tempfile.TemporaryDirectory(prefix=f".dr-etcd-find-{fail_on_call}-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        originals = seed_finals(fixture.data, 14)
+        before = {path.name: path.read_bytes() for path in originals}
+        install_find_stub(fixture, fail_on_call)
+        result = fixture.run(expected_tools=None)
+        assert result.returncode != 0
+        assert "FATAL: could not inventory finalized snapshots" in result.stderr
+        surviving = {path.name: path.read_bytes() for path in originals if path.exists()}
+        expected_survivors = 14 if fail_on_call <= 4 else 13
+        assert len(surviving) == expected_survivors
+        assert all(before[name] == content for name, content in surviving.items())
+        assert final_path(fixture.data, STAMP).exists() is (fail_on_call >= 3)
+
+
+def case_future_final_is_rejected_before_publication() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-future-final-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        future_finals = [
+            final_path(fixture.data, f"2026-09-{day:02d}T030000Z")
+            for day in range(1, 15)
+        ]
+        for path in future_finals:
+            path.write_bytes(b"future-final")
+        before = {path.name: path.read_bytes() for path in future_finals}
+        result = fixture.run(expected_tools={"date"})
+        assert result.returncode != 0
+        assert "FATAL: future finalized snapshot" in result.stderr
+        assert {path.name: path.read_bytes() for path in future_finals} == before
+        assert not final_path(fixture.data, STAMP).exists()
+
+
+def case_newline_final_name_is_rejected() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-newline-final-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        ordinary = seed_finals(fixture.data, 14)
+        malformed = fixture.data / "etcd-2026-08-15T030000Z\nextra.db.sops.json"
+        malformed.write_bytes(b"newline-final")
+        before = {path.name: path.read_bytes() for path in (*ordinary, malformed)}
+        result = fixture.run(expected_tools={"date"})
+        assert result.returncode != 0
+        assert "FATAL: invalid finalized snapshot name" in result.stderr
+        assert {path.name: path.read_bytes() for path in (*ordinary, malformed)} == before
+        assert not final_path(fixture.data, STAMP).exists()
+
+
+def case_impossible_calendar_final_name_is_rejected() -> None:
+    with tempfile.TemporaryDirectory(prefix=".dr-etcd-calendar-final-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        invalid_stamp = "2026-02-30T030000Z"
+        malformed = final_path(fixture.data, invalid_stamp)
+        malformed.write_bytes(b"impossible-calendar-final")
+        result = fixture.run(expected_tools={"date"}, TEST_REJECT_DATE=invalid_stamp)
+        assert result.returncode != 0
+        assert f"FATAL: invalid finalized snapshot name: {malformed}" in result.stderr
+        assert malformed.read_bytes() == b"impossible-calendar-final"
+        assert not final_path(fixture.data, STAMP).exists()
+
+
+def case_non_executable_stub_is_rejected(tool: str) -> None:
+    with tempfile.TemporaryDirectory(prefix=f".dr-etcd-stub-{tool}-", dir=ROOT) as tmp:
+        fixture = Fixture.create(Path(tmp))
+        (fixture.bin / tool).chmod(0o644)
+        try:
+            fixture.run(expected_tools={"date", "df", "sops"})
+        except AssertionError as exc:
+            assert "stub invocation mismatch" in str(exc)
+            assert tool not in {
+                name
+                for name, marker in fixture.tool_markers.items()
+                if marker.is_file() and marker.stat().st_size
+            }
+        else:
+            raise AssertionError(f"non-executable {tool} stub was not detected")
 
 
 def case_final_count(count: int) -> None:
@@ -283,7 +651,7 @@ def case_final_count(count: int) -> None:
         partials, legacy_final = seed_mixed_nonfinals(fixture.data)
         partial_sizes = {path: path.stat().st_size for path in partials}
         original_sizes = {path: path.stat().st_size for path in originals}
-        result = fixture.run()
+        result = fixture.run(expected_tools={"date", "df", "sops"})
         assert result.returncode == 0, result.stderr
         assert all(not path.exists() for path in partials)
         for path, size in partial_sizes.items():
@@ -309,12 +677,46 @@ def case_final_count(count: int) -> None:
 def main() -> int:
     cases: list[tuple[str, Callable[[], None]]] = [
         ("source contract", assert_source_contract),
+        ("R1 ledger claims", check_r1_ledger_claims),
+        ("R4 threshold annotation", check_r4_threshold_annotation),
+        ("R6 capacity horizon", check_r6_capacity_horizon),
+        ("R8 work-volume headroom", check_r8_work_volume_headroom),
+        ("R11 dr2 technical debt", check_r11_dr2_technical_debt),
+        ("R12 evidence honesty", check_r12_evidence_honesty),
+        ("R13 precision corrections", check_r13_precision_corrections),
         ("lock held touches nothing", case_lock_held_touches_nothing),
+        ("lock refusal preserves colliding winner partial", case_lock_refusal_cannot_unlink_colliding_partial),
         ("lock released after process death", case_lock_released_after_process_death),
         ("same-second OUT no-clobber", case_same_second_out_is_not_clobbered),
         ("capacity failure preserves finals", case_capacity_failure_preserves_finals),
         ("SOPS failure preserves finals", case_sops_failure_preserves_finals_and_cleans_tmp),
         ("implausibly small ciphertext", case_implausibly_small_ciphertext_is_rejected),
+        ("terminal assertion rejects missing own OUT", case_terminal_assertion_rejects_missing_own_out),
+        (
+            "terminal assertion rejects directory OUT",
+            lambda: case_terminal_assertion_rejects_bad_own_out(
+                "directory-out", "is not a regular file"
+            ),
+        ),
+        (
+            "terminal assertion rejects empty OUT",
+            lambda: case_terminal_assertion_rejects_bad_own_out(
+                "empty-out", "is empty"
+            ),
+        ),
+        (
+            "terminal assertion rejects implausibly small OUT",
+            lambda: case_terminal_assertion_rejects_bad_own_out(
+                "small-out", "is implausibly small"
+            ),
+        ),
+        ("terminal assertion enforces retained limit", case_terminal_assertion_rejects_retained_count_over_limit),
+        ("terminal assertion requires own OUT in retained inventory", case_terminal_assertion_requires_own_out_in_inventory),
+        *((f"find failure call {call}", lambda call=call: case_find_failure_fails_closed(call)) for call in range(1, 7)),
+        ("future finalized names fail closed", case_future_final_is_rejected_before_publication),
+        ("newline finalized name fails closed", case_newline_final_name_is_rejected),
+        ("impossible calendar finalized name fails closed", case_impossible_calendar_final_name_is_rejected),
+        *((f"non-executable {tool} stub is rejected", lambda tool=tool: case_non_executable_stub_is_rejected(tool)) for tool in ("date", "df", "sops")),
         *((f"write-then-prune with {count} finals", lambda count=count: case_final_count(count)) for count in (0, 1, 14, 15)),
     ]
     failed = False
