@@ -152,6 +152,36 @@ writes/reads/deletes a probe file proves the full path end-to-end (this is the
 pre-cutover verification method; keep it clean and delete the pod, PVC, and PV
 afterward).
 
+## Recover A Wedged etcd Snapshot Producer
+
+The etcd producer deliberately fails closed before publishing or pruning when
+`/data` contains either of these states:
+
+- `FATAL: invalid finalized snapshot name` means a file matching
+  `etcd-*.db.sops.json` does not have the exact canonical
+  `etcd-YYYY-MM-DDTHHMMSSZ.db.sops.json` name, or its timestamp fields are not a
+  real UTC calendar time.
+- `FATAL: future finalized snapshot ... sorts after current output` means a
+  canonical artifact is later than the producer's current UTC stamp. This can
+  persist after a bad clock is corrected backward.
+
+Do not loosen the validator, rename the file to invent a timestamp, or start a
+second writer. With owner approval, stop scheduled and manual producers, then
+use a maintenance workload that mounts only the DR PVC to inspect the exact
+path reported in the log. For a malformed name, copy the file to approved
+offline quarantine if it may be valuable, then remove it from `/data`. For a
+future-dated final, first verify node UTC time is correct; fix the clock if it
+is not. If the clock is correct, quarantine or remove the future artifact from
+`/data` instead of backdating it. Preserve at least one known-good canonical
+final throughout recovery.
+
+After the offending path is outside `/data`, remove the maintenance workload,
+resume the single producer, and run one owner-approved backup. Recovery is
+complete only when the Job exits zero, its log contains `terminal artifact
+assertion passed`, the new canonical artifact remains on the PVC, and the
+CronJob `lastSuccessfulTime` advances. Record every moved or removed path and
+its measured size in the incident log.
+
 ## Longhorn Restore Procedure
 
 Restore Longhorn data into a new volume first. Do not overwrite the production

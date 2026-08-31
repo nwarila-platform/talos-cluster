@@ -84,6 +84,7 @@
 !/clusters/talos-cluster/apps/dr-etcd-backup/pvc.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/talosconfig.sops.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/configmap-encrypt-script.yaml
+!/clusters/talos-cluster/apps/dr-etcd-backup/rbac-talos-drift.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/cronjob.yaml
 !/clusters/talos-cluster/apps/vault-config-operator/
 !/clusters/talos-cluster/apps/vault-config-operator/kustomization.yaml
@@ -430,6 +431,7 @@
 !/scripts/sync-deploy-repos.sh
 !/scripts/backup-handoff-ledger.sh
 !/scripts/s3-sync.sh
+!/scripts/test-dr-etcd-backup.py
 !/scripts/test-talos-drift-readonly.py
 !/scripts/upgrade.sh
 
@@ -461,6 +463,7 @@
 !/_handoff/
 !/_handoff/steps/
 !/_handoff/steps/cft3a-mvp-DONE.md
+!/_handoff/steps/dr1-DONE.md
 !/docs/decision-records/
 !/docs/decision-records/README.md
 !/docs/decision-records/org/

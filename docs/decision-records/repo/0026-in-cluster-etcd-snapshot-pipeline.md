@@ -196,8 +196,8 @@ Chosen option: **Option 1.**
 4. Decrypt proof: performed 2026-07-11 with the real keypair (byte-identical
    round-trip). MUST be repeated as part of the first restore drill.
 5. Rotation: the scoped talosconfig expires **2028-07-10**; re-mint and
-   re-encrypt before then (silent expiry would fail the Job visibly, but
-   monitoring for CronJob failure is a tracked gap — see Negative).
+   re-encrypt before then (expiry fails the snapshot Job and the hourly
+   freshness guard; there is still no external paging sink — see Negative).
 
 ## Consequences
 
@@ -212,9 +212,13 @@ Chosen option: **Option 1.**
 
 ### Negative
 
-- No alerting yet on CronJob failure — a silently failing snapshot job would
-  only be caught by inspection until the workflow-health lane (SM4) grows an
-  in-cluster equivalent. Tracked.
+- The hourly `talos-drift` guard fails closed and emits a distinct
+  `EtcdSnapshotStale` Event when `lastSuccessfulTime` is absent, malformed,
+  future-dated, unreadable, or older than 26 hours. This is detection, not
+  paging: no external Event or failed-Job notification sink exists.
+- The freshness guard observes CronJob success status, not the snapshot
+  artifact. It cannot prove that the PVC contains a decryptable snapshot;
+  artifact validation and a sacrificial restore drill remain separate gates.
 - The talosctl image digest is pinned in two places (talos-drift and this
   CronJob) and must move in lockstep with Talos upgrades.
 - Restore remains **undrilled** end-to-end for this pipeline's artifacts; the
@@ -222,8 +226,14 @@ Chosen option: **Option 1.**
 
 ### Neutral
 
-- ~110 MB snapshot → ~147 MB ciphertext daily; 14 local + 14 Synology copies
-  is a few GB — negligible on both tiers.
+- 663.539 MiB snapshot → ~884.720 MiB SOPS artifact daily; 14 local artifacts
+  and 14 Synology copies are retained. The local set uses 12.096 GiB on the PVC
+  at steady state and 12.960 GiB at the safe 15-artifact pre-prune peak. The
+  Synology set adds approximately 12.096 GiB before backup-store overhead.
+- The 32 GiB PVC's margin-adjusted 15-artifact ceiling is 2,281,701,376 bytes
+  per artifact. Repeating the single observed 11.2% growth interval every 40
+  days reaches that ceiling in approximately 339 days; this is a planning
+  horizon rather than a forecast.
 - The GitHub Actions surface shrinks by one workflow with 0 lifetime
   successes.
 

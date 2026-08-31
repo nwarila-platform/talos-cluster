@@ -22,6 +22,10 @@ data:
 
     SNAP=/work/etcd.db
     MIN_BYTES=10000000
+    SOPS_ENVELOPE_BYTES=1009
+    FREE_SPACE_MARGIN_BYTES=134217728
+    RETAINED_LIMIT=14
+    FINAL_NAME_PATTERN='etcd-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.db.sops.json'
 
     [ -s "$SNAP" ] || { echo "FATAL: $SNAP missing or empty" >&2; exit 1; }
     SIZE=$(stat -c%s "$SNAP")
@@ -30,18 +34,262 @@ data:
       exit 1
     fi
 
+    # concurrencyPolicy does not cover Jobs created manually from the CronJob.
+    # Locking the mounted directory allocates no lock artifact on a full volume.
+    exec 9</data
+    flock -n 9 || { echo "FATAL: another backup run holds /data" >&2; exit 1; }
+
     STAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
     OUT="/data/etcd-$STAMP.db.sops.json"
-    sops --encrypt --age "$AGE_RECIPIENT" \
-      --input-type binary --output-type json "$SNAP" > "$OUT.partial"
-    mv "$OUT.partial" "$OUT"
-    echo "encrypted: $SIZE bytes -> $OUT ($(stat -c%s "$OUT") bytes)"
+
+    # Under the directory lock, no cooperating producer can own a partial.
+    # Partials are never finalized backups and never count toward retention.
+    for partial in /data/*.partial; do
+      [ -f "$partial" ] || continue
+      partial_size=$(stat -c%s -- "$partial")
+      echo "removing partial: $partial ($partial_size bytes)"
+      rm -- "$partial"
+    done
+
+    validate_final_names() {
+      if ! INVALID_FINAL=$(find /data -maxdepth 1 -type f -name 'etcd-*.db.sops.json' ! -name "$FINAL_NAME_PATTERN" -print -quit); then
+        echo "FATAL: could not inventory finalized snapshots" >&2
+        exit 1
+      fi
+      [ -z "$INVALID_FINAL" ] || {
+        echo "FATAL: invalid finalized snapshot name: $INVALID_FINAL" >&2
+        exit 1
+      }
+    }
+
+    decimal_two_digits() {
+      decimal_tens=${1%?}
+      decimal_ones=${1#?}
+      DECIMAL_VALUE=$((decimal_tens * 10 + decimal_ones))
+    }
+
+    valid_final_stamp() {
+      stamp_to_validate=$1
+      stamp_year=${stamp_to_validate%%-*}
+      stamp_remainder=${stamp_to_validate#*-}
+      stamp_month=${stamp_remainder%%-*}
+      stamp_remainder=${stamp_remainder#*-}
+      stamp_day=${stamp_remainder%%T*}
+      stamp_clock=${stamp_remainder#*T}
+      stamp_clock=${stamp_clock%Z}
+      stamp_hour=${stamp_clock%????}
+      stamp_minute_second=${stamp_clock#??}
+      stamp_minute=${stamp_minute_second%??}
+      stamp_second=${stamp_minute_second#??}
+
+      year_thousands=${stamp_year%???}
+      year_remainder=${stamp_year#?}
+      year_hundreds=${year_remainder%??}
+      year_remainder=${year_remainder#?}
+      year_tens=${year_remainder%?}
+      year_ones=${year_remainder#?}
+      year_value=$((year_thousands * 1000 + year_hundreds * 100 + year_tens * 10 + year_ones))
+      [ "$year_value" -ge 1 ] || return 1
+
+      decimal_two_digits "$stamp_month"
+      month_value=$DECIMAL_VALUE
+      [ "$month_value" -ge 1 ] && [ "$month_value" -le 12 ] || return 1
+      decimal_two_digits "$stamp_day"
+      day_value=$DECIMAL_VALUE
+      decimal_two_digits "$stamp_hour"
+      hour_value=$DECIMAL_VALUE
+      decimal_two_digits "$stamp_minute"
+      minute_value=$DECIMAL_VALUE
+      decimal_two_digits "$stamp_second"
+      second_value=$DECIMAL_VALUE
+
+      case "$month_value" in
+        1|3|5|7|8|10|12) maximum_day=31 ;;
+        4|6|9|11) maximum_day=30 ;;
+        2)
+          if [ $((year_value % 400)) -eq 0 ] || \
+             { [ $((year_value % 4)) -eq 0 ] && [ $((year_value % 100)) -ne 0 ]; }; then
+            maximum_day=29
+          else
+            maximum_day=28
+          fi
+          ;;
+      esac
+      [ "$day_value" -ge 1 ] && [ "$day_value" -le "$maximum_day" ] || return 1
+      [ "$hour_value" -le 23 ] || return 1
+      [ "$minute_value" -le 59 ] || return 1
+      [ "$second_value" -le 59 ] || return 1
+    }
+
+    capture_sorted_finals() {
+      if ! FINAL_INVENTORY=$(find /data -maxdepth 1 -type f -name "$FINAL_NAME_PATTERN" -print); then
+        echo "FATAL: could not inventory finalized snapshots" >&2
+        exit 1
+      fi
+      while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        candidate_name=${candidate##*/}
+        candidate_stamp=${candidate_name#etcd-}
+        candidate_stamp=${candidate_stamp%.db.sops.json}
+        valid_final_stamp "$candidate_stamp" || {
+          echo "FATAL: invalid finalized snapshot name: $candidate" >&2
+          exit 1
+        }
+      done <<EOF
+    $FINAL_INVENTORY
+    EOF
+      if [ -n "$FINAL_INVENTORY" ]; then
+        if ! SORTED_FINALS=$(printf '%s\n' "$FINAL_INVENTORY" | LC_ALL=C sort); then
+          echo "FATAL: could not sort finalized snapshot inventory" >&2
+          exit 1
+        fi
+      else
+        SORTED_FINALS=
+      fi
+    }
+
+    # Refuse malformed or future-dated finals instead of allowing lexical
+    # retention to select this run's newly published artifact for deletion.
+    validate_final_names
+    capture_sorted_finals
+    if [ -n "$SORTED_FINALS" ]; then
+      if ! FUTURE_FINAL=$(printf '%s\n' "$SORTED_FINALS" | LC_ALL=C awk -v out="$OUT" '$0 > out { print; exit }'); then
+        echo "FATAL: could not inspect finalized snapshot ordering" >&2
+        exit 1
+      fi
+      [ -z "$FUTURE_FINAL" ] || {
+        echo "FATAL: future finalized snapshot $FUTURE_FINAL sorts after current output $OUT" >&2
+        exit 1
+      }
+    fi
+
+    [ ! -e "$OUT" ] || {
+      echo "FATAL: refusing to overwrite existing finalized snapshot: $OUT" >&2
+      exit 1
+    }
+
+    if ! TMP=$(mktemp "$OUT.XXXXXX.partial"); then
+      echo "FATAL: could not create unique temporary artifact for $OUT" >&2
+      exit 1
+    fi
+    cleanup() {
+      rm -f -- "$TMP"
+    }
+    trap cleanup EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    available_bytes() {
+      df_output=$(df -Pk /data) || return 1
+      available_kib=$(printf '%s\n' "$df_output" | awk 'NR == 2 { print $4 }')
+      case "$available_kib" in
+        ''|*[!0-9]*) return 1 ;;
+      esac
+      printf '%s\n' "$((available_kib * 1024))"
+    }
+
+    PROJECTED_BYTES=$(( ((SIZE + 2) / 3) * 4 + SOPS_ENVELOPE_BYTES ))
+    REQUIRED_BYTES=$((PROJECTED_BYTES + FREE_SPACE_MARGIN_BYTES))
+    if ! AVAILABLE_BYTES=$(available_bytes); then
+      echo "FATAL: could not measure available bytes on /data" >&2
+      exit 1
+    fi
+    echo "capacity preflight: raw=$SIZE projected_sops=$PROJECTED_BYTES margin=$FREE_SPACE_MARGIN_BYTES required=$REQUIRED_BYTES available=$AVAILABLE_BYTES bytes"
+    if [ "$AVAILABLE_BYTES" -lt "$REQUIRED_BYTES" ]; then
+      echo "FATAL: insufficient free space on /data: available $AVAILABLE_BYTES bytes; require $REQUIRED_BYTES bytes (projected SOPS $PROJECTED_BYTES + margin $FREE_SPACE_MARGIN_BYTES)" >&2
+      exit 1
+    fi
+
+    if ! sops --encrypt --age "$AGE_RECIPIENT" \
+      --input-type binary --output-type json "$SNAP" > "$TMP"; then
+      echo "FATAL: sops encryption failed for $SNAP" >&2
+      exit 1
+    fi
+    TMP_SIZE=$(stat -c%s -- "$TMP")
+    if [ "$TMP_SIZE" -lt "$SIZE" ]; then
+      echo "FATAL: encrypted output is implausibly small: $TMP_SIZE bytes for a $SIZE-byte snapshot" >&2
+      exit 1
+    fi
+
+    [ ! -e "$OUT" ] || {
+      echo "FATAL: refusing to overwrite existing finalized snapshot: $OUT" >&2
+      exit 1
+    }
+    mv -n -- "$TMP" "$OUT"
+    [ ! -e "$TMP" ] || {
+      echo "FATAL: refusing to overwrite existing finalized snapshot: $OUT" >&2
+      exit 1
+    }
+    OUT_SIZE=$(stat -c%s -- "$OUT")
+    echo "encrypted: $SIZE bytes -> $OUT ($OUT_SIZE bytes)"
+
+    if ! PRE_PRUNE_FREE_BYTES=$(available_bytes); then
+      echo "FATAL: could not measure pre-prune available bytes on /data" >&2
+      exit 1
+    fi
+    echo "pre-prune free bytes: $PRE_PRUNE_FREE_BYTES"
 
     # Local retention: newest 14 dailies. The Longhorn RecurringJob keeps its
     # own 14 volume backups on the Synology; this only bounds the live volume.
-    ls -1 /data/etcd-*.db.sops.json | sort | head -n -14 | while read -r old; do
+    validate_final_names
+    capture_sorted_finals
+    PRE_PRUNE_COUNT=0
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      PRE_PRUNE_COUNT=$((PRE_PRUNE_COUNT + 1))
+    done <<EOF
+    $SORTED_FINALS
+    EOF
+    PRUNE_COUNT=$((PRE_PRUNE_COUNT - RETAINED_LIMIT))
+    [ "$PRUNE_COUNT" -gt 0 ] || PRUNE_COUNT=0
+    PRUNE_INDEX=0
+    while IFS= read -r old; do
+      [ -n "$old" ] || continue
+      PRUNE_INDEX=$((PRUNE_INDEX + 1))
+      [ "$PRUNE_INDEX" -le "$PRUNE_COUNT" ] || continue
+      old_size=$(stat -c%s -- "$old")
+      echo "pruning final: $old ($old_size bytes)"
       rm -- "$old"
-      echo "pruned: $old"
-    done
+    done <<EOF
+    $SORTED_FINALS
+    EOF
 
-    df -k /data | tail -1
+    if ! FINAL_FREE_BYTES=$(available_bytes); then
+      echo "FATAL: could not measure final available bytes on /data" >&2
+      exit 1
+    fi
+
+    terminal_failure() {
+      echo "FATAL: terminal artifact assertion failed: $*" >&2
+      exit 1
+    }
+
+    [ -e "$OUT" ] || terminal_failure "$OUT does not exist"
+    [ -f "$OUT" ] || terminal_failure "$OUT is not a regular file"
+    [ -s "$OUT" ] || terminal_failure "$OUT is empty"
+    if ! ASSERTED_OUT_SIZE=$(stat -c%s -- "$OUT"); then
+      terminal_failure "could not measure $OUT"
+    fi
+    [ "$ASSERTED_OUT_SIZE" -ge "$SIZE" ] || \
+      terminal_failure "$OUT is implausibly small: $ASSERTED_OUT_SIZE bytes for a $SIZE-byte snapshot"
+
+    validate_final_names
+    capture_sorted_finals
+    FINAL_COUNT=0
+    NEWEST_FINAL=
+    OUT_RETAINED=false
+    while IFS= read -r retained; do
+      [ -n "$retained" ] || continue
+      FINAL_COUNT=$((FINAL_COUNT + 1))
+      NEWEST_FINAL=$retained
+      [ "$retained" != "$OUT" ] || OUT_RETAINED=true
+    done <<EOF
+    $SORTED_FINALS
+    EOF
+    [ "$OUT_RETAINED" = true ] || terminal_failure "$OUT is absent from the retained finalized set"
+    [ "$FINAL_COUNT" -le "$RETAINED_LIMIT" ] || \
+      terminal_failure "retained finalized count $FINAL_COUNT exceeds $RETAINED_LIMIT"
+    echo "finalized snapshots: $FINAL_COUNT; free bytes: $FINAL_FREE_BYTES"
+    echo "newest finalized snapshot: $NEWEST_FINAL"
+    echo "terminal artifact assertion passed: $OUT ($ASSERTED_OUT_SIZE bytes; retained count $FINAL_COUNT)"

@@ -232,9 +232,12 @@ This ADR is confirmed when all of the following are true:
 4. A follow-up implementation provides Stage-1 capture scripts or workflows for
    both etcd and Vault.
 5. Monitoring alerts when the newest Vault Raft snapshot is older than 90
-   minutes, the newest etcd snapshot is older than 8 hours, any snapshot upload
-   fails, backup-server capacity or disk health is degraded, or critical
-   recovery certificates approach expiry.
+   minutes, any snapshot upload fails, backup-server capacity or disk health is
+   degraded, or critical recovery certificates approach expiry. The former
+   8-hour etcd threshold is **SUPERSEDED pending dr2**: the implemented daily
+   CronJob uses a 26-hour threshold until dr2 reconciles the cadence, retention,
+   and threshold. This annotation changes only the threshold; the 6-hour cadence
+   decision above remains in force pending that reconciliation.
 6. The first restore drill records snapshot checksums, tool versions, elapsed
    restore time, pass/fail criteria, and any corrective actions.
 

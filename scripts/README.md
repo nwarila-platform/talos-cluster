@@ -60,7 +60,8 @@ oversized/reinvents a wheel) · **CONSOLIDATE** (merge with a sibling / a shared
 |---|---|---|---|
 | `check-node-patch-consistency.py` (360) | Per-node patch static-IP/disk/VIP match inventory (wrong IP → node reboots unreachable, no OOB recovery) | `talosctl validate` is per-file schema-only, can't catch cross-file semantic drift → **NO** | **KEEP** — closes a real silent-brick |
 | `check-node-inventory-sync.py` (434) | Human `systems` table matches `config.env` | none (repo-internal), but it guards a self-created duplication of config.env's node data | **SIMPLIFY** — shrink hard (6-row table), share the `systems` parser, generate the overlapping columns to remove the dup |
-| `test-talos-drift-readonly.py` (119) | Unit tests for the in-cluster `talos-drift` CronJob | N/A (tests) | **KEEP** |
+| `test-dr-etcd-backup.py` (1228) | Pinned-image real-tool end-to-end, differential wrapper, failure, locking, no-clobber, partial cleanup, and write-then-prune fixtures for the in-cluster etcd producer | N/A (tests) | **KEEP** |
+| `test-talos-drift-readonly.py` (317) | Unit tests for the in-cluster `talos-drift` CronJob | N/A (tests) | **KEEP** |
 | `render-talos-drift-expected.py` (76) | Generates the secret-free `expected.env` the drift CronJob consumes; `--check` fails if stale | none (bespoke projection a pod can't derive from secret-bearing config.env) → **NO** | **KEEP** — the "generate + freshness-guard" pattern done right |
 | `diff-vs-live.py` (199) | Structural diff of regenerated machineconfig vs live | `talosctl apply-config --dry-run` (but broken for multi-doc configs, siderolabs/talos#8885) → **PARTIAL** | **SIMPLIFY** — delegate the diff to Talos where it works; keep custom only for the multi-doc gap |
 

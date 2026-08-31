@@ -72,7 +72,8 @@ def base_files(renderer: Any) -> dict[str, str]:
             "data:",
             "  encrypt.sh: |",
             "    #!/bin/sh",
-            "    ls -1 /data/etcd-*.db.sops.json | sort | head -n -21 | while read -r old; do",
+            "    RETAINED_LIMIT=21",
+            "    while IFS= read -r old; do",
             '      rm -- "$old"',
             "    done",
         ),
@@ -85,8 +86,9 @@ def base_files(renderer: Any) -> dict[str, str]:
             "  local dailies, and refuses snapshots smaller than 10 MB.",
             "  `etcd-daily-backup` RecurringJob (03:47 UTC, retain 14) to the volume;",
             "",
-            f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 21 local + 14 Synology copies",
-            "  is a few GB - negligible on both tiers.",
+            f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 21 local artifacts",
+            "  and 14 Synology copies are retained.",
+            "  Fixture sizing details.",
         ),
         str(renderer.DR_STAGE1_RUNBOOK): lines(
             "# DR Stage 1 fixture",
@@ -219,8 +221,9 @@ def target_lines(renderer: Any) -> dict[str, tuple[Path, str]]:
         ),
         "D10": (
             renderer.ADR_0026,
-            f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 21 local + 14 Synology copies",
+            f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 21 local artifacts",
         ),
+        "D12": (renderer.ADR_0026, "  and 14 Synology copies are retained."),
         "D11": (
             renderer.ARCHITECTURE,
             '    EtcdPVC["PVC etcd-snapshots<br/>storageClassName longhorn-etcd-snapshot<br/>21 encrypted local dailies"]',
@@ -309,7 +312,8 @@ def check_output_formats(renderer: Any) -> None:
         assert_contains(rendered, "  retain: 14", "bare YAML scalar format")
         assert_contains(rendered, "Retention is 14 Longhorn backups", "English sentence format")
         assert_contains(rendered, "prunes to 21", "local retention English format")
-        assert_contains(rendered, "21 local + 14 Synology copies", "dual-retention English format")
+        assert_contains(rendered, "21 local artifacts", "local-retention English format")
+        assert_contains(rendered, "and 14 Synology copies are retained", "Synology-retention English format")
         assert_contains(rendered, "backup cron 17 8 daily, retain 14", "Vault Mermaid format")
         assert_contains(rendered, "backup cron 47 3 daily, retain 14", "etcd Mermaid format")
         assert_contains(rendered, "21 encrypted local dailies", "local retention Mermaid format")
@@ -499,16 +503,16 @@ def check_source_errors(renderer: Any) -> None:
     )
     assert_raises_render_error(
         renderer,
-        "head-retention-absent",
+        "retention-limit-absent",
         {str(renderer.ETCD_ENCRYPT_SCRIPT): lines("apiVersion: v1", "kind: ConfigMap", "data:", "  encrypt.sh: |", "    true")},
         expected_substring="must occur exactly once, found 0",
     )
     duplicate_prune = base_files(renderer)[str(renderer.ETCD_ENCRYPT_SCRIPT)] + (
-        "    ls -1 /data/etcd-*.db.sops.json | sort | head -n -14 | while read -r old; do\n"
+        "    RETAINED_LIMIT=14\n"
     )
     assert_raises_render_error(
         renderer,
-        "head-retention-two-matches",
+        "retention-limit-two-matches",
         {str(renderer.ETCD_ENCRYPT_SCRIPT): duplicate_prune},
         expected_substring="must occur exactly once, found 2",
     )
@@ -569,7 +573,7 @@ def check_mutation_matrix(renderer: Any) -> None:
         {
             "D2": "  `etcd-daily-backup` RecurringJob (03:47 UTC, retain 9) to the volume;",
             "D8": '    EtcdDailyBackup["Longhorn RecurringJob etcd-daily-backup<br/>backup cron 47 3 daily, retain 9<br/>detached-volume backup enabled"]',
-            "D10": f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 21 local + 9 Synology copies",
+            "D12": "  and 9 Synology copies are retained.",
         },
     )
     check_source_mutation(
@@ -599,11 +603,11 @@ def check_mutation_matrix(renderer: Any) -> None:
         renderer,
         "V6",
         renderer.ETCD_ENCRYPT_SCRIPT,
-        "head -n -21",
-        "head -n -9",
+        "RETAINED_LIMIT=21",
+        "RETAINED_LIMIT=9",
         {
             "D9": "  `etcd-snapshots` PVC (`longhorn-etcd-snapshot` StorageClass), prunes to 9",
-            "D10": f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 9 local + 14 Synology copies",
+            "D10": f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 9 local artifacts",
             "D11": '    EtcdPVC["PVC etcd-snapshots<br/>storageClassName longhorn-etcd-snapshot<br/>9 encrypted local dailies"]',
         },
     )
@@ -615,7 +619,7 @@ def check_d10_segment_order(renderer: Any) -> None:
         write_fixture(renderer, root)
         before = read_docs(renderer, root)
         mutate_file(root, renderer.ETCD_RECURRINGJOB, "  retain: 14", "  retain: 8")
-        mutate_file(root, renderer.ETCD_ENCRYPT_SCRIPT, "head -n -21", "head -n -5")
+        mutate_file(root, renderer.ETCD_ENCRYPT_SCRIPT, "RETAINED_LIMIT=21", "RETAINED_LIMIT=5")
         rc, _stdout, stderr = capture_main(renderer, root, [])
         assert_equal(rc, 0, "D10 order render rc")
         assert_equal(stderr, "", "D10 order render stderr")
@@ -623,9 +627,10 @@ def check_d10_segment_order(renderer: Any) -> None:
         actual_lines = rendered_target_lines(renderer, before, after)
         assert_equal(
             actual_lines["D10"],
-            f"- ~110 MB snapshot {ARROW} ~147 MB ciphertext daily; 5 local + 8 Synology copies",
-            "D10 local/Synology segment order",
+            f"- 663.539 MiB snapshot {ARROW} ~884.720 MiB SOPS artifact daily; 5 local artifacts",
+            "D10 local segment order",
         )
+        assert_equal(actual_lines["D12"], "  and 8 Synology copies are retained.", "D12 Synology segment order")
 
 
 def run_case(name: str, func: Callable[[], None]) -> CaseResult:

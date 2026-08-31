@@ -8,4 +8,5 @@ resources:
   - pvc.yaml
   - talosconfig.sops.yaml
   - configmap-encrypt-script.yaml
+  - rbac-talos-drift.yaml
   - cronjob.yaml

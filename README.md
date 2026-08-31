@@ -737,9 +737,9 @@ Repository-owned GitHub Actions workflows include:
 Runtime drift detection is no longer a GitHub Actions workflow. Flux reconciles
 `clusters/talos-cluster/apps/talos-drift/`, which runs an hourly in-cluster
 CronJob using a SOPS-encrypted Talos `os:reader` config and a least-privilege
-Kubernetes ServiceAccount. The reduced detector covers version pins, node
-InternalIPs, and Flux health. It intentionally does not cover Talos
-machine-config drift because `machineconfig` is admin-only.
+Kubernetes ServiceAccount. The reduced detector covers etcd snapshot-CronJob
+freshness, version pins, node InternalIPs, and Flux health. It intentionally
+does not cover Talos machine-config drift because `machineconfig` is admin-only.
 
 Talos apply and upgrade remain manual/loop operations from an operator workstation using `make apply` and `make upgrade`. CI-based Talos apply was intentionally removed so public-repo workflows do not hold a Talos admin config. The Kubescape workflow requires self-hosted runner access to the private cluster network or its credentials. GitHub-hosted runners only handle checks that can run from the repository contents.
 
