@@ -305,11 +305,6 @@
 !/clusters/talos-cluster/tenants/talos-drift/networkpolicy-allow-dns.yaml
 !/clusters/talos-cluster/tenants/talos-drift/networkpolicy-default-deny.yaml
 !/clusters/talos-cluster/tenants/_template/
-!/clusters/talos-cluster/tenants/_template/README.md
-!/clusters/talos-cluster/tenants/_template/namespace.yaml.tmpl
-!/clusters/talos-cluster/tenants/_template/networkpolicy-allow-dns.yaml.tmpl
-!/clusters/talos-cluster/tenants/_template/networkpolicy-allow-gateway-ingress.yaml.tmpl
-!/clusters/talos-cluster/tenants/_template/networkpolicy-default-deny.yaml.tmpl
 !/clusters/talos-cluster/tenants/_template/zero-touch/
 !/clusters/talos-cluster/tenants/_template/zero-touch/**
 
@@ -320,7 +315,6 @@
 !/.github/renovate.json5
 !/.github/workflows/
 !/.github/workflows/kubescape.yaml
-!/.github/workflows/onboard-tenant.yaml
 !/.github/workflows/arc-smoke.yaml
 !/.github/workflows/security.yaml
 !/.github/workflows/sync-deploy-repos.yaml
@@ -419,7 +413,6 @@
 !/scripts/check-vault-restore-validator-boundaries.selftest.py
 !/scripts/check-workflow-health.py
 !/scripts/check-workflow-health.selftest.py
-!/scripts/onboard-tenant.sh
 !/scripts/open-sync-pr.sh
 !/scripts/dr/
 !/scripts/dr/apply-vault-snapshot-backup-live.sh
