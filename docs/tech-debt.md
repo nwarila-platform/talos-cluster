@@ -1235,7 +1235,6 @@ succeeds; that is the MVP gate, not the hardening target.
 
 ### References
 
-- `_handoff/steps/cft3a-mvp-DONE.md`
 - `docs/runbooks/operate-hwg-self-service-ingress.md`
 - `docs/kyverno-tests/restrict-tunnel-hostnames/README.md`
 

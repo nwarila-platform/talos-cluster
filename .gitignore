@@ -458,9 +458,6 @@
 !/docs/runbooks/recover-tunnel-binding-admission.md
 !/docs/runbooks/operate-hwg-self-service-ingress.md
 !/docs/runbooks/rotate-hwg-tenant-secrets.md
-!/_handoff/
-!/_handoff/steps/
-!/_handoff/steps/cft3a-mvp-DONE.md
 !/docs/decision-records/
 !/docs/decision-records/README.md
 !/docs/decision-records/org/
