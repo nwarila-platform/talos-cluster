@@ -140,7 +140,6 @@ Mapping-level anchors remain allowed.
 | Script (lines) | Does | Native alternative | Verdict |
 |---|---|---|---|
 | `sync-deploy-repos.sh` (783) | Discover `deploy-*` repos → stamp per-tenant zero-touch Flux/Vault overlays (the tenancy contract) | repo-discovery + overlay-stamping is inherently scripted → **NO** | **KEEP** — simplify only the byte-identical `replacements:` block (→ a shared Component) + awk parser (→ `yq`) |
-| `onboard-tenant.sh` (140) | Manual bare-envelope scaffold for one tenant (legacy path) | duplicate of `sync-deploy-repos`; consumes the legacy flat `_template/*.tmpl`; has produced **zero** tenants | **CUT** — retire it + the stale `.tmpl` set; fold its one unique bit (pre-create envelope) into the zero-touch generator |
 | `open-sync-pr.sh` (131) | Commit sync output as the bot + open/update/close the sync PR | `peter-evans/create-pull-request` covers ~80% → **PARTIAL** | **SIMPLIFY** — keep only the custom token/identity handling if it can't be expressed in the action |
 
 ## DR / backup
@@ -171,7 +170,6 @@ Each item lands as its own small, audited, revertible PR.
 **Consolidate (remove duplication at the root):**
 - **values-sync trio** (`check-longhorn/cilium/kubelet-csr-approver-values-sync.py`) — `addons/*/values.yaml` are not consumed by Flux (it applies inline `spec.values`); fix via helm `valuesFrom` a kustomize-generated ConfigMap ⇒ all 3 guards evaporate, or collapse 3→1 parameterized guard. *(touches HelmReleases → owner-watched)*
 - Extract `scripts/lib/` — shared YAML/image helpers (image-digest, image-sig, flux-crd guards) + `nodes.sh` node-map/ordering (apply, upgrade, bootstrap, health).
-- `onboard-tenant.sh` + legacy `_template/*.tmpl` → fold into `sync-deploy-repos`/zero-touch.
 - `check-doc-links.py` → `lychee --offline`.
 
 **Simplify (keep the invariant, shed bloat):**

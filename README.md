@@ -128,8 +128,8 @@ This is a tracked-layout summary, not a byte-for-byte `git ls-files` dump. Use `
 | `clusters/talos-cluster/tenants/` | Tenant namespace/network-policy definitions plus onboarding templates. |
 | `addons/` | Out-of-band bootstrap Helm values retained for cluster rebuilds or adopted releases: `cilium`, `kubelet-csr-approver`, and `longhorn`. |
 | `docs/` | Compliance notes and ADR mirrors split into org, template, and repo decision records. |
-| `scripts/` | Operator automation used by the Makefile: generate, apply, bootstrap, health, upgrade, S3 sync, local drift helpers, snapshot, tenant onboarding, deploy-repo sync, and read-only drift tests. |
-| `.github/workflows/` | CI, deploy, security, snapshot, compliance, tenant, deploy-repo sync, and org ADR synchronization workflows. |
+| `scripts/` | Operator automation used by the Makefile: generate, apply, bootstrap, health, upgrade, S3 sync, local drift helpers, snapshot, deploy-repo sync, and read-only drift tests. |
+| `.github/workflows/` | CI, deploy, security, snapshot, compliance, deploy-repo sync, and org ADR synchronization workflows. |
 | `.sops.yaml` | SOPS/age encryption policy for Kubernetes Secret payload fields. |
 | `.github/CODEOWNERS`, `.github/renovate.json5`, `.pre-commit-config.yaml`, `.editorconfig` | Repository governance, dependency update, local validation, and editor-formatting controls. |
 | `Makefile` | Operator command entry point. Run `make help` to see supported commands. |
@@ -729,7 +729,6 @@ Repository-owned GitHub Actions workflows include:
 | Security | `security.yaml` | Runs Gitleaks and the config audit on PRs, weekly schedule, and manual dispatch. |
 | Compliance | `kubescape.yaml` | Runs the pinned Kubescape CIS Kubernetes scan and uploads SARIF to GitHub Code Scanning. |
 | ARC smoke | `arc-smoke.yaml` | Manually verifies the `nwarila-talos-arc-ci` runner scale set can execute a job. |
-| Tenant onboarding | `onboard-tenant.yaml` | Manually scaffolds tenant namespace and network-policy manifests. |
 | Deploy repo sync | `sync-deploy-repos.yaml` | Discovers deployment repositories and refreshes the generated Flux deploy app entries. |
 | Org ADR sync | `org-adr-sync.yaml` | Mirrors organization ADRs into `docs/decision-records/org/` on PRs and manual dispatch. |
 | Org ADR auto-sync | `org-adr-auto-sync.yaml` | Scheduled/manual automation for keeping mirrored org ADRs current. |
