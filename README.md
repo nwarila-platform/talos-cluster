@@ -128,8 +128,8 @@ This is a tracked-layout summary, not a byte-for-byte `git ls-files` dump. Use `
 | `clusters/talos-cluster/tenants/` | Tenant namespace/network-policy definitions plus onboarding templates. |
 | `addons/` | Out-of-band bootstrap Helm values retained for cluster rebuilds or adopted releases: `cilium`, `kubelet-csr-approver`, and `longhorn`. |
 | `docs/` | Compliance notes and ADR mirrors split into org, template, and repo decision records. |
-| `scripts/` | Operator automation used by the Makefile: generate, apply, bootstrap, health, upgrade, S3 sync, local drift helpers, snapshot, deploy-repo sync, and read-only drift tests. |
-| `.github/workflows/` | CI, deploy, security, snapshot, compliance, deploy-repo sync, and org ADR synchronization workflows. |
+| `scripts/` | Operator automation: generate, apply, bootstrap, health, upgrade, S3 sync, local drift helpers, snapshot, deploy-repo sync, and read-only drift tests. |
+| `.github/workflows/` | CI, security, compliance, deploy-repo sync, and org ADR synchronization workflows. |
 | `.sops.yaml` | SOPS/age encryption policy for Kubernetes Secret payload fields. |
 | `.github/CODEOWNERS`, `.github/renovate.json5`, `.pre-commit-config.yaml`, `.editorconfig` | Repository governance, dependency update, local validation, and editor-formatting controls. |
 | `Makefile` | Operator command entry point. Run `make help` to see supported commands. |
