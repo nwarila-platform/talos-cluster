@@ -8,8 +8,12 @@ metadata:
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Ingress
     policies.kyverno.io/description: >-
-      Constrains hwg tunnel Ingress hostnames and enforces the TCP 8080
-      Service-backend contract used by the opt-in network policies.
+      Constrains each tunnel ingress class to the DNS zone its connector
+      serves and enforces the TCP 8080 Service-backend contract used by the
+      opt-in network policies. The unprotected nwarila-platform class is
+      additionally barred from the mTLS-protected zone, so a hostname covered
+      by the edge client-certificate association cannot also be published
+      through the unauthenticated connector.
 spec:
   validationActions: [Deny]
   failurePolicy: Fail
@@ -29,17 +33,43 @@ spec:
         operations: [CREATE, UPDATE]
         resources: [ingresses]
   variables:
+    - name: org
+      expression: >-
+        namespaceObject != null && has(namespaceObject.metadata.labels) &&
+        'nwarila.io/org' in namespaceObject.metadata.labels
+          ? namespaceObject.metadata.labels['nwarila.io/org']
+          : ''
+    - name: class
+      expression: >-
+        has(object.spec.ingressClassName) ? object.spec.ingressClassName : ''
     # Admission webhooks have no ordering guarantee. Apply these checks only
     # after cft2's org, legacy-annotation, and class preconditions all pass.
     - name: applies
       expression: >-
-        namespaceObject != null && has(namespaceObject.metadata.labels) &&
-        'nwarila.io/org' in namespaceObject.metadata.labels &&
-        namespaceObject.metadata.labels['nwarila.io/org'] == 'the-hero-wars-guys' &&
         (!has(object.metadata.annotations) ||
         !('kubernetes.io/ingress.class' in object.metadata.annotations)) &&
-        has(object.spec.ingressClassName) &&
-        object.spec.ingressClassName == 'cf-tunnel-hwg'
+        ((variables.org == 'the-hero-wars-guys' &&
+          variables.class == 'cf-tunnel-hwg') ||
+         (variables.org == 'nwarila-platform' &&
+          (variables.class == 'cf-tunnel-nwp-public' ||
+           variables.class == 'cf-tunnel-nwp-mtls')))
+    # The zone each connector actually serves, mirroring its ConfigMap
+    # ingress rules. A hostname outside it would resolve to no origin.
+    - name: zone
+      expression: >-
+        variables.class == 'cf-tunnel-hwg' ? 'theherowarsguys.com' :
+        variables.class == 'cf-tunnel-nwp-public' ? 'nicholaswarila.com' :
+        variables.class == 'cf-tunnel-nwp-mtls' ? 'secure.nicholaswarila.com' : ''
+    # Non-empty only for a class whose connector is unauthenticated while a
+    # protected sibling zone nests inside its own zone.
+    - name: protectedZone
+      expression: >-
+        variables.class == 'cf-tunnel-nwp-public' ? 'secure.nicholaswarila.com' : ''
+    - name: canaryHost
+      expression: >-
+        variables.class == 'cf-tunnel-hwg' ? 'canary-hwg.theherowarsguys.com' :
+        variables.class == 'cf-tunnel-nwp-public' ? 'canary-nwp-public.nicholaswarila.com' :
+        variables.class == 'cf-tunnel-nwp-mtls' ? 'canary-nwp-mtls.secure.nicholaswarila.com' : ''
   validations:
     - expression: >-
         !variables.applies ||
@@ -55,15 +85,33 @@ spec:
     - expression: >-
         !variables.applies || !has(object.spec.rules) ||
         object.spec.rules.all(rule,
-          !has(rule.host) || rule.host == 'theherowarsguys.com' ||
-          (rule.host.endsWith('.theherowarsguys.com') &&
-          size(rule.host) > size('.theherowarsguys.com')))
-      message: tunnel Ingress hosts must be inside theherowarsguys.com
+          !has(rule.host) || rule.host == variables.zone ||
+          (rule.host.endsWith('.' + variables.zone) &&
+          size(rule.host) > size('.' + variables.zone)))
+      message: tunnel Ingress hosts must be inside the zone its class serves
+      messageExpression: >-
+        'tunnel Ingress hosts must be inside ' + variables.zone
     - expression: >-
         !variables.applies || !has(object.spec.rules) ||
         object.spec.rules.all(rule,
-          !has(rule.host) || rule.host != 'theherowarsguys.com')
-      message: the bare theherowarsguys.com apex is reserved
+          !has(rule.host) || rule.host != variables.zone)
+      message: the bare zone apex is reserved
+      messageExpression: >-
+        'the bare ' + variables.zone + ' apex is reserved'
+    # An unprotected class must not reach into the protected zone. Without
+    # this, a tenant could publish the same origin on a second hostname that
+    # bypasses the edge client-certificate requirement entirely.
+    - expression: >-
+        !variables.applies || variables.protectedZone == '' ||
+        !has(object.spec.rules) ||
+        object.spec.rules.all(rule,
+          !has(rule.host) ||
+          (rule.host != variables.protectedZone &&
+          !rule.host.endsWith('.' + variables.protectedZone)))
+      message: unprotected tunnel Ingress hosts must not enter the protected zone
+      messageExpression: >-
+        'unprotected tunnel Ingress hosts must not be inside ' +
+        variables.protectedZone
     - expression: >-
         !variables.applies || !has(object.spec.rules) ||
         object.spec.rules.all(rule,
@@ -72,8 +120,10 @@ spec:
     - expression: >-
         !variables.applies || !has(object.spec.rules) ||
         object.spec.rules.all(rule,
-          !has(rule.host) || rule.host != 'canary-hwg.theherowarsguys.com')
-      message: canary-hwg.theherowarsguys.com is reserved
+          !has(rule.host) || rule.host != variables.canaryHost)
+      message: the class canary hostname is reserved
+      messageExpression: >-
+        variables.canaryHost + ' is reserved'
     - expression: >-
         !variables.applies || !has(object.spec.tls)
       message: tunnel Ingress must not declare spec.tls

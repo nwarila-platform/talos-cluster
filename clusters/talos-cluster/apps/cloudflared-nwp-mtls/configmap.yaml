@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflared-nwp-mtls
+data:
+  config.yaml: |
+    tunnel: fb6932d9-c6e4-4ccb-8e4c-dee47aa05313
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    # This connector serves the mTLS-protected zone ONLY. Nothing outside
+    # *.secure.nicholaswarila.com can be published through it, so a hostname
+    # that escapes the edge mTLS association cannot reach an origin here.
+    ingress:
+      - hostname: canary-nwp-mtls.secure.nicholaswarila.com
+        service: http_status:418
+      - hostname: '*.secure.nicholaswarila.com'
+        service: http://traefik-nwp-mtls.traefik-nwp-mtls.svc:80
+      - service: http_status:404

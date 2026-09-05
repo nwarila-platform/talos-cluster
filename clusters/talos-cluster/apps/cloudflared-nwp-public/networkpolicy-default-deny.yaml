@@ -1,0 +1,12 @@
+# Cilium's host identity includes local host-network processes, so kubelet HTTP
+# probes remain reachable; no Service or ordinary pod-origin ingress is allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloudflared-nwp-public-default-deny
+  namespace: cloudflared-nwp-public
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

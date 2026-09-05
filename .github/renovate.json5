@@ -65,7 +65,10 @@
     ],
   },
   kubernetes: {
-    managerFilePatterns: ["/^clusters/talos-cluster/apps/cloudflared-hwg/deployment\\.ya?ml$/"],
+    // Every per-tunnel connector, not just the first one. A new
+    // cloudflared-<tunnel> directory must not silently fall out of digest
+    // management.
+    managerFilePatterns: ["/^clusters/talos-cluster/apps/cloudflared-[^/]+/deployment\\.ya?ml$/"],
   },
   packageRules: [
     {

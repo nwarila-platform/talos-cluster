@@ -201,6 +201,12 @@ jobs:
       - name: "Guard self-test: runner CNP GitHub-egress parity guard bites"
         run: python3 scripts/check-runner-cnp-github-parity.selftest.py
 
+      - name: "Guard: per-tunnel Cloudflare Tunnel isolation"
+        run: python3 scripts/check-tunnel-isolation.py
+
+      - name: "Guard self-test: tunnel-isolation guard bites"
+        run: python3 scripts/check-tunnel-isolation.selftest.py
+
       - name: "Guard self-test: workflow-health stale-exception logic"
         run: python3 scripts/check-workflow-health.selftest.py
 

@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nwp-public-in-zone
+  namespace: nwp-1306985678
+spec:
+  ingressClassName: cf-tunnel-nwp-public
+  rules:
+    - host: app.nicholaswarila.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  number: 8080

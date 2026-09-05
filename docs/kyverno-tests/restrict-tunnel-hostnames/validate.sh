@@ -63,7 +63,15 @@ if rules != [{
 required_fragments = (
     "'nwarila.io/org' in namespaceObject.metadata.labels",
     "!('kubernetes.io/ingress.class' in object.metadata.annotations)",
-    "object.spec.ingressClassName == 'cf-tunnel-hwg'",
+    # variables.class is has()-guarded; dereferencing spec.ingressClassName
+    # directly makes a class-less Ingress error instead of falling through.
+    "variables.class == 'cf-tunnel-hwg'",
+    "variables.class == 'cf-tunnel-nwp-public'",
+    "variables.class == 'cf-tunnel-nwp-mtls'",
+    # The protected zone must stay barred from the unprotected class. Losing
+    # this fragment would silently reopen the mTLS bypass.
+    "variables.class == 'cf-tunnel-nwp-public' ? 'secure.nicholaswarila.com' : ''",
+    "!rule.host.endsWith('.' + variables.protectedZone)",
     "path.backend.service.port.number == 8080",
     "!key.startsWith('traefik.ingress.kubernetes.io/')",
     "!key.startsWith('traefik.io/')",
@@ -89,7 +97,11 @@ tar -xzf "${KYVERNO_ARCHIVE}" -C "${RUNNER_TMP}" kyverno
 chmod +x "${RUNNER_TMP}/kyverno"
 KYVERNO="${RUNNER_TMP}/kyverno"
 
-"${KYVERNO}" version | grep -Fxq "Version: ${KYVERNO_VERSION#v}" >/dev/null || {
+# Capture first: piping into `grep -q` lets grep exit on the first match,
+# SIGPIPEs kyverno, and `pipefail` then fails the pipeline precisely when the
+# version DID match. This mirrors the restrict-tunnel-binding runner.
+version_output="$("${KYVERNO}" version)"
+grep -Fxq "Version: ${KYVERNO_VERSION#v}" <<<"${version_output}" || {
   echo "ERROR: downloaded Kyverno CLI did not report ${KYVERNO_VERSION}" >&2
   exit 2
 }
@@ -148,6 +160,8 @@ PY
 }
 
 run_case "admit/numeric-8080.yaml" "pass" "success"
+run_case "admit/nwp-public-in-zone.yaml" "pass" "success"
+run_case "admit/nwp-mtls-in-zone.yaml" "pass" "success"
 
 run_case "deny/out-of-zone.yaml" "fail" \
   "tunnel Ingress hosts must be inside theherowarsguys.com"
@@ -175,6 +189,21 @@ run_case "deny/resource-backend.yaml" "fail" \
   "every tunnel Ingress backend must be a Service on numeric port 8080"
 run_case "deny/no-paths.yaml" "fail" \
   "every tunnel Ingress rule must declare at least one HTTP path"
+
+run_case "deny/nwp-public-enters-protected.yaml" "fail" \
+  "unprotected tunnel Ingress hosts must not be inside secure.nicholaswarila.com"
+run_case "deny/nwp-public-protected-apex.yaml" "fail" \
+  "unprotected tunnel Ingress hosts must not be inside secure.nicholaswarila.com"
+run_case "deny/nwp-mtls-out-of-zone.yaml" "fail" \
+  "tunnel Ingress hosts must be inside secure.nicholaswarila.com"
+run_case "deny/nwp-public-apex.yaml" "fail" \
+  "the bare nicholaswarila.com apex is reserved"
+run_case "deny/nwp-mtls-apex.yaml" "fail" \
+  "the bare secure.nicholaswarila.com apex is reserved"
+run_case "deny/nwp-public-canary.yaml" "fail" \
+  "canary-nwp-public.nicholaswarila.com is reserved"
+run_case "deny/nwp-mtls-canary.yaml" "fail" \
+  "canary-nwp-mtls.secure.nicholaswarila.com is reserved"
 
 run_case "unaffected/wrong-class.yaml" "pass" "success"
 run_case "unaffected/missing-class.yaml" "pass" "success"

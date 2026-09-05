@@ -79,7 +79,8 @@ records remain more specific.
 
 In the existing tenant deploy repository, deploy a second app with only:
 
-1. `nwarila.io/tunnel-exposed: "true"` on its pod template; and
+1. `nwarila.io/tunnel-exposed: hwg` on its pod template (the label value is the
+   tunnel name, not a boolean; see the zero-touch template README); and
 2. an Ingress using `cf-tunnel-hwg`, a freshly invented
    `*.theherowarsguys.com` hostname, at least one HTTP path, and a Service
    backend whose port is numeric `8080`.

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflared-nwp-public
+data:
+  config.yaml: |
+    tunnel: 1f59f78a-16f8-4e3c-8567-de0235e39871
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    # Rules are evaluated top-down, first match wins. The secure-zone rule is
+    # deliberately ahead of the wildcard: if the more specific
+    # *.secure.nicholaswarila.com DNS route is ever lost, mTLS-protected
+    # hostnames must fail closed here rather than fall through to this
+    # unauthenticated connector.
+    ingress:
+      - hostname: canary-nwp-public.nicholaswarila.com
+        service: http_status:418
+      - hostname: '*.secure.nicholaswarila.com'
+        service: http_status:404
+      - hostname: secure.nicholaswarila.com
+        service: http_status:404
+      - hostname: '*.nicholaswarila.com'
+        service: http://traefik-nwp-public.traefik-nwp-public.svc:80
+      - service: http_status:404
