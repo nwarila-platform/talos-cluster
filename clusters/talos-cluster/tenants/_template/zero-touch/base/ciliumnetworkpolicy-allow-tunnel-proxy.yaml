@@ -1,18 +1,60 @@
 # Every generated tenant inherits this opt-in target-side contract. Only pods
 # carrying the publication label are reachable, and only on the contract port.
+#
+# The label value is the TUNNEL NAME, not a boolean. A Kubernetes label holds
+# one value per key, so a pod is reachable from exactly one tunnel proxy. That
+# is what keeps an mTLS-protected workload from also being published through an
+# unauthenticated sibling tunnel that watches the same tenant namespace -- the
+# namespace scoping on the proxy side cannot separate two tunnels of one org.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-tunnel-proxy
+  name: allow-tunnel-proxy-hwg
 spec:
   endpointSelector:
     matchLabels:
-      nwarila.io/tunnel-exposed: "true"
+      nwarila.io/tunnel-exposed: hwg
   ingress:
     - fromEndpoints:
         - matchLabels:
             "k8s:io.kubernetes.pod.namespace": traefik-hwg
             "k8s:nwarila.io/tunnel-proxy": hwg
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-tunnel-proxy-nwp-public
+spec:
+  endpointSelector:
+    matchLabels:
+      nwarila.io/tunnel-exposed: nwp-public
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": traefik-nwp-public
+            "k8s:nwarila.io/tunnel-proxy": nwp-public
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-tunnel-proxy-nwp-mtls
+spec:
+  endpointSelector:
+    matchLabels:
+      nwarila.io/tunnel-exposed: nwp-mtls
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": traefik-nwp-mtls
+            "k8s:nwarila.io/tunnel-proxy": nwp-mtls
       toPorts:
         - ports:
             - port: "8080"

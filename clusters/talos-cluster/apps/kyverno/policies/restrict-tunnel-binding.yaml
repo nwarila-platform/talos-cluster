@@ -8,8 +8,11 @@ metadata:
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Ingress,IngressClass
     policies.kyverno.io/description: >-
-      Restricts tenant Ingresses to the tunnel ingress class registered for
-      their organization and prevents tunnel classes from becoming defaults.
+      Restricts tenant Ingresses to a tunnel ingress class registered for their
+      organization and prevents tunnel classes from becoming defaults. An
+      organization may register more than one class when it operates several
+      tunnels at different protection tiers; which tier a hostname may use is
+      enforced by restrict-tunnel-hostnames, not here.
 spec:
   validationActions: [Deny]
   failurePolicy: Fail
@@ -43,15 +46,16 @@ spec:
         'nwarila.io/org' in namespaceObject.metadata.labels
           ? namespaceObject.metadata.labels['nwarila.io/org']
           : ''
-    - name: permittedClass
+    - name: permittedClasses
       expression: >-
-        variables.org == 'the-hero-wars-guys' ? 'cf-tunnel-hwg' :
-        variables.org == 'nwarila-platform' ? 'cf-tunnel-nwp' : ''
+        variables.org == 'the-hero-wars-guys' ? ['cf-tunnel-hwg'] :
+        variables.org == 'nwarila-platform' ?
+          ['cf-tunnel-nwp-public', 'cf-tunnel-nwp-mtls'] : []
   validations:
     - expression: >-
         request.resource.resource != 'ingresses' ||
         request.?subResource.orValue('') == 'status' ||
-        variables.permittedClass != ''
+        size(variables.permittedClasses) > 0
       message: namespace has no registered tunnel binding
     - expression: >-
         request.resource.resource != 'ingresses' ||
@@ -61,13 +65,14 @@ spec:
     - expression: >-
         request.resource.resource != 'ingresses' ||
         request.?subResource.orValue('') == 'status' ||
-        variables.permittedClass == '' ||
+        size(variables.permittedClasses) == 0 ||
         (has(object.spec.ingressClassName) &&
-        object.spec.ingressClassName == variables.permittedClass)
+        object.spec.ingressClassName in variables.permittedClasses)
       message: tenant Ingress must use its registered tunnel ingress class
       messageExpression: >-
-        'namespace ' + object.metadata.namespace + ' permits only ingress class ' +
-        variables.permittedClass + '; requested ' +
+        'namespace ' + object.metadata.namespace + ' permits only ingress ' +
+        (size(variables.permittedClasses) == 1 ? 'class ' : 'classes ') +
+        variables.permittedClasses.join(', ') + '; requested ' +
         (has(object.spec.ingressClassName) ? object.spec.ingressClassName : '<absent>')
     - expression: >-
         request.resource.resource != 'ingressclasses' ||

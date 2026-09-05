@@ -4,7 +4,7 @@ metadata:
   name: hwg-cross-org
   namespace: hwg-1268831311
 spec:
-  ingressClassName: cf-tunnel-nwp
+  ingressClassName: cf-tunnel-nwp-public
   defaultBackend:
     service:
       name: probe

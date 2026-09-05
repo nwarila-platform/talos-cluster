@@ -6,6 +6,8 @@ resources:
   - actions-runner-controller
   - cert-manager
   - cloudflared-hwg
+  - cloudflared-nwp-mtls
+  - cloudflared-nwp-public
   - cilium
   - dr-backup
   - dr-etcd-backup
@@ -20,6 +22,8 @@ resources:
   - namespace-hardening
   - kustomization-source-rotator.yaml
   - kustomization-traefik-hwg.yaml
+  - kustomization-traefik-nwp-mtls.yaml
+  - kustomization-traefik-nwp-public.yaml
   - talos-drift
   - vault-auth
   - vault-aws-access

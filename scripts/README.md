@@ -70,6 +70,7 @@ oversized/reinvents a wheel) · **CONSOLIDATE** (merge with a sibling / a shared
 |---|---|---|---|
 | `check-firewall-management-ports.py` (151) | Talos host firewall keeps apid (50000) + trustd (50001) — omitting trustd stranded worker cert renewal once | `talosctl validate` is schema-only → **NO** | **SIMPLIFY** — delete the ~55-line hand-rolled YAML parser; PyYAML is already a dep |
 | `check-runner-cnp-github-parity.py` (216) | The 2 ARC runner-egress CNPs expose an identical GitHub `toFQDNs` set | none for CNP parity — but it guards a copy-paste of the same rule in two files | **SIMPLIFY** — unify the 2 CNPs via a shared kustomize component ⇒ the guard evaporates |
+| `check-tunnel-isolation.py` (517) | Each Cloudflare Tunnel connector, proxy, inherited tenant allow, and admission registration references only its own tunnel, and an unprotected class stays barred from a protected zone nested inside its own | nothing correlates a CNP label value, a connector route table, and a CEL class map; a boolean opt-in would silently republish an mTLS origin unauthenticated → **NO** | **KEEP** — the only machine check on the protected/unprotected tunnel boundary |
 
 ## CI guards — Helm values-sync (a consolidation target)
 

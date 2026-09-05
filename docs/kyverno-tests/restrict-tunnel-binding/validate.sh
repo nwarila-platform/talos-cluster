@@ -211,11 +211,14 @@ PY
 
 run_case "admit/hwg-own.yaml" "pass" "restrict-tunnel-binding" "success"
 run_case "admit/nwp-own.yaml" "pass" "restrict-tunnel-binding" "success"
+run_case "admit/nwp-mtls-own.yaml" "pass" "restrict-tunnel-binding" "success"
 
 run_case "deny/hwg-cross-org.yaml" "fail" "restrict-tunnel-binding" \
-  "namespace hwg-1268831311 permits only ingress class cf-tunnel-hwg; requested cf-tunnel-nwp"
+  "namespace hwg-1268831311 permits only ingress class cf-tunnel-hwg; requested cf-tunnel-nwp-public"
 run_case "deny/nwp-cross-org.yaml" "fail" "restrict-tunnel-binding" \
-  "namespace nwp-1306985678 permits only ingress class cf-tunnel-nwp; requested cf-tunnel-hwg"
+  "namespace nwp-1306985678 permits only ingress classes cf-tunnel-nwp-public, cf-tunnel-nwp-mtls; requested cf-tunnel-hwg"
+run_case "deny/nwp-class-retired.yaml" "fail" "restrict-tunnel-binding" \
+  "namespace nwp-1306985678 permits only ingress classes cf-tunnel-nwp-public, cf-tunnel-nwp-mtls; requested cf-tunnel-nwp"
 run_case "deny/hwg-class-absent.yaml" "fail" "restrict-tunnel-binding" \
   "namespace hwg-1268831311 permits only ingress class cf-tunnel-hwg; requested <absent>"
 run_case "deny/hwg-class-suffix.yaml" "fail" "restrict-tunnel-binding" \

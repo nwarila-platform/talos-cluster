@@ -42,8 +42,9 @@ proof currently renders these envelope categories:
 - `vault-ca` ConfigMap
 - default-deny, DNS egress, and Vault egress NetworkPolicies, plus the
   `allow-dns-visibility` DNS-visibility CiliumNetworkPolicy
-- an opt-in CiliumNetworkPolicy that permits the hwg tunnel proxy to reach
-  pods labelled `nwarila.io/tunnel-exposed: "true"` on TCP 8080 only
+- one opt-in CiliumNetworkPolicy per registered tunnel, each permitting only
+  that tunnel's proxy to reach pods labelled with its own tunnel name in
+  `nwarila.io/tunnel-exposed`, on TCP 8080 only
 - GitRepository and Flux Kustomization for the deploy repo
 - VSO VaultStaticSecrets for `ghcr-pull` and `<tenant>-gitops-source-auth`
 
@@ -51,8 +52,23 @@ The `vault-client: "true"` pod label used by the Vault egress policy is network
 plumbing only. Vault Kubernetes auth and Vault policies are the security
 boundary.
 
-For an already-onboarded hwg tenant, publishing an app requires only the pod
-label `nwarila.io/tunnel-exposed: "true"` and a `networking.k8s.io/v1` Ingress
-using class `cf-tunnel-hwg`, an in-zone host, at least one HTTP path, and a
-numeric Service backend port of 8080. The platform supplies both sides of the
+For an already-onboarded tenant, publishing an app requires only the pod label
+`nwarila.io/tunnel-exposed: <tunnel>` and a `networking.k8s.io/v1` Ingress using
+that tunnel's class, an in-zone host, at least one HTTP path, and a numeric
+Service backend port of 8080. The platform supplies both sides of the
 network-policy contract; the tenant must not add a platform-side route or CNP.
+
+The label value is the tunnel name rather than a boolean, and that is a security
+boundary, not a naming preference. An organization may run several tunnels at
+different protection tiers over the same tenant namespaces, so namespace scoping
+cannot separate them; a Kubernetes label holds one value per key, which makes a
+pod reachable from exactly one proxy. A boolean opt-in would let a tenant
+republish an mTLS-protected origin through the unauthenticated tunnel by
+declaring a second Ingress. `scripts/check-tunnel-isolation.py` fails CI if any
+part of that contract drifts.
+
+| Tunnel | Label value | Ingress class | Zone |
+|---|---|---|---|
+| hwg | `hwg` | `cf-tunnel-hwg` | `theherowarsguys.com` |
+| nwp-public | `nwp-public` | `cf-tunnel-nwp-public` | `nicholaswarila.com` (excluding the protected zone) |
+| nwp-mtls | `nwp-mtls` | `cf-tunnel-nwp-mtls` | `secure.nicholaswarila.com` |

@@ -1,18 +1,18 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: traefik-hwg-network
-  namespace: traefik-hwg
+  name: traefik-nwp-public-network
+  namespace: traefik-nwp-public
 spec:
   endpointSelector:
     matchLabels:
-      nwarila.io/tunnel-proxy: hwg
+      nwarila.io/tunnel-proxy: nwp-public
   ingress:
     - fromEndpoints:
         - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": cloudflared-hwg
+            "k8s:io.kubernetes.pod.namespace": cloudflared-nwp-public
             "k8s:app.kubernetes.io/name": cloudflared
-            "k8s:app.kubernetes.io/instance": hwg
+            "k8s:app.kubernetes.io/instance": nwp-public
       toPorts:
         - ports:
             - port: "8000"
@@ -26,10 +26,13 @@ spec:
         - ports:
             - port: "6443"
               protocol: TCP
+    # The tunnel-exposed label carries the TUNNEL NAME, not a boolean. That is
+    # what keeps a workload published on this tunnel from being reachable by
+    # the sibling tunnel's proxy in the same tenant namespace.
     - toEndpoints:
         - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": hwg-1268831311
-            "k8s:nwarila.io/tunnel-exposed": "hwg"
+            "k8s:io.kubernetes.pod.namespace": nwp-1306985678
+            "k8s:nwarila.io/tunnel-exposed": "nwp-public"
       toPorts:
         - ports:
             - port: "8080"

@@ -35,6 +35,9 @@ Runbooks are composite operational how-to documents under ADR-0002.
 - [Operate HWG Self-Service Ingress](runbooks/operate-hwg-self-service-ingress.md) -
   performs the one-time wildcard cutover and verifies autonomous app publishing
   without regressing the canary or static hello route.
+- [Operate The nwarila-platform Tunnel Pair](runbooks/operate-nwp-tunnel-pair.md) -
+  reconciles and proves the paired unprotected and mTLS-protected connectors,
+  and carries the owner-gated DNS and client-certificate steps that remain.
 - [Rotate HWG Tenant Secrets](runbooks/rotate-hwg-tenant-secrets.md) - rotates the
   two tenant Secrets visible to the hwg Traefik informer and verifies refresh
   without printing credential material.
