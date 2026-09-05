@@ -5,8 +5,9 @@
 #
 # Adding a tunnel is a paired operation: connector and proxy contracts (two), a
 # connector apps-index entry, an indexed Flux proxy child, an inherited tenant
-# allow, and binding- and hostname-policy registrations. The connector side
-# also supplies its route ConfigMap and SOPS credentials.
+# allow, an entry in the guard's `TUNNEL_TENANTS` map, corresponding deny-all
+# `.gitignore` allowlist entries, and binding- and hostname-policy registrations.
+# The connector side also supplies its route ConfigMap and SOPS credentials.
 #
 # Placeholder tokens contain the word "placeholder" on purpose:
 # scripts/check-no-placeholder-leak.sh renders the aggregate, Flux children, and

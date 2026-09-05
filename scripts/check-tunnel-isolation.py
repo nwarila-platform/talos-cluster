@@ -8,8 +8,9 @@ shapes, tenant ownership, route tables, and admission-policy registrations all
 staying in agreement.
 
 Connectors and proxies render from shared kustomize components, so this guard
-inspects what kustomize renders for each overlay -- what Flux applies -- rather
-than trusting the component sources or overlay contract literals.
+compares every tunnel- and tenant-rendered policy with a closed expected object.
+It also rejects Flux build modifiers that would make the applied child differ
+from the inspected overlay rather than trusting authored contract literals.
 
 Usage: check-tunnel-isolation.py [REPO_ROOT]
 """
@@ -22,6 +23,7 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from runpy import run_path
 from shutil import which
 
 import yaml
@@ -35,6 +37,7 @@ TEMPLATE_CNP = (
 BINDING_POLICY = f"{APPS}/kyverno/policies/restrict-tunnel-binding.yaml"
 HOSTNAME_POLICY = f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml"
 APPS_INDEX = f"{APPS}/kustomization.yaml"
+ROOT_FLUX_SYNC = "clusters/talos-cluster/flux-system/gotk-sync.yaml"
 
 EXPOSED = "nwarila.io/tunnel-exposed"
 PROXY = "nwarila.io/tunnel-proxy"
@@ -47,6 +50,11 @@ POLICY_KINDS = {
     "CiliumClusterwideNetworkPolicy",
     "NetworkPolicy",
 }
+BUILD_CONTENT_KEYS = frozenset(
+    run_path(str(Path(__file__).with_name("rendered-inventory.py")))[
+        "BUILD_CONTENT_KEYS"
+    ]
+)
 TUNNEL_TENANTS = {
     "hwg": "hwg-1268831311",
     "nwp-public": "nwp-1306985678",
@@ -200,8 +208,80 @@ def check_policy_inventory(
             g.errors.append(f"{where}: missing {noun} {identity_label(identity)}")
 
 
+def canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def difference_paths(actual: object, expected: object, path: str = "") -> list[str]:
+    if type(actual) is not type(expected):
+        return [path or "<object>"]
+    if isinstance(expected, dict):
+        paths: list[str] = []
+        actual_keys = set(actual)
+        expected_keys = set(expected)
+        for key in sorted(actual_keys ^ expected_keys):
+            paths.append(f"{path}.{key}" if path else str(key))
+        for key in sorted(actual_keys & expected_keys):
+            child = f"{path}.{key}" if path else str(key)
+            paths.extend(difference_paths(actual[key], expected[key], child))
+        return paths
+    if isinstance(expected, list):
+        if len(actual) != len(expected):
+            return [path or "<object>"]
+        paths = []
+        for index, (actual_item, expected_item) in enumerate(
+            zip(actual, expected, strict=True)
+        ):
+            child = f"{path}[{index}]" if path else f"[{index}]"
+            paths.extend(difference_paths(actual_item, expected_item, child))
+        return paths
+    return [] if actual == expected else [path or "<object>"]
+
+
+def check_policy_objects(
+    g: Guard,
+    where: str,
+    objects: list[dict],
+    expected: list[dict],
+    *,
+    all_documents: bool = False,
+    noun: str = "rendered policy",
+) -> None:
+    expected_by_identity = {
+        object_identity(document): document for document in expected
+    }
+    if len(expected_by_identity) != len(expected):
+        raise ValueError(f"{where}: closed expected policy inventory is duplicated")
+    check_policy_inventory(
+        g,
+        where,
+        objects,
+        list(expected_by_identity),
+        all_documents=all_documents,
+        noun=noun,
+    )
+    actual_by_identity: defaultdict[
+        tuple[str, str, str | None], list[dict]
+    ] = defaultdict(list)
+    for document in objects:
+        if all_documents or document.get("kind") in POLICY_KINDS:
+            actual_by_identity[object_identity(document)].append(document)
+    for identity, expected_document in expected_by_identity.items():
+        matches = actual_by_identity.get(identity, [])
+        if len(matches) != 1:
+            continue
+        actual_document = matches[0]
+        if canonical_json(actual_document) == canonical_json(expected_document):
+            continue
+        paths = difference_paths(actual_document, expected_document)
+        g.errors.append(
+            f"{where}: {noun} {identity_label(identity)} differs from its "
+            f"closed expected object at {', '.join(paths)}"
+        )
+
+
 def rule_signature(rule: object) -> str:
-    return json.dumps(rule, sort_keys=True, separators=(",", ":"))
+    return canonical_json(rule)
 
 
 def exact_rule_set(actual: object, expected: list[dict]) -> bool:
@@ -248,17 +328,6 @@ def connector_rules(tunnel: str) -> list[dict]:
                 }
             ],
         },
-        {
-            "toEndpoints": [
-                {
-                    "matchLabels": {
-                        NS_LABEL: f"traefik-{tunnel}",
-                        f"k8s:{PROXY}": tunnel,
-                    }
-                }
-            ],
-            "toPorts": ports("8000", "TCP"),
-        },
     ]
     if tunnel == "hwg":
         rules.append(
@@ -274,6 +343,19 @@ def connector_rules(tunnel: str) -> list[dict]:
                 "toPorts": ports("8080", "TCP"),
             }
         )
+    rules.append(
+        {
+            "toEndpoints": [
+                {
+                    "matchLabels": {
+                        NS_LABEL: f"traefik-{tunnel}",
+                        f"k8s:{PROXY}": tunnel,
+                    }
+                }
+            ],
+            "toPorts": ports("8000", "TCP"),
+        }
+    )
     return rules
 
 
@@ -326,6 +408,167 @@ def template_ingress_rule(tunnel: str) -> dict:
     }
 
 
+def policy_metadata(name: str, namespace: str | None = None) -> dict:
+    value = {"name": name}
+    if namespace is not None:
+        value["namespace"] = namespace
+    return value
+
+
+def default_deny_policy(name: str, namespace: str) -> dict:
+    return {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": policy_metadata(name, namespace),
+        "spec": {
+            "podSelector": {},
+            "policyTypes": ["Ingress", "Egress"],
+        },
+    }
+
+
+def connector_policy(tunnel: str) -> dict:
+    namespace = f"cloudflared-{tunnel}"
+    return {
+        "apiVersion": "cilium.io/v2",
+        "kind": "CiliumNetworkPolicy",
+        "metadata": policy_metadata(f"cloudflared-{tunnel}-egress", namespace),
+        "spec": {
+            "egress": connector_rules(tunnel),
+            "endpointSelector": {
+                "matchLabels": {
+                    INSTANCE: tunnel,
+                    NAME: "cloudflared",
+                }
+            },
+        },
+    }
+
+
+def proxy_policy(tunnel: str, tenant: str) -> dict:
+    namespace = f"traefik-{tunnel}"
+    return {
+        "apiVersion": "cilium.io/v2",
+        "kind": "CiliumNetworkPolicy",
+        "metadata": policy_metadata(f"traefik-{tunnel}-network", namespace),
+        "spec": {
+            "egress": proxy_egress_rules(tunnel, tenant),
+            "endpointSelector": {"matchLabels": {PROXY: tunnel}},
+            "ingress": [proxy_ingress_rule(tunnel)],
+        },
+    }
+
+
+def tunnel_allow_policy(tunnel: str, namespace: str | None = None) -> dict:
+    return {
+        "apiVersion": "cilium.io/v2",
+        "kind": "CiliumNetworkPolicy",
+        "metadata": policy_metadata(f"allow-tunnel-proxy-{tunnel}", namespace),
+        "spec": {
+            "endpointSelector": {"matchLabels": {EXPOSED: tunnel}},
+            "ingress": [template_ingress_rule(tunnel)],
+        },
+    }
+
+
+def tenant_base_policies(tenant: str) -> list[dict]:
+    return [
+        {
+            "apiVersion": "cilium.io/v2",
+            "kind": "CiliumNetworkPolicy",
+            "metadata": policy_metadata("allow-dns-visibility", tenant),
+            "spec": {
+                "egress": [
+                    {
+                        "toEndpoints": [
+                            {
+                                "matchLabels": {
+                                    NS_LABEL: "kube-system",
+                                    "k8s:k8s-app": "kube-dns",
+                                }
+                            }
+                        ],
+                        "toPorts": [
+                            {
+                                "ports": [
+                                    {"port": "53", "protocol": "UDP"},
+                                    {"port": "53", "protocol": "TCP"},
+                                ],
+                                "rules": {"dns": [{"matchPattern": "*"}]},
+                            }
+                        ],
+                    }
+                ],
+                "endpointSelector": {},
+            },
+        },
+        {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": policy_metadata("allow-dns-egress", tenant),
+            "spec": {
+                "egress": [
+                    {
+                        "ports": [
+                            {"port": 53, "protocol": "UDP"},
+                            {"port": 53, "protocol": "TCP"},
+                        ],
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {
+                                        "kubernetes.io/metadata.name": "kube-system"
+                                    }
+                                },
+                                "podSelector": {
+                                    "matchLabels": {"k8s-app": "kube-dns"}
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "podSelector": {},
+                "policyTypes": ["Egress"],
+            },
+        },
+        {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": policy_metadata("allow-vault-egress", tenant),
+            "spec": {
+                "egress": [
+                    {
+                        "ports": [{"port": 8200, "protocol": "TCP"}],
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {
+                                        "kubernetes.io/metadata.name": "deploy-vault"
+                                    }
+                                },
+                                "podSelector": {
+                                    "matchLabels": {
+                                        "app.kubernetes.io/name": "vault"
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "podSelector": {"matchLabels": {"vault-client": "true"}},
+                "policyTypes": ["Egress"],
+            },
+        },
+        default_deny_policy("default-deny-all", tenant),
+    ]
+
+
+def tenant_policies(tenant: str) -> list[dict]:
+    return tenant_base_policies(tenant) + [
+        tunnel_allow_policy(tunnel, tenant) for tunnel in sorted(TUNNEL_TENANTS)
+    ]
+
+
 def parse_ternary_map(document: dict, variable: str) -> dict[str, str]:
     spec = document.get("spec")
     variables = spec.get("variables", []) if isinstance(spec, dict) else []
@@ -343,20 +586,16 @@ def check_connector(g: Guard, tunnel: str) -> dict | None:
         "placeholder" not in text.casefold(),
         f"{where}: an unresolved placeholder survived the render",
     )
-    check_policy_inventory(
+    namespace = f"cloudflared-{tunnel}"
+    check_policy_objects(
         g,
         where,
         objects,
         [
-            (
-                "CiliumNetworkPolicy",
-                f"cloudflared-{tunnel}-egress",
-                f"cloudflared-{tunnel}",
-            ),
-            (
-                "NetworkPolicy",
+            connector_policy(tunnel),
+            default_deny_policy(
                 f"cloudflared-{tunnel}-default-deny",
-                f"cloudflared-{tunnel}",
+                namespace,
             ),
         ],
     )
@@ -420,6 +659,12 @@ def check_routes(
     seen: dict[str, str],
 ) -> None:
     where = f"{APPS}/cloudflared-{tunnel}/configmap.yaml"
+    root_origin_request = config.get("originRequest")
+    g.check(
+        not isinstance(root_origin_request, dict)
+        or "httpHostHeader" not in root_origin_request,
+        f"{where}: top-level originRequest.httpHostHeader is forbidden",
+    )
     uuid = str(config.get("tunnel", ""))
     if g.check(bool(UUID_RE.match(uuid)), f"{where}: tunnel id {uuid!r} is not a UUID"):
         g.check(
@@ -443,12 +688,35 @@ def check_routes(
         and str(last.get("service", "")).startswith("http_status:"),
         f"{where}: the final ingress rule must be a hostname-less http_status catch-all",
     )
-    for rule in rules:
+    tunnel_service = f"http://traefik-{tunnel}.traefik-{tunnel}.svc:80"
+    allowed_services = {tunnel_service}
+    if tunnel == "hwg":
+        allowed_services.add("http://hello-hwg.hello-hwg.svc:8080")
+    for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             g.errors.append(f"{where}: every ingress route must be a mapping")
             continue
+        origin_request = rule.get("originRequest")
+        g.check(
+            not isinstance(origin_request, dict)
+            or "httpHostHeader" not in origin_request,
+            f"{where}: ingress route {index} must not set "
+            "originRequest.httpHostHeader",
+        )
         hostname, service = rule.get("hostname"), str(rule.get("service", ""))
-        if hostname is None or service.startswith("http_status:"):
+        if service.startswith("http_status:"):
+            continue
+        g.check(
+            service in allowed_services,
+            f"{where}: routed hostname {hostname!r} service must be exactly "
+            f"{tunnel_service!r} for tunnel {tunnel!r}"
+            + (
+                " or the declared hwg hello-hwg exception"
+                if tunnel == "hwg"
+                else ""
+            ),
+        )
+        if hostname is None:
             continue
         bare = hostname[2:] if str(hostname).startswith("*.") else str(hostname)
         g.check(
@@ -494,30 +762,24 @@ def check_proxy(g: Guard, tunnel: str) -> None:
         "placeholder" not in text.casefold(),
         f"{where}: an unresolved placeholder survived the render",
     )
-    check_policy_inventory(
-        g,
-        where,
-        objects,
-        [
-            (
-                "CiliumNetworkPolicy",
-                f"traefik-{tunnel}-network",
-                f"traefik-{tunnel}",
-            ),
-            (
-                "NetworkPolicy",
-                f"traefik-{tunnel}-default-deny",
-                f"traefik-{tunnel}",
-            ),
-        ],
-    )
-
     tenant = TUNNEL_TENANTS.get(tunnel)
     if tenant is None:
         g.errors.append(
             f"{where}: tunnel {tunnel!r} is absent from the closed TUNNEL_TENANTS map"
         )
         return
+    check_policy_objects(
+        g,
+        where,
+        objects,
+        [
+            proxy_policy(tunnel, tenant),
+            default_deny_policy(
+                f"traefik-{tunnel}-default-deny",
+                f"traefik-{tunnel}",
+            ),
+        ],
+    )
 
     klass = f"{CLASS_PREFIX}{tunnel}"
     ingress_class = find_object(g, objects, "IngressClass", klass, where)
@@ -597,6 +859,30 @@ def check_proxy(g: Guard, tunnel: str) -> None:
     )
 
 
+def forbidden_build_content_keys(
+    spec: dict,
+    *,
+    allowed: frozenset[str] = frozenset(),
+) -> list[str]:
+    return sorted(
+        key
+        for key in spec
+        if (
+            key in BUILD_CONTENT_KEYS or key == "patchesStrategicMerge"
+        )
+        and key not in allowed
+    )
+
+
+def internal_source_ref(value: object, owner_namespace: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("kind") == "GitRepository"
+        and value.get("name") == "flux-system"
+        and value.get("namespace", owner_namespace) == "flux-system"
+    )
+
+
 def check_flux_child(g: Guard, tunnel: str) -> None:
     relative = f"{APPS}/kustomization-traefik-{tunnel}.yaml"
     documents = g.load(relative)
@@ -607,10 +893,64 @@ def check_flux_child(g: Guard, tunnel: str) -> None:
         return
     document = documents[0]
     spec = document.get("spec")
-    spec = spec if isinstance(spec, dict) else {}
+    if not g.check(
+        isinstance(spec, dict),
+        f"{relative}: Flux child spec must be a mapping",
+    ):
+        return
+    forbidden = forbidden_build_content_keys(spec)
+    g.check(
+        not forbidden,
+        f"{relative}: Flux child spec contains forbidden build-affecting "
+        f"key(s): {forbidden!r}",
+    )
     g.check(
         spec.get("path") == f"./{APPS}/traefik-{tunnel}",
         f"{relative}: spec.path must be ./{APPS}/traefik-{tunnel}",
+    )
+    g.check(
+        internal_source_ref(
+            spec.get("sourceRef"),
+            metadata(document).get("namespace"),
+        ),
+        f"{relative}: spec.sourceRef must reference GitRepository/flux-system "
+        "in namespace 'flux-system'",
+    )
+
+
+def check_root_flux_build(g: Guard) -> None:
+    documents = g.load(ROOT_FLUX_SYNC)
+    matches = [
+        document
+        for document in documents
+        if document.get("apiVersion") == "kustomize.toolkit.fluxcd.io/v1"
+        and document.get("kind") == "Kustomization"
+        and metadata(document).get("name") == "flux-system"
+        and metadata(document).get("namespace") == "flux-system"
+    ]
+    if not g.check(
+        len(matches) == 1,
+        f"{ROOT_FLUX_SYNC}: expected exactly one root Flux "
+        f"Kustomization/flux-system, found {len(matches)}",
+    ):
+        return
+    spec = matches[0].get("spec")
+    if not g.check(
+        isinstance(spec, dict),
+        f"{ROOT_FLUX_SYNC}: root Flux Kustomization spec must be a mapping",
+    ):
+        return
+    # Root SOPS decryption is pre-existing and required. It is not one of C3's
+    # enumerated mutation surfaces; every other shared build-content key is
+    # forbidden so the aggregate connector render remains the applied build.
+    forbidden = forbidden_build_content_keys(
+        spec,
+        allowed=frozenset({"decryption"}),
+    )
+    g.check(
+        not forbidden,
+        f"{ROOT_FLUX_SYNC}: root Flux Kustomization spec contains forbidden "
+        f"build-affecting key(s): {forbidden!r}",
     )
 
 
@@ -625,6 +965,12 @@ def check_tenant_namespaces(g: Guard) -> dict[str, str]:
         ):
             continue
         _text, objects = g.render(relative)
+        check_policy_objects(
+            g,
+            f"{relative} (rendered)",
+            objects,
+            tenant_policies(tenant),
+        )
         namespaces = [
             document
             for document in objects
@@ -656,11 +1002,8 @@ def check_tenant_namespaces(g: Guard) -> dict[str, str]:
 
 def check_template(g: Guard, tunnels: list[str]) -> None:
     documents = g.load(TEMPLATE_CNP)
-    expected = [
-        ("CiliumNetworkPolicy", f"allow-tunnel-proxy-{tunnel}", None)
-        for tunnel in tunnels
-    ]
-    check_policy_inventory(
+    expected = [tunnel_allow_policy(tunnel) for tunnel in tunnels]
+    check_policy_objects(
         g,
         TEMPLATE_CNP,
         documents,
@@ -808,7 +1151,12 @@ def check_no_retired_boolean(g: Guard) -> None:
         if not directory.is_dir():
             g.errors.append(f"{tree}: required inventory directory is missing")
             continue
-        for path in sorted(directory.rglob("*.yaml")):
+        paths = sorted(
+            path
+            for path in directory.rglob("*")
+            if path.is_file() and path.suffix in {".yaml", ".yml"}
+        )
+        for path in paths:
             for line_number, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(),
                 start=1,
@@ -942,6 +1290,7 @@ def main(argv: list[str]) -> int:
     try:
         check_no_retired_boolean(g)
         tunnels = discover_tunnels(g)
+        check_root_flux_build(g)
         tenant_orgs = check_tenant_namespaces(g)
         configs: dict[str, dict | None] = {}
         for tunnel in tunnels:
@@ -983,8 +1332,9 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"check-tunnel-isolation: OK ({len(tunnels)} tunnels: "
-        f"{', '.join(tunnels)}; exact pairing, closed policy inventory/rule "
-        "shapes, tenant ownership, routes, and policy registrations verified)"
+        f"{', '.join(tunnels)}; exact pairing, closed whole-policy objects in "
+        "tunnel and tenant renders, forbidden Flux build modifiers absent, "
+        "tenant ownership, routes, and policy registrations verified)"
     )
     return 0
 

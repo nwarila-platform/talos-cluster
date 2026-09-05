@@ -30,10 +30,12 @@ TEMPLATE_CNP = (
     f"{TENANTS}/_template/zero-touch/base/"
     "ciliumnetworkpolicy-allow-tunnel-proxy.yaml"
 )
+ROOT_FLUX_SYNC = "clusters/talos-cluster/flux-system/gotk-sync.yaml"
 COPY_FILES = (
     f"{APPS}/kustomization.yaml",
     f"{APPS}/kyverno/policies/restrict-tunnel-binding.yaml",
     f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml",
+    ROOT_FLUX_SYNC,
     PLACEHOLDER_GUARD,
 )
 TENANT_DIRS = ("_template", "hwg-1268831311", "nwp-1306985678")
@@ -486,6 +488,327 @@ def unexpected_overlay_cnp(root: Path) -> None:
     )
 
 
+def specs_sibling_bypass(root: Path) -> None:
+    add_overlay_patch(
+        root,
+        f"{APPS}/traefik-nwp-public/kustomization.yaml",
+        "CiliumNetworkPolicy",
+        [
+            {
+                "op": "add",
+                "path": "/specs",
+                "value": [
+                    {
+                        "egress": [
+                            {
+                                "toEndpoints": [
+                                    {
+                                        "matchLabels": {
+                                            "k8s:io.kubernetes.pod.namespace": (
+                                                "nwp-1306985678"
+                                            ),
+                                            "k8s:nwarila.io/tunnel-exposed": (
+                                                "nwp-mtls"
+                                            ),
+                                        }
+                                    }
+                                ],
+                                "toPorts": [
+                                    {
+                                        "ports": [
+                                            {
+                                                "port": "8080",
+                                                "protocol": "TCP",
+                                            }
+                                        ]
+                                    }
+                                ],
+                            }
+                        ],
+                        "endpointSelector": {
+                            "matchLabels": {
+                                "nwarila.io/tunnel-proxy": "nwp-public"
+                            }
+                        },
+                    }
+                ],
+            }
+        ],
+    )
+    documents = load_documents(root, TEMPLATE_CNP)
+    mtls = next(
+        document
+        for document in documents
+        if document["metadata"]["name"] == "allow-tunnel-proxy-nwp-mtls"
+    )
+    mtls["specs"] = [
+        {
+            "endpointSelector": {
+                "matchLabels": {
+                    "nwarila.io/tunnel-exposed": "nwp-mtls"
+                }
+            },
+            "ingress": [
+                {
+                    "fromEndpoints": [
+                        {
+                            "matchLabels": {
+                                "k8s:io.kubernetes.pod.namespace": (
+                                    "traefik-nwp-public"
+                                ),
+                                "k8s:nwarila.io/tunnel-proxy": "nwp-public",
+                            }
+                        }
+                    ],
+                    "toPorts": [
+                        {
+                            "ports": [
+                                {"port": "8080", "protocol": "TCP"}
+                            ]
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    write_documents(root, TEMPLATE_CNP, documents)
+
+
+def insert_sibling_proxy_route(root: Path, *, host_header: bool) -> None:
+    relative = f"{APPS}/cloudflared-nwp-public/configmap.yaml"
+    configmap = load_document(root, relative)
+    config = yaml.safe_load(configmap["data"]["config.yaml"])
+    route = {
+        "hostname": "leak.nicholaswarila.com",
+        "service": "http://traefik-nwp-mtls.traefik-nwp-mtls.svc:80",
+    }
+    if host_header:
+        route["originRequest"] = {
+            "httpHostHeader": "app.secure.nicholaswarila.com"
+        }
+    config["ingress"].insert(-1, route)
+    configmap["data"]["config.yaml"] = yaml.safe_dump(
+        config,
+        sort_keys=False,
+    )
+    write_document(root, relative, configmap)
+
+
+def allow_all_defaults_and_sibling_route(root: Path) -> None:
+    connector = load_document(
+        root,
+        f"{CONNECTOR}/networkpolicy-default-deny.yaml",
+    )
+    connector["spec"]["egress"] = [{}]
+    write_document(
+        root,
+        f"{CONNECTOR}/networkpolicy-default-deny.yaml",
+        connector,
+    )
+    proxy = load_document(
+        root,
+        f"{PROXY}/networkpolicy-default-deny.yaml",
+    )
+    proxy["spec"]["ingress"] = [{}]
+    write_document(
+        root,
+        f"{PROXY}/networkpolicy-default-deny.yaml",
+        proxy,
+    )
+    insert_sibling_proxy_route(root, host_header=True)
+
+
+def sibling_proxy_route(root: Path) -> None:
+    insert_sibling_proxy_route(root, host_header=False)
+
+
+def hostname_less_sibling_proxy_route(root: Path) -> None:
+    relative = f"{APPS}/cloudflared-nwp-public/configmap.yaml"
+    configmap = load_document(root, relative)
+    config = yaml.safe_load(configmap["data"]["config.yaml"])
+    config["ingress"].insert(
+        -1,
+        {"service": "http://traefik-nwp-mtls.traefik-nwp-mtls.svc:80"},
+    )
+    configmap["data"]["config.yaml"] = yaml.safe_dump(
+        config,
+        sort_keys=False,
+    )
+    write_document(root, relative, configmap)
+
+
+def own_proxy_route_with_host_header(root: Path) -> None:
+    relative = f"{APPS}/cloudflared-nwp-public/configmap.yaml"
+    configmap = load_document(root, relative)
+    config = yaml.safe_load(configmap["data"]["config.yaml"])
+    wildcard = next(
+        rule
+        for rule in config["ingress"]
+        if rule.get("hostname") == "*.nicholaswarila.com"
+    )
+    wildcard["originRequest"] = {
+        "httpHostHeader": "app.secure.nicholaswarila.com"
+    }
+    configmap["data"]["config.yaml"] = yaml.safe_dump(
+        config,
+        sort_keys=False,
+    )
+    write_document(root, relative, configmap)
+
+
+def flux_child_build_patch(root: Path) -> None:
+    relative = f"{APPS}/kustomization-traefik-nwp-mtls.yaml"
+    document = load_document(root, relative)
+    document["spec"]["patches"] = [
+        {
+            "target": {
+                "kind": "CiliumNetworkPolicy",
+                "name": "traefik-nwp-mtls-network",
+            },
+            "patch": (
+                "- op: add\n"
+                "  path: /spec/ingress/-\n"
+                "  value:\n"
+                "    fromEndpoints:\n"
+                "      - matchLabels:\n"
+                "          k8s:io.kubernetes.pod.namespace: "
+                "cloudflared-nwp-public\n"
+                "          k8s:app.kubernetes.io/name: cloudflared\n"
+                "          k8s:app.kubernetes.io/instance: nwp-public\n"
+                "    toPorts:\n"
+                "      - ports:\n"
+                "          - port: '8000'\n"
+                "            protocol: TCP"
+            ),
+        }
+    ]
+    write_document(root, relative, document)
+
+
+def flux_child_legacy_build_patch(root: Path) -> None:
+    relative = f"{APPS}/kustomization-traefik-nwp-mtls.yaml"
+    document = load_document(root, relative)
+    document["spec"]["patchesStrategicMerge"] = ["reviewer-policy.yaml"]
+    write_document(root, relative, document)
+
+
+def flux_child_external_source(root: Path) -> None:
+    relative = f"{APPS}/kustomization-traefik-nwp-mtls.yaml"
+    document = load_document(root, relative)
+    document["spec"]["sourceRef"]["name"] = "reviewer-external"
+    write_document(root, relative, document)
+
+
+def flux_child_external_owner_namespace(root: Path) -> None:
+    relative = f"{APPS}/kustomization-traefik-nwp-mtls.yaml"
+    document = load_document(root, relative)
+    document["metadata"]["namespace"] = "reviewer-external"
+    write_document(root, relative, document)
+
+
+def root_flux_build_patch(root: Path) -> None:
+    documents = load_documents(root, ROOT_FLUX_SYNC)
+    flux = next(
+        document
+        for document in documents
+        if document.get("kind") == "Kustomization"
+        and document.get("metadata", {}).get("name") == "flux-system"
+    )
+    flux["spec"]["postBuild"] = {
+        "substitute": {"REVIEWER_MUTATION": "true"}
+    }
+    write_documents(root, ROOT_FLUX_SYNC, documents)
+
+
+def tenant_render_widened(root: Path) -> None:
+    relative = f"{TENANTS}/nwp-1306985678/kustomization.yaml"
+    document = load_document(root, relative)
+    document["patches"].append(
+        {
+            "target": {
+                "kind": "CiliumNetworkPolicy",
+                "name": "allow-tunnel-proxy-nwp-mtls",
+            },
+            "patch": yaml.safe_dump(
+                [
+                    {
+                        "op": "add",
+                        "path": "/spec/ingress/-",
+                        "value": {
+                            "fromEndpoints": [
+                                {
+                                    "matchLabels": {
+                                        "k8s:io.kubernetes.pod.namespace": (
+                                            "traefik-nwp-public"
+                                        ),
+                                        "k8s:nwarila.io/tunnel-proxy": (
+                                            "nwp-public"
+                                        ),
+                                    }
+                                }
+                            ],
+                            "toPorts": [
+                                {
+                                    "ports": [
+                                        {
+                                            "port": "8080",
+                                            "protocol": "TCP",
+                                        }
+                                    ]
+                                }
+                            ],
+                        },
+                    }
+                ],
+                sort_keys=False,
+            ),
+        }
+    )
+    write_document(root, relative, document)
+
+
+def extra_tenant_base_policy(root: Path) -> None:
+    base = f"{TENANTS}/_template/zero-touch/base"
+    relative = f"{base}/reviewer-extra.yaml"
+    extra = {
+        "apiVersion": "cilium.io/v2",
+        "kind": "CiliumNetworkPolicy",
+        "metadata": {"name": "reviewer-cross-tunnel"},
+        "spec": {
+            "endpointSelector": {
+                "matchLabels": {
+                    "nwarila.io/tunnel-exposed": "nwp-mtls"
+                }
+            },
+            "ingress": [
+                {
+                    "fromEndpoints": [
+                        {
+                            "matchLabels": {
+                                "k8s:io.kubernetes.pod.namespace": (
+                                    "traefik-nwp-public"
+                                ),
+                                "k8s:nwarila.io/tunnel-proxy": "nwp-public",
+                            }
+                        }
+                    ],
+                    "toPorts": [
+                        {
+                            "ports": [
+                                {"port": "8080", "protocol": "TCP"}
+                            ]
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    write_document(root, relative, extra)
+    kustomization = load_document(root, f"{base}/kustomization.yaml")
+    kustomization["resources"].append("reviewer-extra.yaml")
+    write_document(root, f"{base}/kustomization.yaml", kustomization)
+
+
 def namespace_only_overlay_rule(root: Path) -> None:
     add_overlay_patch(
         root,
@@ -758,6 +1081,20 @@ def stray_retired_boolean(root: Path) -> None:
     )
 
 
+def stray_retired_boolean_yml(root: Path) -> None:
+    (root / APPS / "reviewer-stray-policy.yml").write_text(
+        "apiVersion: cilium.io/v2\n"
+        "kind: CiliumNetworkPolicy\n"
+        "metadata:\n"
+        "  name: reviewer-stray-yml\n"
+        "spec:\n"
+        "  endpointSelector:\n"
+        "    matchLabels:\n"
+        '      nwarila.io/tunnel-exposed: "true"\n',
+        encoding="utf-8",
+    )
+
+
 def orphan_proxy_overlay(root: Path) -> None:
     source = root / APPS / "traefik-nwp-public"
     orphan = root / APPS / "traefik-nwp-orphan"
@@ -869,6 +1206,39 @@ CASES = (
         flux_child_wrong_path,
     ),
     Case(
+        "P3 Flux child build patch is rejected",
+        1,
+        "kustomization-traefik-nwp-mtls.yaml: Flux child spec contains "
+        "forbidden build-affecting key(s): ['patches']",
+        flux_child_build_patch,
+    ),
+    Case(
+        "legacy Flux child strategic-merge build patch is rejected",
+        1,
+        "forbidden build-affecting key(s): ['patchesStrategicMerge']",
+        flux_child_legacy_build_patch,
+    ),
+    Case(
+        "Flux child using an external source is rejected",
+        1,
+        "spec.sourceRef must reference GitRepository/flux-system",
+        flux_child_external_source,
+    ),
+    Case(
+        "Flux child resolving its source in another namespace is rejected",
+        1,
+        "spec.sourceRef must reference GitRepository/flux-system in namespace "
+        "'flux-system'",
+        flux_child_external_owner_namespace,
+    ),
+    Case(
+        "root Flux build mutation affecting connectors is rejected",
+        1,
+        "root Flux Kustomization spec contains forbidden build-affecting "
+        "key(s): ['postBuild']",
+        root_flux_build_patch,
+    ),
+    Case(
         "missing inherited tenant allow is rejected",
         1,
         "missing template document CiliumNetworkPolicy/"
@@ -936,6 +1306,41 @@ CASES = (
         additive_ccnp_pair,
     ),
     Case(
+        "P1 specs sibling cross-tunnel policy pair is rejected",
+        1,
+        "CiliumNetworkPolicy/traefik-nwp-public-network namespace "
+        "'traefik-nwp-public' differs from its closed expected object at specs",
+        specs_sibling_bypass,
+    ),
+    Case(
+        "P2 allow-all default-denies and sibling route are rejected",
+        1,
+        "NetworkPolicy/cloudflared-nwp-public-default-deny namespace "
+        "'cloudflared-nwp-public' differs from its closed expected object "
+        "at spec.egress",
+        allow_all_defaults_and_sibling_route,
+    ),
+    Case(
+        "connector route to the sibling proxy is rejected",
+        1,
+        "routed hostname 'leak.nicholaswarila.com' service must be exactly "
+        "'http://traefik-nwp-public.traefik-nwp-public.svc:80'",
+        sibling_proxy_route,
+    ),
+    Case(
+        "hostname-less connector route to the sibling proxy is rejected",
+        1,
+        "routed hostname None service must be exactly "
+        "'http://traefik-nwp-public.traefik-nwp-public.svc:80'",
+        hostname_less_sibling_proxy_route,
+    ),
+    Case(
+        "connector route Host rewrite is rejected",
+        1,
+        "must not set originRequest.httpHostHeader",
+        own_proxy_route_with_host_header,
+    ),
+    Case(
         "an extra CNP produced by an overlay patch is rejected",
         1,
         "unexpected rendered policy CiliumNetworkPolicy/reviewer-extra-cnp",
@@ -959,6 +1364,22 @@ CASES = (
         "unexpected template document CiliumNetworkPolicy/"
         "allow-tunnel-proxy-any",
         template_unkeyed_document,
+    ),
+    Case(
+        "P6 tenant overlay policy widening is rejected",
+        1,
+        "CiliumNetworkPolicy/allow-tunnel-proxy-nwp-mtls namespace "
+        "'nwp-1306985678' differs from its closed expected object at "
+        "spec.ingress",
+        tenant_render_widened,
+    ),
+    Case(
+        "reviewer B extra tenant base policy is rejected",
+        1,
+        "clusters/talos-cluster/tenants/nwp-1306985678 (rendered): "
+        "unexpected rendered policy CiliumNetworkPolicy/reviewer-cross-tunnel "
+        "namespace 'nwp-1306985678'",
+        extra_tenant_base_policy,
     ),
     Case(
         "S3 connector-to-sibling additive rule pair is rejected",
@@ -1009,6 +1430,12 @@ CASES = (
         1,
         "retired boolean opt-in",
         stray_retired_boolean,
+    ),
+    Case(
+        "stray retired boolean .yml manifest is rejected tree-wide",
+        1,
+        "reviewer-stray-policy.yml:8: retired boolean opt-in",
+        stray_retired_boolean_yml,
     ),
     Case(
         "orphan proxy overlay and Flux child are rejected",
