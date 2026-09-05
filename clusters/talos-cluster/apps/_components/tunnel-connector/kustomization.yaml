@@ -1,9 +1,14 @@
-# Shared cloudflared connector for every Cloudflare Tunnel. An overlay supplies a
-# `tunnel-contract` ConfigMap (tunnel, configRevision) plus its own per-tunnel
-# ConfigMap route table and SOPS credentials; everything else is derived here.
+# Shared cloudflared connector for every Cloudflare Tunnel. Its overlay supplies
+# a `tunnel-contract` ConfigMap (tunnel, configRevision), route ConfigMap, and
+# SOPS credentials. Adding a tunnel is a paired operation: connector and proxy
+# contracts (two), a connector apps-index entry, an indexed Flux proxy child,
+# an inherited tenant allow, and binding- and hostname-policy registrations.
+# The hwg connector alone retains its documented exact-shape CNP patch.
 #
 # Placeholder tokens contain the word "placeholder" on purpose:
-# scripts/check-no-placeholder-leak.sh fails the cluster render if any survive.
+# scripts/check-no-placeholder-leak.sh renders the aggregate, Flux children, and
+# tenants; check-tunnel-isolation.py renders every tunnel overlay. Both reject
+# placeholder survivors case-insensitively.
 # Composite names are <thing>-<tunnel>[-suffix], so the tunnel is always
 # segment 1; whole-value fields are replaced without a delimiter, because a
 # delimiter/index replacement on a value with no delimiter APPENDS instead.
