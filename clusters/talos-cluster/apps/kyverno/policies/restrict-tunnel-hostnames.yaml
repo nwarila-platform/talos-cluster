@@ -10,10 +10,10 @@ metadata:
     policies.kyverno.io/description: >-
       Constrains each tunnel ingress class to the DNS zone its connector
       serves and enforces the TCP 8080 Service-backend contract used by the
-      opt-in network policies. The unprotected nwarila-platform class is
-      additionally barred from the mTLS-protected zone, so a hostname covered
-      by the edge client-certificate association cannot also be published
-      through the unauthenticated connector.
+      opt-in network policies. Two classes may share one zone when their
+      tiers are separated by the tunnel-name pod label and per-hostname edge
+      registration; a nested protected zone, if one is ever declared, is
+      barred from its unprotected outer class here.
 spec:
   validationActions: [Deny]
   failurePolicy: Fail
@@ -58,18 +58,26 @@ spec:
     - name: zone
       expression: >-
         variables.class == 'cf-tunnel-hwg' ? 'theherowarsguys.com' :
-        variables.class == 'cf-tunnel-nwp-public' ? 'nicholaswarila.com' :
-        variables.class == 'cf-tunnel-nwp-mtls' ? 'secure.nicholaswarila.com' : ''
+        variables.class == 'cf-tunnel-nwp-public' ? 'nickwarila.com' :
+        variables.class == 'cf-tunnel-nwp-mtls' ? 'nickwarila.com' : ''
     # Non-empty only for a class whose connector is unauthenticated while a
-    # protected sibling zone nests inside its own zone.
+    # protected sibling zone nests inside its own zone. Both nwp classes share
+    # nickwarila.com outright, so nothing nests and this stays empty.
     - name: protectedZone
       expression: >-
-        variables.class == 'cf-tunnel-nwp-public' ? 'secure.nicholaswarila.com' : ''
-    - name: canaryHost
+        ''
+    # Platform canaries are reserved across every class that can publish in
+    # their zone. Both nwp classes therefore reserve both same-zone canaries.
+    - name: reservedHosts
       expression: >-
-        variables.class == 'cf-tunnel-hwg' ? 'canary-hwg.theherowarsguys.com' :
-        variables.class == 'cf-tunnel-nwp-public' ? 'canary-nwp-public.nicholaswarila.com' :
-        variables.class == 'cf-tunnel-nwp-mtls' ? 'canary-nwp-mtls.secure.nicholaswarila.com' : ''
+        variables.class == 'cf-tunnel-hwg'
+          ? ['canary-hwg.theherowarsguys.com'] :
+        variables.class == 'cf-tunnel-nwp-public'
+          ? ['canary-nwp-public.nickwarila.com',
+             'canary-nwp-mtls.nickwarila.com'] :
+        variables.class == 'cf-tunnel-nwp-mtls'
+          ? ['canary-nwp-public.nickwarila.com',
+             'canary-nwp-mtls.nickwarila.com'] : []
   validations:
     - expression: >-
         !variables.applies ||
@@ -120,10 +128,10 @@ spec:
     - expression: >-
         !variables.applies || !has(object.spec.rules) ||
         object.spec.rules.all(rule,
-          !has(rule.host) || rule.host != variables.canaryHost)
-      message: the class canary hostname is reserved
-      messageExpression: >-
-        variables.canaryHost + ' is reserved'
+          !has(rule.host) ||
+          !variables.reservedHosts.exists(reservedHost,
+            rule.host == reservedHost))
+      message: tunnel canary hostnames are reserved
     - expression: >-
         !variables.applies || !has(object.spec.tls)
       message: tunnel Ingress must not declare spec.tls

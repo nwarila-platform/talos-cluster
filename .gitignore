@@ -386,6 +386,8 @@
 !/scripts/check-runner-cnp-github-parity.selftest.py
 !/scripts/check-tunnel-isolation.py
 !/scripts/check-tunnel-isolation.selftest.py
+!/scripts/register-tunnel-hostname.py
+!/scripts/register-tunnel-hostname.selftest.py
 !/scripts/check-renovate-coverage.py
 !/scripts/check-renovate-coverage.selftest.py
 !/scripts/check-sops-encrypted.py

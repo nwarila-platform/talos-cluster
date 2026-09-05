@@ -10,9 +10,10 @@ configMapGenerator:
     namespace: cloudflared-nwp-mtls
     literals:
       - tunnel=nwp-mtls
+      - tier=mtls
       # Bump whenever configmap.yaml changes: a projected ConfigMap update does
       # not make cloudflared reload its ingress rules.
-      - configRevision=cft-nwp-v1
+      - configRevision=cft-nwp-v2
 generatorOptions:
   disableNameSuffixHash: true
   annotations:
