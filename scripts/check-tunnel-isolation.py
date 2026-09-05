@@ -9,8 +9,8 @@ staying in agreement.
 
 The guard compares closed connector, tenant, Namespace, route, and policy
 objects across the local renders and the root aggregate Flux applies. It admits
-only exact content-hashed build indexes, enumerates every Flux Kustomization by
-resolved path, and pins host-namespace and Kyverno enforcement posture.
+only exact content-hashed build indexes; enumerates every Flux Kustomization present in the applied builds (root aggregate and each internal child render, to a fixed point);
+and pins host-namespace and rendered Kyverno enforcement posture.
 
 Usage: check-tunnel-isolation.py [REPO_ROOT]
 """
@@ -41,8 +41,11 @@ TEMPLATE_CNP = (
 )
 BINDING_POLICY = f"{APPS}/kyverno/policies/restrict-tunnel-binding.yaml"
 HOSTNAME_POLICY = f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml"
+KYVERNO_POLICIES = f"{APPS}/kyverno/policies"
+KYVERNO_POLICIES_INDEX = f"{KYVERNO_POLICIES}/kustomization.yaml"
 APPS_INDEX = f"{APPS}/kustomization.yaml"
 ROOT_FLUX_SYNC = "clusters/talos-cluster/flux-system/gotk-sync.yaml"
+FLUX_SYSTEM_INDEX = f"{ROOT_CLUSTER}/flux-system/kustomization.yaml"
 
 EXPOSED = "nwarila.io/tunnel-exposed"
 PROXY = "nwarila.io/tunnel-proxy"
@@ -60,6 +63,9 @@ BUILD_CONTENT_KEYS = frozenset(
         "BUILD_CONTENT_KEYS"
     ]
 )
+MAX_FLUX_BUILD_DEPTH = 32
+MAX_FLUX_BUILD_PATHS = 100
+RENDER_TIMEOUT_SECONDS = 60
 TUNNEL_TENANTS = {
     "hwg": "hwg-1268831311",
     "nwp-public": "nwp-1306985678",
@@ -94,6 +100,13 @@ INDEX_BUILD_KEY_HASHES = {
     },
     APPS_INDEX: {
         "resources": "4e2113a4ebaf09b1efcf6ebd18db93e7285ac2e033f06ecd374d1dab35cf0995",
+    },
+    FLUX_SYSTEM_INDEX: {
+        "resources": "9fe229f4638d21b3e71a796b8909106e1124fe9f889ebb74ce40364e3b46f60f",
+        "patches": "8237c97ba61b8487da46e54b8bf29c5c9199e18ae478bc2ea71eeb384e20661c",
+    },
+    KYVERNO_POLICIES_INDEX: {
+        "resources": "f1b4491fd3327116559282f66a0d2ffb0b5c78c7f7b16b6bce1401cf2cbbb5be",
     },
     TENANTS_INDEX: {
         "resources": "30cadcb0565e15da6a0aab468b3ea58d1b46bb79405f8593f7457d4bf53bf4cd",
@@ -150,6 +163,7 @@ class Guard:
         self.root = root
         self.kubectl = kubectl
         self.errors: list[str] = []
+        self.render_cache: dict[str, tuple[str, list[dict]]] = {}
 
     def check(self, condition: bool, message: str) -> bool:
         if not condition:
@@ -157,12 +171,27 @@ class Guard:
         return condition
 
     def render(self, relative: str) -> tuple[str, list[dict]]:
-        proc = subprocess.run(
-            [self.kubectl, "kustomize", str(self.root / relative)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        cached = self.render_cache.get(relative)
+        if cached is not None:
+            return cached
+        try:
+            proc = subprocess.run(
+                [
+                    self.kubectl,
+                    "kustomize",
+                    "--load-restrictor",
+                    "LoadRestrictionsNone",
+                    str(self.root / relative),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=RENDER_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RenderError(
+                f"{relative}: render timed out after {RENDER_TIMEOUT_SECONDS}s"
+            ) from error
         if proc.returncode != 0:
             raise RenderError(f"{relative}: {proc.stderr.strip()}")
         objects: list[dict] = []
@@ -174,7 +203,9 @@ class Guard:
                     f"{relative}: rendered document {position} is not a mapping"
                 )
             objects.append(document)
-        return proc.stdout, objects
+        rendered = (proc.stdout, objects)
+        self.render_cache[relative] = rendered
+        return rendered
 
     def load(self, relative: str) -> list[dict]:
         text = (self.root / relative).read_text(encoding="utf-8")
@@ -1180,16 +1211,24 @@ def expand_list_document(
     return expanded
 
 
-def check_flux_kustomizations(g: Guard, tunnels: list[str]) -> None:
+def flux_protected_contracts(
+    tunnels: list[str],
+) -> tuple[set[str], dict[str, tuple[str, str, str]]]:
     protected_paths = {
         f"{APPS}/_components/tunnel-connector",
         f"{APPS}/_components/tunnel-proxy",
         *(f"{APPS}/cloudflared-{tunnel}" for tunnel in tunnels),
         *(f"{APPS}/traefik-{tunnel}" for tunnel in tunnels),
         *(f"{TENANTS}/{tenant}" for tenant in set(TUNNEL_TENANTS.values())),
+        KYVERNO_POLICIES,
     }
     expected = {
         ROOT_CLUSTER: (ROOT_FLUX_SYNC, "flux-system", "flux-system"),
+        KYVERNO_POLICIES: (
+            f"{APPS}/kyverno/kustomization-policies.yaml",
+            "kyverno-policies",
+            "flux-system",
+        ),
         **{
             f"{APPS}/traefik-{tunnel}": (
                 f"{APPS}/kustomization-traefik-{tunnel}.yaml",
@@ -1199,6 +1238,94 @@ def check_flux_kustomizations(g: Guard, tunnels: list[str]) -> None:
             for tunnel in tunnels
         },
     }
+    return protected_paths, expected
+
+
+def check_flux_candidate(
+    g: Guard,
+    candidate: dict,
+    where: str,
+    protected_paths: set[str],
+    expected: dict[str, tuple[str, str, str]],
+    counts: Counter[str],
+    *,
+    authored_relative: str | None = None,
+) -> tuple[str | None, bool]:
+    spec = candidate.get("spec")
+    if not g.check(
+        isinstance(spec, dict),
+        f"{where}: Flux Kustomization spec must be a mapping",
+    ):
+        return None, False
+    raw_path = spec.get("path")
+    normalized = normalize_flux_path(g.root, raw_path)
+    if not g.check(
+        normalized is not None,
+        f"{where}: Flux Kustomization spec.path {raw_path!r} must "
+        "resolve to a non-empty path inside the repository",
+    ):
+        return None, False
+    owner_namespace = metadata(candidate).get("namespace")
+    source_is_internal = internal_source_ref(
+        spec.get("sourceRef"),
+        owner_namespace,
+    )
+    touches_protected = any(
+        paths_intersect(normalized, protected)
+        for protected in protected_paths
+    )
+    if not touches_protected:
+        return normalized, source_is_internal
+
+    counts[normalized] += 1
+    identity = object_identity(candidate)
+    contract = expected.get(normalized)
+    if contract is None:
+        g.errors.append(
+            f"{where}: unexpected Flux Kustomization "
+            f"{identity_label(identity)} targets protected path {raw_path!r}"
+        )
+    else:
+        expected_file, expected_name, expected_namespace = contract
+        correct_owner = identity == (
+            "Kustomization",
+            expected_name,
+            expected_namespace,
+        )
+        correct_source_file = (
+            authored_relative is None or authored_relative == expected_file
+        )
+        source_constraint = (
+            f" in {expected_file}" if authored_relative is not None else ""
+        )
+        g.check(
+            correct_owner and correct_source_file,
+            f"{where}: unexpected Flux Kustomization "
+            f"{identity_label(identity)} targets protected path {raw_path!r}; "
+            f"only Kustomization/{expected_name} namespace "
+            f"{expected_namespace!r}{source_constraint} may own it",
+        )
+    allowed = (
+        frozenset({"decryption"})
+        if normalized == ROOT_CLUSTER
+        else frozenset()
+    )
+    forbidden = forbidden_build_content_keys(spec, allowed=allowed)
+    g.check(
+        not forbidden,
+        f"{where}: Flux Kustomization targeting protected path {raw_path!r} "
+        f"contains forbidden build-affecting key(s): {forbidden!r}",
+    )
+    g.check(
+        source_is_internal,
+        f"{where}: Flux Kustomization targeting protected path {raw_path!r} "
+        "must reference GitRepository/flux-system in namespace 'flux-system'",
+    )
+    return normalized, source_is_internal
+
+
+def check_authored_flux_kustomizations(g: Guard, tunnels: list[str]) -> None:
+    protected_paths, expected = flux_protected_contracts(tunnels)
     counts: Counter[str] = Counter()
     cluster = g.root / ROOT_CLUSTER
     paths = sorted(
@@ -1222,67 +1349,14 @@ def check_flux_kustomizations(g: Guard, tunnels: list[str]) -> None:
             ):
                 if not is_flux_kustomization(candidate):
                     continue
-                spec = candidate.get("spec")
-                if not g.check(
-                    isinstance(spec, dict),
-                    f"{where}: Flux Kustomization spec must be a mapping",
-                ):
-                    continue
-                raw_path = spec.get("path")
-                normalized = normalize_flux_path(g.root, raw_path)
-                if not g.check(
-                    normalized is not None,
-                    f"{where}: Flux Kustomization spec.path {raw_path!r} must "
-                    "resolve to a non-empty path inside the repository",
-                ):
-                    continue
-                touches_protected = any(
-                    paths_intersect(normalized, protected)
-                    for protected in protected_paths
-                )
-                if not touches_protected:
-                    continue
-                counts[normalized] += 1
-                identity = object_identity(candidate)
-                contract = expected.get(normalized)
-                if contract is None:
-                    g.errors.append(
-                        f"{where}: unexpected Flux Kustomization "
-                        f"{identity_label(identity)} targets protected path "
-                        f"{raw_path!r}"
-                    )
-                else:
-                    expected_file, expected_name, expected_namespace = contract
-                    g.check(
-                        relative == expected_file
-                        and identity
-                        == ("Kustomization", expected_name, expected_namespace),
-                        f"{where}: unexpected Flux Kustomization "
-                        f"{identity_label(identity)} targets protected path "
-                        f"{raw_path!r}; only Kustomization/{expected_name} "
-                        f"namespace {expected_namespace!r} in {expected_file} "
-                        "may own it",
-                    )
-                allowed = (
-                    frozenset({"decryption"})
-                    if normalized == ROOT_CLUSTER
-                    else frozenset()
-                )
-                forbidden = forbidden_build_content_keys(spec, allowed=allowed)
-                g.check(
-                    not forbidden,
-                    f"{where}: Flux Kustomization targeting protected path "
-                    f"{raw_path!r} contains forbidden build-affecting key(s): "
-                    f"{forbidden!r}",
-                )
-                g.check(
-                    internal_source_ref(
-                        spec.get("sourceRef"),
-                        metadata(candidate).get("namespace"),
-                    ),
-                    f"{where}: Flux Kustomization targeting protected path "
-                    f"{raw_path!r} must reference GitRepository/flux-system "
-                    "in namespace 'flux-system'",
+                check_flux_candidate(
+                    g,
+                    candidate,
+                    where,
+                    protected_paths,
+                    expected,
+                    counts,
+                    authored_relative=relative,
                 )
     for path, (_file, name, namespace) in sorted(expected.items()):
         g.check(
@@ -1291,6 +1365,72 @@ def check_flux_kustomizations(g: Guard, tunnels: list[str]) -> None:
             f"Flux Kustomization owner {name!r} in namespace {namespace!r}; "
             f"found {counts[path]}",
         )
+
+
+def check_flux_builds(
+    g: Guard,
+    tunnels: list[str],
+    aggregate: list[dict],
+) -> dict[str, list[dict]]:
+    """Enumerate the fixed point of Flux owners emitted by applied builds."""
+    protected_paths, expected = flux_protected_contracts(tunnels)
+    counts: Counter[str] = Counter()
+    renders = {ROOT_CLUSTER: aggregate}
+    queued = {ROOT_CLUSTER}
+    pending: list[tuple[str, int]] = []
+
+    def discover(relative: str, objects: list[dict], depth: int) -> None:
+        where = (
+            f"{relative} (aggregate)"
+            if relative == ROOT_CLUSTER
+            else f"{relative} (rendered)"
+        )
+        for candidate in objects:
+            if not is_flux_kustomization(candidate):
+                continue
+            normalized, source_is_internal = check_flux_candidate(
+                g,
+                candidate,
+                where,
+                protected_paths,
+                expected,
+                counts,
+            )
+            if normalized is None or not source_is_internal:
+                continue
+            if normalized in queued:
+                continue
+            if depth >= MAX_FLUX_BUILD_DEPTH:
+                raise RenderError(
+                    f"{where}: Flux build discovery depth would exceed "
+                    f"{MAX_FLUX_BUILD_DEPTH} at {normalized!r}"
+                )
+            if len(queued) >= MAX_FLUX_BUILD_PATHS:
+                raise RenderError(
+                    "Flux build discovery would exceed "
+                    f"{MAX_FLUX_BUILD_PATHS} unique internal paths at "
+                    f"{normalized!r}"
+                )
+            queued.add(normalized)
+            pending.append((normalized, depth + 1))
+
+    discover(ROOT_CLUSTER, aggregate, 0)
+    position = 0
+    while position < len(pending):
+        relative, depth = pending[position]
+        position += 1
+        _text, objects = g.render(relative)
+        renders[relative] = objects
+        discover(relative, objects, depth)
+
+    for path, (_file, name, namespace) in sorted(expected.items()):
+        g.check(
+            counts[path] == 1,
+            f"{ROOT_CLUSTER} (applied builds): protected path './{path}' must "
+            f"have exactly one Flux Kustomization owner {name!r} in namespace "
+            f"{namespace!r}; found {counts[path]}",
+        )
+    return renders
 
 
 def check_flux_child(g: Guard, tunnel: str) -> None:
@@ -1425,7 +1565,7 @@ def check_root_aggregate(
     tunnels: list[str],
     connector_renders: dict[str, list[dict]],
     tenant_renders: dict[str, list[dict]],
-) -> None:
+) -> list[dict]:
     _text, aggregate = g.render(ROOT_CLUSTER)
     where = f"{ROOT_CLUSTER} (aggregate)"
     for tunnel in tunnels:
@@ -1508,6 +1648,7 @@ def check_root_aggregate(
         expected_policies,
         noun="aggregate policy",
     )
+    return aggregate
 
 
 def check_template(g: Guard, tunnels: list[str]) -> None:
@@ -1563,8 +1704,21 @@ def check_kyverno_posture(
     g: Guard,
     relative: str,
     document: dict,
+    expected_name: str,
     resource_rules: list[dict],
 ) -> None:
+    g.check(
+        document.get("apiVersion") == "policies.kyverno.io/v1",
+        f"{relative}: apiVersion must be policies.kyverno.io/v1",
+    )
+    g.check(
+        document.get("kind") == "ValidatingPolicy",
+        f"{relative}: kind must be ValidatingPolicy",
+    )
+    g.check(
+        metadata(document).get("name") == expected_name,
+        f"{relative}: metadata.name must be {expected_name!r}",
+    )
     spec = document.get("spec")
     if not g.check(
         isinstance(spec, dict),
@@ -1594,11 +1748,66 @@ def check_kyverno_posture(
     )
 
 
+def check_rendered_kyverno_policy(
+    g: Guard,
+    objects: list[dict],
+    name: str,
+    resource_rules: list[dict],
+) -> None:
+    where = f"{KYVERNO_POLICIES} (rendered)"
+    matches = [
+        document
+        for document in objects
+        if metadata(document).get("name") == name
+    ]
+    if not g.check(
+        len(matches) == 1,
+        f"{where}: expected exactly one ValidatingPolicy/{name}, "
+        f"found {len(matches)}",
+    ):
+        return
+    check_kyverno_posture(
+        g,
+        where,
+        matches[0],
+        name,
+        resource_rules,
+    )
+
+
 def check_policies(
     g: Guard,
     tunnels: list[str],
     tenant_orgs: dict[str, str],
+    build_renders: dict[str, list[dict]],
 ) -> tuple[dict[str, str], dict[str, str]]:
+    binding_rules = [
+        ingress_resource_rule(["CREATE", "UPDATE"], "ingresses"),
+        ingress_resource_rule(["UPDATE"], "ingresses/status"),
+        ingress_resource_rule(["CREATE", "UPDATE"], "ingressclasses"),
+    ]
+    hostname_rules = [
+        ingress_resource_rule(["CREATE", "UPDATE"], "ingresses")
+    ]
+    rendered_policies = build_renders.get(KYVERNO_POLICIES)
+    if rendered_policies is None:
+        g.errors.append(
+            f"{KYVERNO_POLICIES}: required applied Flux child render is missing"
+        )
+        rendered_policies = []
+    check_rendered_kyverno_policy(
+        g,
+        rendered_policies,
+        "restrict-tunnel-binding",
+        binding_rules,
+    )
+    check_rendered_kyverno_policy(
+        g,
+        rendered_policies,
+        "restrict-tunnel-hostnames",
+        hostname_rules,
+    )
+
     binding_documents = g.load(BINDING_POLICY)
     if not g.check(
         len(binding_documents) == 1,
@@ -1611,11 +1820,8 @@ def check_policies(
         g,
         BINDING_POLICY,
         binding,
-        [
-            ingress_resource_rule(["CREATE", "UPDATE"], "ingresses"),
-            ingress_resource_rule(["UPDATE"], "ingresses/status"),
-            ingress_resource_rule(["CREATE", "UPDATE"], "ingressclasses"),
-        ],
+        "restrict-tunnel-binding",
+        binding_rules,
     )
     binding_spec = binding.get("spec")
     variables = (
@@ -1677,7 +1883,8 @@ def check_policies(
         g,
         HOSTNAME_POLICY,
         hostnames,
-        [ingress_resource_rule(["CREATE", "UPDATE"], "ingresses")],
+        "restrict-tunnel-hostnames",
+        hostname_rules,
     )
     zones = parse_ternary_map(hostnames, "zone")
     protected = parse_ternary_map(hostnames, "protectedZone")
@@ -1865,7 +2072,7 @@ def main(argv: list[str]) -> int:
         check_build_indexes(g)
         tunnels = discover_tunnels(g)
         check_root_flux_build(g)
-        check_flux_kustomizations(g, tunnels)
+        check_authored_flux_kustomizations(g, tunnels)
         tenant_orgs, tenant_renders = check_tenant_namespaces(g)
         configs: dict[str, dict | None] = {}
         connector_renders: dict[str, list[dict]] = {}
@@ -1873,13 +2080,19 @@ def main(argv: list[str]) -> int:
             configs[tunnel], connector_renders[tunnel] = check_connector(g, tunnel)
             check_proxy(g, tunnel)
             check_flux_child(g, tunnel)
-        check_root_aggregate(
+        aggregate = check_root_aggregate(
             g,
             tunnels,
             connector_renders,
             tenant_renders,
         )
-        zones, protected = check_policies(g, tunnels, tenant_orgs)
+        build_renders = check_flux_builds(g, tunnels, aggregate)
+        zones, protected = check_policies(
+            g,
+            tunnels,
+            tenant_orgs,
+            build_renders,
+        )
         seen: dict[str, str] = {}
         for tunnel, config in configs.items():
             if config is not None:
@@ -1899,7 +2112,7 @@ def main(argv: list[str]) -> int:
             for finding in g.errors:
                 print(f"  - {finding}", file=sys.stderr)
             print(
-                f"  - {ROOT_CLUSTER}: aggregate render also failed: {error}",
+                f"  - rendered-build validation also failed: {error}",
                 file=sys.stderr,
             )
         else:
@@ -1929,8 +2142,9 @@ def main(argv: list[str]) -> int:
     print(
         f"check-tunnel-isolation: OK ({len(tunnels)} tunnels: "
         f"{', '.join(tunnels)}; exact pairing; closed aggregate, tunnel, tenant, "
-        "Namespace, route, and policy objects; content-hashed indexes; all Flux "
-        "paths; host posture; tenant ownership; and Kyverno enforcement verified)"
+        "Namespace, route, and policy objects; content-hashed indexes; fixed-point "
+        "applied Flux builds; host posture; tenant ownership; and rendered Kyverno "
+        "enforcement verified)"
     )
     return 0
 

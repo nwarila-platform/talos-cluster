@@ -32,6 +32,8 @@ TEMPLATE_CNP = (
     "ciliumnetworkpolicy-allow-tunnel-proxy.yaml"
 )
 ROOT_FLUX_SYNC = "clusters/talos-cluster/flux-system/gotk-sync.yaml"
+FLUX_SYSTEM_INDEX = "clusters/talos-cluster/flux-system/kustomization.yaml"
+KYVERNO_POLICIES_INDEX = f"{APPS}/kyverno/policies/kustomization.yaml"
 GATEWAY_INDEX = f"{APPS}/gateway-api/kustomization.yaml"
 GATEWAY_REMOTE = (
     "https://github.com/kubernetes-sigs/gateway-api/releases/download/"
@@ -43,7 +45,7 @@ GATEWAY_REMOTE = (
 class Case:
     name: str
     expected_rc: int
-    required_output: str
+    required_output: str | tuple[str, ...]
     mutate: Callable[[Path], None]
     checker: str = "tunnel"
 
@@ -1233,6 +1235,166 @@ def list_wrapped_flux_child(root: Path) -> None:
     )
 
 
+def kustomization_list_flux_child(root: Path) -> None:
+    append_source_rotator_document(
+        root,
+        {
+            "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+            "kind": "KustomizationList",
+            "items": [
+                protected_flux_child_document(
+                    "klist-proxy",
+                    f"./{APPS}/traefik-nwp-mtls",
+                    "traefik-nwp-mtls-network",
+                    reviewer_proxy_ingress_operation(),
+                )
+            ],
+        },
+    )
+
+
+def write_flux_resource_directory(
+    root: Path,
+    relative: str,
+    name: str,
+) -> None:
+    directory = root / relative
+    directory.mkdir(parents=True)
+    write_document(
+        root,
+        f"{relative}/kustomization.yaml",
+        {
+            "apiVersion": "kustomize.config.k8s.io/v1beta1",
+            "kind": "Kustomization",
+            "resources": ["flux.yaml"],
+        },
+    )
+    write_document(
+        root,
+        f"{relative}/flux.yaml",
+        protected_flux_child_document(
+            name,
+            f"./{APPS}/traefik-nwp-mtls",
+            "traefik-nwp-mtls-network",
+            reviewer_proxy_ingress_operation(),
+        ),
+    )
+
+
+def escaped_source_directory_flux_child(root: Path) -> None:
+    write_flux_resource_directory(root, "docs/reviewer-evil", "escaped-proxy")
+    index = load_document(root, f"{APPS}/hello-hwg/kustomization.yaml")
+    index["resources"].append("../../../../docs/reviewer-evil")
+    write_document(root, f"{APPS}/hello-hwg/kustomization.yaml", index)
+
+
+def flux_transform_operations(name: str, *, remove_data: bool) -> list[dict]:
+    document = protected_flux_child_document(
+        name,
+        f"./{APPS}/traefik-nwp-mtls",
+        "traefik-nwp-mtls-network",
+        reviewer_proxy_ingress_operation(),
+    )
+    operations = [
+        {
+            "op": "replace",
+            "path": "/apiVersion",
+            "value": document["apiVersion"],
+        },
+        {"op": "replace", "path": "/kind", "value": document["kind"]},
+        {
+            "op": "replace",
+            "path": "/metadata",
+            "value": document["metadata"],
+        },
+    ]
+    if remove_data:
+        operations.append({"op": "remove", "path": "/data"})
+        operations.append({"op": "add", "path": "/spec", "value": document["spec"]})
+    else:
+        operations.append(
+            {"op": "replace", "path": "/spec", "value": document["spec"]}
+        )
+    return operations
+
+
+def root_index_transformed_flux_child(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        f"{APPS}/hello-hwg/kustomization.yaml",
+        {"kind": "Service", "name": "hello-hwg"},
+        flux_transform_operations("transformed-proxy", remove_data=False),
+    )
+
+
+def child_index_transformed_flux_child(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        f"{APPS}/source-rotator/kustomization.yaml",
+        {"kind": "ConfigMap", "name": "source-rotator-script"},
+        flux_transform_operations("transformed-proxy", remove_data=True),
+    )
+
+
+def symlinked_source_directory_flux_child(root: Path) -> None:
+    relative = "docs/reviewer-evil2"
+    write_flux_resource_directory(root, relative, "symlinkdir-proxy")
+    alias = root / APPS / "hello-hwg/reviewer-link"
+    alias.symlink_to(root / relative, target_is_directory=True)
+    index = load_document(root, f"{APPS}/hello-hwg/kustomization.yaml")
+    index["resources"].append("reviewer-link")
+    write_document(root, f"{APPS}/hello-hwg/kustomization.yaml", index)
+
+
+def flux_system_index_patches_root_owner(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        FLUX_SYSTEM_INDEX,
+        {
+            "kind": "Kustomization",
+            "name": "flux-system",
+            "namespace": "flux-system",
+        },
+        [
+            {
+                "op": "add",
+                "path": "/spec/patches",
+                "value": [
+                    {
+                        "target": {
+                            "kind": "CiliumNetworkPolicy",
+                            "name": "cloudflared-nwp-public-egress",
+                        },
+                        "patch": yaml.safe_dump(
+                            [
+                                {
+                                    "op": "add",
+                                    "path": "/spec/egress/-",
+                                    "value": {
+                                        "toEndpoints": [
+                                            {
+                                                "matchLabels": {
+                                                    "k8s:io.kubernetes.pod.namespace": (
+                                                        "nwp-1306985678"
+                                                    ),
+                                                    "k8s:nwarila.io/tunnel-exposed": (
+                                                        "nwp-mtls"
+                                                    ),
+                                                }
+                                            }
+                                        ]
+                                    },
+                                }
+                            ],
+                            sort_keys=False,
+                        ),
+                    }
+                ],
+            }
+        ],
+    )
+
+
 def json_flux_child(root: Path) -> None:
     directory = root / APPS / "source-rotator"
     filename = "reviewer-proxy-flux.json"
@@ -1333,6 +1495,33 @@ def hostname_policy_audit(root: Path) -> None:
         "  validationActions: [Deny]\n",
         "  validationActions: [Audit]\n",
     )
+
+
+def rendered_hostname_policy_audit_ignore(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        KYVERNO_POLICIES_INDEX,
+        {"kind": "ValidatingPolicy", "name": "restrict-tunnel-hostnames"},
+        [
+            {
+                "op": "replace",
+                "path": "/spec/validationActions",
+                "value": ["Audit"],
+            },
+            {
+                "op": "replace",
+                "path": "/spec/failurePolicy",
+                "value": "Ignore",
+            },
+        ],
+    )
+
+
+def hostname_policy_renamed(root: Path) -> None:
+    relative = f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml"
+    document = load_document(root, relative)
+    document["metadata"]["name"] = "restrict-tunnel-hostnames-disabled"
+    write_document(root, relative, document)
 
 
 def tenant_render_widened(root: Path) -> None:
@@ -1962,6 +2151,59 @@ CASES = (
         symlink_flux_child,
     ),
     Case(
+        "E1 KustomizationList-wrapped Flux child in an applied build is rejected",
+        1,
+        "clusters/talos-cluster (aggregate): unexpected Flux Kustomization "
+        "Kustomization/klist-proxy namespace 'flux-system' targets protected "
+        "path './clusters/talos-cluster/apps/traefik-nwp-mtls'",
+        kustomization_list_flux_child,
+    ),
+    Case(
+        "E1 escaped source-directory Flux child in an applied build is rejected",
+        1,
+        "clusters/talos-cluster (aggregate): unexpected Flux Kustomization "
+        "Kustomization/escaped-proxy namespace 'flux-system' targets protected "
+        "path './clusters/talos-cluster/apps/traefik-nwp-mtls'",
+        escaped_source_directory_flux_child,
+    ),
+    Case(
+        "E1 root index transform into a Flux child is rejected from the build",
+        1,
+        "clusters/talos-cluster (aggregate): unexpected Flux Kustomization "
+        "Kustomization/transformed-proxy namespace 'flux-system' targets "
+        "protected path './clusters/talos-cluster/apps/traefik-nwp-mtls'",
+        root_index_transformed_flux_child,
+    ),
+    Case(
+        "E1 child index transform into a Flux child is rejected from the build",
+        1,
+        "clusters/talos-cluster/apps/source-rotator (rendered): unexpected Flux "
+        "Kustomization Kustomization/transformed-proxy namespace 'flux-system' "
+        "targets protected path './clusters/talos-cluster/apps/"
+        "traefik-nwp-mtls'",
+        child_index_transformed_flux_child,
+    ),
+    Case(
+        "E1 symlinked source-directory Flux child in an applied build is rejected",
+        1,
+        "clusters/talos-cluster (aggregate): unexpected Flux Kustomization "
+        "Kustomization/symlinkdir-proxy namespace 'flux-system' targets "
+        "protected path './clusters/talos-cluster/apps/traefik-nwp-mtls'",
+        symlinked_source_directory_flux_child,
+    ),
+    Case(
+        "E1 root Flux owner patched by the flux-system index is rejected",
+        1,
+        (
+            "clusters/talos-cluster (aggregate): Flux Kustomization targeting "
+            "protected path './clusters/talos-cluster' contains forbidden "
+            "build-affecting key(s): ['patches']",
+            "clusters/talos-cluster/flux-system/kustomization.yaml: build key "
+            "'patches' differs from its recorded content hash",
+        ),
+        flux_system_index_patches_root_owner,
+    ),
+    Case(
         "D3 proxy Namespace missing a PSS label is rejected whole-object",
         1,
         "namespace object Namespace/traefik-nwp-public differs from its closed "
@@ -1994,6 +2236,24 @@ CASES = (
         "restrict-tunnel-hostnames.yaml: spec.validationActions must be "
         "exactly ['Deny']",
         hostname_policy_audit,
+    ),
+    Case(
+        "E3 applied Kyverno Audit and Ignore posture is rejected",
+        1,
+        (
+            "clusters/talos-cluster/apps/kyverno/policies (rendered): "
+            "spec.validationActions must be exactly ['Deny']",
+            "clusters/talos-cluster/apps/kyverno/policies/kustomization.yaml: "
+            "unexpected build key(s): ['patches']",
+        ),
+        rendered_hostname_policy_audit_ignore,
+    ),
+    Case(
+        "E3 renamed Kyverno policy object is rejected by rendered identity",
+        1,
+        "clusters/talos-cluster/apps/kyverno/policies (rendered): expected "
+        "exactly one ValidatingPolicy/restrict-tunnel-hostnames, found 0",
+        hostname_policy_renamed,
     ),
     Case(
         "missing inherited tenant allow is rejected",
@@ -2245,9 +2505,14 @@ def run_case(case: Case) -> tuple[bool, int, str]:
             text=True,
         )
     output = result.stdout + result.stderr
+    required_outputs = (
+        (case.required_output,)
+        if isinstance(case.required_output, str)
+        else case.required_output
+    )
     passed = (
         result.returncode == case.expected_rc
-        and case.required_output in output
+        and all(required in output for required in required_outputs)
     )
     return passed, result.returncode, output
 
