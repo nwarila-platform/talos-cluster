@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cloudflared-nwp-public
-  namespace: cloudflared-nwp-public
+  name: cloudflared-tunnelplaceholder
+  namespace: cloudflared-tunnelplaceholder
   labels:
     app.kubernetes.io/name: cloudflared
-    app.kubernetes.io/instance: nwp-public
+    app.kubernetes.io/instance: tunnelplaceholder
 spec:
   replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: cloudflared
-      app.kubernetes.io/instance: nwp-public
+      app.kubernetes.io/instance: tunnelplaceholder
   template:
     metadata:
       annotations:
-        config-revision: cft-nwp-v1
+        config-revision: revisionplaceholder
       labels:
         app.kubernetes.io/name: cloudflared
-        app.kubernetes.io/instance: nwp-public
+        app.kubernetes.io/instance: tunnelplaceholder
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -37,7 +37,7 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: cloudflared
-              app.kubernetes.io/instance: nwp-public
+              app.kubernetes.io/instance: tunnelplaceholder
       containers:
         - name: cloudflared
           image: docker.io/cloudflare/cloudflared:2026.8.2@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38

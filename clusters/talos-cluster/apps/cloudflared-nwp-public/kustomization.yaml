@@ -1,10 +1,21 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - namespace.yaml
   - tunnel-credentials.sops.yaml
   - configmap.yaml
-  - deployment.yaml
-  - poddisruptionbudget.yaml
-  - ciliumnetworkpolicy.yaml
-  - networkpolicy-default-deny.yaml
+configMapGenerator:
+  # Namespaced so overlays accumulated under one parent index keep distinct
+  # ids; the local-config annotation still prunes it from the render.
+  - name: tunnel-contract
+    namespace: cloudflared-nwp-public
+    literals:
+      - tunnel=nwp-public
+      # Bump whenever configmap.yaml changes: a projected ConfigMap update does
+      # not make cloudflared reload its ingress rules.
+      - configRevision=cft-nwp-v1
+generatorOptions:
+  disableNameSuffixHash: true
+  annotations:
+    config.kubernetes.io/local-config: "true"
+components:
+  - ../_components/tunnel-connector

@@ -2,7 +2,7 @@ apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: traefik
-  namespace: traefik-nwp-mtls
+  namespace: traefik-tunnelplaceholder
 spec:
   interval: 1h
   url: https://traefik.github.io/charts

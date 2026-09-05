@@ -3,8 +3,8 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: cloudflared-hwg-default-deny
-  namespace: cloudflared-hwg
+  name: cloudflared-tunnelplaceholder-default-deny
+  namespace: cloudflared-tunnelplaceholder
 spec:
   podSelector: {}
   policyTypes:

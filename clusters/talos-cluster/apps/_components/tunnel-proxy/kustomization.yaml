@@ -1,0 +1,159 @@
+# Shared per-tunnel Traefik ingress proxy. An overlay supplies a
+# `tunnel-contract` ConfigMap (tunnel, tenantNamespace); everything else is
+# derived here. The tenant namespace is the ONLY namespace the proxy may watch,
+# and the only one its Role and RoleBinding land in.
+#
+# Placeholder tokens contain the word "placeholder" on purpose:
+# scripts/check-no-placeholder-leak.sh fails the cluster render if any survive.
+# Composite names are <thing>-<tunnel>[-suffix] (tunnel = segment 1) except the
+# class, cf-tunnel-<tunnel> (segment 2); whole-value fields are replaced without
+# a delimiter, because a delimiter/index replacement on a value with no
+# delimiter APPENDS instead.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - namespace.yaml
+  - helmrepository.yaml
+  - helmrelease.yaml
+  - ingressclass.yaml
+  - rbac.yaml
+  - ciliumnetworkpolicy.yaml
+  - networkpolicy-default-deny.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: tunnel-contract
+      fieldPath: data.tunnel
+    targets:
+      - select:
+          kind: Namespace
+        fieldPaths:
+          - metadata.name
+          - metadata.labels.[nwarila.io/platform-addon]
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: HelmRepository
+        fieldPaths:
+          - metadata.namespace
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: HelmRelease
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+          - spec.releaseName
+          - spec.values.fullnameOverride
+          - spec.values.serviceAccount.name
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: HelmRelease
+        fieldPaths:
+          - spec.values.providers.kubernetesIngress.ingressClass
+        options:
+          delimiter: '-'
+          index: 2
+      - select:
+          kind: HelmRelease
+        fieldPaths:
+          - spec.values.deployment.podLabels.[nwarila.io/tunnel-proxy]
+          - spec.values.topologySpreadConstraints.0.labelSelector.matchLabels.[nwarila.io/tunnel-proxy]
+      - select:
+          kind: IngressClass
+        fieldPaths:
+          - metadata.name
+        options:
+          delimiter: '-'
+          index: 2
+      - select:
+          kind: ServiceAccount
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: ClusterRole
+        fieldPaths:
+          - metadata.name
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: ClusterRoleBinding
+        fieldPaths:
+          - metadata.name
+          - roleRef.name
+          - subjects.0.name
+          - subjects.0.namespace
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: Role
+        fieldPaths:
+          - metadata.name
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: RoleBinding
+        fieldPaths:
+          - metadata.name
+          - roleRef.name
+          - subjects.0.name
+          - subjects.0.namespace
+        options:
+          delimiter: '-'
+          index: 1
+      # ingress 0 = the connector; egress 0 = kube-apiserver, egress 1 = tenant origins.
+      - select:
+          kind: CiliumNetworkPolicy
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+          - spec.ingress.0.fromEndpoints.0.matchLabels.[k8s:io.kubernetes.pod.namespace]
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: CiliumNetworkPolicy
+        fieldPaths:
+          - spec.endpointSelector.matchLabels.[nwarila.io/tunnel-proxy]
+          - spec.ingress.0.fromEndpoints.0.matchLabels.[k8s:app.kubernetes.io/instance]
+          - spec.egress.1.toEndpoints.0.matchLabels.[k8s:nwarila.io/tunnel-exposed]
+      - select:
+          kind: NetworkPolicy
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+        options:
+          delimiter: '-'
+          index: 1
+  - source:
+      kind: ConfigMap
+      name: tunnel-contract
+      fieldPath: data.tenantNamespace
+    targets:
+      - select:
+          kind: HelmRelease
+        fieldPaths:
+          - spec.values.providers.kubernetesIngress.namespaces.0
+      - select:
+          kind: Role
+        fieldPaths:
+          - metadata.namespace
+      - select:
+          kind: RoleBinding
+        fieldPaths:
+          - metadata.namespace
+      - select:
+          kind: CiliumNetworkPolicy
+        fieldPaths:
+          - spec.egress.1.toEndpoints.0.matchLabels.[k8s:io.kubernetes.pod.namespace]

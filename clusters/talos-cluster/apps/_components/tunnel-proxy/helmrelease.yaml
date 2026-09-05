@@ -1,11 +1,11 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: traefik-nwp-mtls
-  namespace: traefik-nwp-mtls
+  name: traefik-tunnelplaceholder
+  namespace: traefik-tunnelplaceholder
 spec:
   interval: 10m
-  releaseName: traefik-nwp-mtls
+  releaseName: traefik-tunnelplaceholder
   chart:
     spec:
       chart: traefik
@@ -21,7 +21,7 @@ spec:
   test:
     enable: false
   values:
-    fullnameOverride: traefik-nwp-mtls
+    fullnameOverride: traefik-tunnelplaceholder
     versionOverride: v3.7.10
     image:
       registry: docker.io
@@ -31,10 +31,10 @@ spec:
     deployment:
       replicas: 2
       podLabels:
-        nwarila.io/tunnel-proxy: nwp-mtls
+        nwarila.io/tunnel-proxy: tunnelplaceholder
 
     # The chart defaults create a default class and broad RBAC. Both are
-    # replaced by the explicit, nwp-mtls-scoped resources in this directory.
+    # replaced by the explicit, tunnel-scoped resources in this component.
     ingressClass:
       enabled: false
     rbac:
@@ -42,15 +42,15 @@ spec:
 
     # Kubernetes Ingress is the only enabled dynamic configuration provider.
     # The explicit namespace list bounds informer-driven Secret exposure to the
-    # single registered nwarila-platform tenant.
+    # single tenant namespace named in the overlay's tunnel-contract.
     providers:
       kubernetesCRD:
         enabled: false
       kubernetesIngress:
         enabled: true
-        ingressClass: cf-tunnel-nwp-mtls
+        ingressClass: cf-tunnel-tunnelplaceholder
         namespaces:
-          - nwp-1306985678
+          - tenantnsplaceholder
         allowExternalNameServices: false
         crossProviderNamespaces: []
         publishedService:
@@ -93,7 +93,7 @@ spec:
         type: ClusterIP
 
     serviceAccount:
-      name: traefik-nwp-mtls
+      name: traefik-tunnelplaceholder
     persistence:
       enabled: false
     hostNetwork: false
@@ -110,4 +110,4 @@ spec:
         whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
-            nwarila.io/tunnel-proxy: nwp-mtls
+            nwarila.io/tunnel-proxy: tunnelplaceholder

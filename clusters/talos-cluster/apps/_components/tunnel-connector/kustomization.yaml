@@ -1,0 +1,92 @@
+# Shared cloudflared connector for every Cloudflare Tunnel. An overlay supplies a
+# `tunnel-contract` ConfigMap (tunnel, configRevision) plus its own per-tunnel
+# ConfigMap route table and SOPS credentials; everything else is derived here.
+#
+# Placeholder tokens contain the word "placeholder" on purpose:
+# scripts/check-no-placeholder-leak.sh fails the cluster render if any survive.
+# Composite names are <thing>-<tunnel>[-suffix], so the tunnel is always
+# segment 1; whole-value fields are replaced without a delimiter, because a
+# delimiter/index replacement on a value with no delimiter APPENDS instead.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - poddisruptionbudget.yaml
+  - ciliumnetworkpolicy.yaml
+  - networkpolicy-default-deny.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: tunnel-contract
+      fieldPath: data.tunnel
+    targets:
+      - select:
+          kind: Namespace
+        fieldPaths:
+          - metadata.name
+          - metadata.labels.[nwarila.io/platform-addon]
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: Deployment
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: Deployment
+        fieldPaths:
+          - metadata.labels.[app.kubernetes.io/instance]
+          - spec.selector.matchLabels.[app.kubernetes.io/instance]
+          - spec.template.metadata.labels.[app.kubernetes.io/instance]
+          - spec.template.spec.topologySpreadConstraints.0.labelSelector.matchLabels.[app.kubernetes.io/instance]
+      - select:
+          kind: PodDisruptionBudget
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: PodDisruptionBudget
+        fieldPaths:
+          - spec.selector.matchLabels.[app.kubernetes.io/instance]
+      # egress index 2 is the proxy rule (0 = kube-dns, 1 = the Cloudflare edge).
+      # An overlay that inserts extra rules must do so by patch, which runs
+      # after this replacement has already resolved index 2.
+      - select:
+          kind: CiliumNetworkPolicy
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+          - spec.egress.2.toEndpoints.0.matchLabels.[k8s:io.kubernetes.pod.namespace]
+        options:
+          delimiter: '-'
+          index: 1
+      - select:
+          kind: CiliumNetworkPolicy
+        fieldPaths:
+          - spec.endpointSelector.matchLabels.[app.kubernetes.io/instance]
+          - spec.egress.2.toEndpoints.0.matchLabels.[k8s:nwarila.io/tunnel-proxy]
+      - select:
+          kind: NetworkPolicy
+        fieldPaths:
+          - metadata.name
+          - metadata.namespace
+        options:
+          delimiter: '-'
+          index: 1
+  - source:
+      kind: ConfigMap
+      name: tunnel-contract
+      fieldPath: data.configRevision
+    targets:
+      - select:
+          kind: Deployment
+        fieldPaths:
+          - spec.template.metadata.annotations.config-revision

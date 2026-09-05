@@ -1,10 +1,40 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - namespace.yaml
   - tunnel-credentials.sops.yaml
   - configmap.yaml
-  - deployment.yaml
-  - poddisruptionbudget.yaml
-  - ciliumnetworkpolicy.yaml
-  - networkpolicy-default-deny.yaml
+configMapGenerator:
+  # Namespaced so overlays accumulated under one parent index keep distinct
+  # ids; the local-config annotation still prunes it from the render.
+  - name: tunnel-contract
+    namespace: cloudflared-hwg
+    literals:
+      - tunnel=hwg
+      # Bump whenever configmap.yaml changes: a projected ConfigMap update does
+      # not make cloudflared reload its ingress rules.
+      - configRevision=cft3a-mvp-v1
+generatorOptions:
+  disableNameSuffixHash: true
+  annotations:
+    config.kubernetes.io/local-config: "true"
+components:
+  - ../_components/tunnel-connector
+patches:
+  # hwg predates the per-org proxy and still routes hello.theherowarsguys.com
+  # straight to a platform Service. Inserted at egress index 2 (ahead of the
+  # component's proxy rule) so the rendered policy is byte-identical to its
+  # pre-component form; the component resolves index 2 before this runs.
+  - target:
+      kind: CiliumNetworkPolicy
+    patch: |-
+      - op: add
+        path: /spec/egress/2
+        value:
+          toEndpoints:
+            - matchLabels:
+                "k8s:io.kubernetes.pod.namespace": hello-hwg
+                "k8s:app.kubernetes.io/name": hello-hwg
+          toPorts:
+            - ports:
+                - port: "8080"
+                  protocol: TCP
