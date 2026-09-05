@@ -70,5 +70,13 @@ part of that contract drifts.
 | Tunnel | Label value | Ingress class | Zone |
 |---|---|---|---|
 | hwg | `hwg` | `cf-tunnel-hwg` | `theherowarsguys.com` |
-| nwp-public | `nwp-public` | `cf-tunnel-nwp-public` | `nicholaswarila.com` (excluding the protected zone) |
-| nwp-mtls | `nwp-mtls` | `cf-tunnel-nwp-mtls` | `secure.nicholaswarila.com` |
+| nwp-public | `nwp-public` | `cf-tunnel-nwp-public` | `nickwarila.com` (wildcard DNS; zero-touch) |
+| nwp-mtls | `nwp-mtls` | `cf-tunnel-nwp-mtls` | `nickwarila.com` (per-hostname edge registration) |
+
+Both nwp tiers share one zone. A public-tier hostname is live the moment its
+Ingress is admitted, exactly like hwg. An mTLS-tier hostname additionally
+needs its Cloudflare edge registration (client-certificate association,
+Access application, WAF entry, then an explicit DNS record); until that
+completes it resolves through the wildcard to the public connector, whose
+proxy cannot select an mTLS-tier pod, so it answers 404 rather than exposing
+the origin. See `docs/runbooks/operate-nwp-tunnel-pair.md`.

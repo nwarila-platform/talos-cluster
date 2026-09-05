@@ -70,7 +70,6 @@ required_fragments = (
     "variables.class == 'cf-tunnel-nwp-mtls'",
     # The protected zone must stay barred from the unprotected class. Losing
     # this fragment would silently reopen the mTLS bypass.
-    "variables.class == 'cf-tunnel-nwp-public' ? 'secure.nicholaswarila.com' : ''",
     "!rule.host.endsWith('.' + variables.protectedZone)",
     "path.backend.service.port.number == 8080",
     "!key.startsWith('traefik.ingress.kubernetes.io/')",
@@ -162,6 +161,7 @@ PY
 run_case "admit/numeric-8080.yaml" "pass" "success"
 run_case "admit/nwp-public-in-zone.yaml" "pass" "success"
 run_case "admit/nwp-mtls-in-zone.yaml" "pass" "success"
+run_case "admit/nwp-mtls-same-zone-as-public.yaml" "pass" "success"
 
 run_case "deny/out-of-zone.yaml" "fail" \
   "tunnel Ingress hosts must be inside theherowarsguys.com"
@@ -190,20 +190,16 @@ run_case "deny/resource-backend.yaml" "fail" \
 run_case "deny/no-paths.yaml" "fail" \
   "every tunnel Ingress rule must declare at least one HTTP path"
 
-run_case "deny/nwp-public-enters-protected.yaml" "fail" \
-  "unprotected tunnel Ingress hosts must not be inside secure.nicholaswarila.com"
-run_case "deny/nwp-public-protected-apex.yaml" "fail" \
-  "unprotected tunnel Ingress hosts must not be inside secure.nicholaswarila.com"
 run_case "deny/nwp-mtls-out-of-zone.yaml" "fail" \
-  "tunnel Ingress hosts must be inside secure.nicholaswarila.com"
+  "tunnel Ingress hosts must be inside nickwarila.com"
 run_case "deny/nwp-public-apex.yaml" "fail" \
-  "the bare nicholaswarila.com apex is reserved"
+  "the bare nickwarila.com apex is reserved"
 run_case "deny/nwp-mtls-apex.yaml" "fail" \
-  "the bare secure.nicholaswarila.com apex is reserved"
+  "the bare nickwarila.com apex is reserved"
 run_case "deny/nwp-public-canary.yaml" "fail" \
-  "canary-nwp-public.nicholaswarila.com is reserved"
+  "canary-nwp-public.nickwarila.com is reserved"
 run_case "deny/nwp-mtls-canary.yaml" "fail" \
-  "canary-nwp-mtls.secure.nicholaswarila.com is reserved"
+  "canary-nwp-mtls.nickwarila.com is reserved"
 
 run_case "unaffected/wrong-class.yaml" "pass" "success"
 run_case "unaffected/missing-class.yaml" "pass" "success"

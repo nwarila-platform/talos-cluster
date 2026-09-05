@@ -9,12 +9,23 @@ data:
     credentials-file: /etc/cloudflared/creds/credentials.json
     metrics: 0.0.0.0:2000
     no-autoupdate: true
-    # This connector serves the mTLS-protected zone ONLY. Nothing outside
-    # *.secure.nicholaswarila.com can be published through it, so a hostname
-    # that escapes the edge mTLS association cannot reach an origin here.
+    # Connector-side defence in depth, applied to EVERY rule below: cloudflared
+    # itself rejects any request that does not carry a valid Cloudflare Access
+    # JWT for the nwp-mtls application, so a hostname that reaches this tunnel
+    # before its edge registration is complete still cannot reach an origin.
+    # The edge holds the primary controls (client certificate, Access OTP).
+    originRequest:
+      access:
+        required: true
+        teamName: kra1432
+        audTag:
+          - 107bea2d67b644c4de37c267bbe5994a7e26c4781861b467c1981a3f30c71f35
+    # Hostnames reach this connector only by explicit per-FQDN DNS records,
+    # written LAST by the registration step after the mTLS association, the
+    # Access application domain, and the WAF entry already exist.
     ingress:
-      - hostname: canary-nwp-mtls.secure.nicholaswarila.com
+      - hostname: canary-nwp-mtls.nickwarila.com
         service: http_status:418
-      - hostname: '*.secure.nicholaswarila.com'
+      - hostname: '*.nickwarila.com'
         service: http://traefik-nwp-mtls.traefik-nwp-mtls.svc:80
       - service: http_status:404

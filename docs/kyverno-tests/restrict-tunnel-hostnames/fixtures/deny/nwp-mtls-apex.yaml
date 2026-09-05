@@ -6,7 +6,7 @@ metadata:
 spec:
   ingressClassName: cf-tunnel-nwp-mtls
   rules:
-    - host: secure.nicholaswarila.com
+    - host: nickwarila.com
       http:
         paths:
           - path: /

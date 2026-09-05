@@ -10,7 +10,10 @@ rests on three things staying in agreement:
   * each connector, proxy, and inherited tenant policy referencing only its own
     tunnel; and
   * the admission policies registering every class exactly once and barring an
-    unprotected class from a protected zone nested inside its own.
+    unprotected class from a protected zone nested inside its own; and
+  * each overlay declaring its tier, with an mTLS-tier connector carrying the
+    tunnel-wide Cloudflare Access JWT check and a public-tier connector NOT
+    carrying it (which would lock every public hostname out).
 
 Connectors and proxies render from shared kustomize components, so this guard
 inspects what kustomize RENDERS for each overlay -- what Flux applies -- not
@@ -45,6 +48,7 @@ NS_LABEL = "k8s:io.kubernetes.pod.namespace"
 INSTANCE = "app.kubernetes.io/instance"
 CLASS_PREFIX = "cf-tunnel-"
 ORIGIN_PORT = "8080"
+TIERS = ("public", "mtls")
 DISABLED_VALUES = (
     ("ingressClass", "enabled"),
     ("rbac", "enabled"),
@@ -158,6 +162,46 @@ def check_connector(g: Guard, tunnel: str) -> dict | None:
     if not g.check(configmap is not None, f"{where}: cloudflared-config ConfigMap missing"):
         return None
     return yaml.safe_load(configmap["data"]["config.yaml"])
+
+
+def read_tier(g: Guard, tunnel: str) -> str:
+    """The overlay's declared tier, from its tunnel-contract literals."""
+    relative = f"{APPS}/cloudflared-{tunnel}/kustomization.yaml"
+    (document,) = g.load(relative)
+    literals: list[str] = []
+    for generator in document.get("configMapGenerator", []):
+        if generator.get("name") == "tunnel-contract":
+            literals = generator.get("literals", [])
+    tiers = [item.split("=", 1)[1] for item in literals if item.startswith("tier=")]
+    if not g.check(len(tiers) == 1, f"{relative}: tunnel-contract must declare exactly one tier= literal, found {tiers}"):
+        return ""
+    g.check(tiers[0] in TIERS, f"{relative}: tier {tiers[0]!r} is not one of {TIERS}")
+    return tiers[0]
+
+
+def check_connector_tier(g: Guard, tunnel: str, tier: str, config: dict) -> None:
+    """Connector-side posture follows the tier, never the other way round."""
+    where = f"{APPS}/cloudflared-{tunnel}/configmap.yaml"
+    access = nested(config, ("originRequest", "access"))
+    if tier == "mtls":
+        if not g.check(
+            access.get("required") is True,
+            f"{where}: an mTLS-tier connector must set originRequest.access.required: true "
+            f"tunnel-wide, so a hostname whose edge registration is incomplete still cannot reach an origin",
+        ):
+            return
+        auds = access.get("audTag") or []
+        g.check(
+            len(auds) >= 1 and all(re.fullmatch(r"[0-9a-f]{64}", str(a)) for a in auds),
+            f"{where}: originRequest.access.audTag must list at least one 64-hex Access application aud, found {auds}",
+        )
+        g.check(bool(access.get("teamName")), f"{where}: originRequest.access.teamName must be set")
+    elif tier == "public":
+        g.check(
+            not access,
+            f"{where}: a public-tier connector must not require Cloudflare Access; every hostname "
+            f"behind it would be locked out",
+        )
 
 
 def check_routes(g: Guard, tunnel: str, config: dict, zone: str, protected: str, seen: dict[str, str]) -> None:
@@ -373,6 +417,9 @@ def main(argv: list[str]) -> int:
         configs = {}
         for tunnel in tunnels:
             configs[tunnel] = check_connector(g, tunnel)
+            tier = read_tier(g, tunnel)
+            if configs[tunnel] is not None and tier:
+                check_connector_tier(g, tunnel, tier, configs[tunnel])
             check_proxy(g, tunnel)
             check_flux_child(g, tunnel)
         zones, protected = check_policies(g, tunnels)
@@ -392,7 +439,7 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"check-tunnel-isolation: OK ({len(tunnels)} tunnels: {', '.join(tunnels)}; rendered "
-        "connector/proxy pairing, per-tunnel label, zone containment, and class registration verified)"
+        "connector/proxy pairing, per-tunnel label, tier posture, zone containment, and class registration verified)"
     )
     return 0
 

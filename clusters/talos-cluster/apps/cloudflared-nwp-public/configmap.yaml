@@ -9,18 +9,14 @@ data:
     credentials-file: /etc/cloudflared/creds/credentials.json
     metrics: 0.0.0.0:2000
     no-autoupdate: true
-    # Rules are evaluated top-down, first match wins. The secure-zone rule is
-    # deliberately ahead of the wildcard: if the more specific
-    # *.secure.nicholaswarila.com DNS route is ever lost, mTLS-protected
-    # hostnames must fail closed here rather than fall through to this
-    # unauthenticated connector.
+    # This connector owns the *.nickwarila.com wildcard DNS route, so it is the
+    # default landing for every hostname nobody has registered explicitly.
+    # That is safe: a workload published on the mTLS tier carries the
+    # nwp-mtls label value, which this connector's proxy cannot select, so an
+    # unregistered protected hostname 404s here instead of leaking.
     ingress:
-      - hostname: canary-nwp-public.nicholaswarila.com
+      - hostname: canary-nwp-public.nickwarila.com
         service: http_status:418
-      - hostname: '*.secure.nicholaswarila.com'
-        service: http_status:404
-      - hostname: secure.nicholaswarila.com
-        service: http_status:404
-      - hostname: '*.nicholaswarila.com'
+      - hostname: '*.nickwarila.com'
         service: http://traefik-nwp-public.traefik-nwp-public.svc:80
       - service: http_status:404
