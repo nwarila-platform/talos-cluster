@@ -9,6 +9,7 @@ render or parser failure from masquerading as the intended guard rejection.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -31,14 +32,11 @@ TEMPLATE_CNP = (
     "ciliumnetworkpolicy-allow-tunnel-proxy.yaml"
 )
 ROOT_FLUX_SYNC = "clusters/talos-cluster/flux-system/gotk-sync.yaml"
-COPY_FILES = (
-    f"{APPS}/kustomization.yaml",
-    f"{APPS}/kyverno/policies/restrict-tunnel-binding.yaml",
-    f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml",
-    ROOT_FLUX_SYNC,
-    PLACEHOLDER_GUARD,
+GATEWAY_INDEX = f"{APPS}/gateway-api/kustomization.yaml"
+GATEWAY_REMOTE = (
+    "https://github.com/kubernetes-sigs/gateway-api/releases/download/"
+    "v1.4.1/standard-install.yaml"
 )
-TENANT_DIRS = ("_template", "hwg-1268831311", "nwp-1306985678")
 
 
 @dataclass(frozen=True)
@@ -51,34 +49,33 @@ class Case:
 
 
 def stage(destination: Path) -> None:
-    for entry in (ROOT / APPS).iterdir():
-        if entry.is_dir() and entry.name.startswith(
-            ("cloudflared-", "traefik-", "_components")
-        ):
-            shutil.copytree(entry, destination / APPS / entry.name)
-        elif entry.is_file() and entry.name.startswith(
-            "kustomization-traefik-"
-        ):
-            target = destination / APPS / entry.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(entry, target)
-    for tenant in TENANT_DIRS:
-        shutil.copytree(
-            ROOT / TENANTS / tenant,
-            destination / TENANTS / tenant,
-        )
-    for relative in COPY_FILES:
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / relative, target)
+    shutil.copytree(
+        ROOT / "clusters/talos-cluster",
+        destination / "clusters/talos-cluster",
+    )
+    placeholder_guard = destination / PLACEHOLDER_GUARD
+    placeholder_guard.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / PLACEHOLDER_GUARD, placeholder_guard)
 
-    # The shell-check case needs a local, network-free aggregate. Flux child
-    # paths are still the real staged proxy paths and are enumerated separately.
-    cluster_index = destination / "clusters/talos-cluster/kustomization.yaml"
-    cluster_index.write_text(
-        "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-        "kind: Kustomization\n"
-        "resources: []\n",
+    # Keep the real root/apps/tenants indexes byte-for-byte intact. Only the
+    # nested Gateway API remote is replaced inside this temporary fixture so
+    # every case can exercise a complete, network-free aggregate render.
+    gateway_index = destination / GATEWAY_INDEX
+    gateway_text = gateway_index.read_text(encoding="utf-8")
+    if GATEWAY_REMOTE not in gateway_text:
+        raise AssertionError(
+            f"self-test setup: Gateway API remote not found in {GATEWAY_INDEX}"
+        )
+    gateway_index.write_text(
+        gateway_text.replace(GATEWAY_REMOTE, "standard-install.selftest.yaml", 1),
+        encoding="utf-8",
+    )
+    (gateway_index.parent / "standard-install.selftest.yaml").write_text(
+        "apiVersion: v1\n"
+        "kind: ConfigMap\n"
+        "metadata:\n"
+        "  name: gateway-api-selftest-stub\n"
+        "  namespace: default\n",
         encoding="utf-8",
     )
 
@@ -720,6 +717,624 @@ def root_flux_build_patch(root: Path) -> None:
     write_documents(root, ROOT_FLUX_SYNC, documents)
 
 
+def add_kustomize_patch(
+    root: Path,
+    relative: str,
+    target: dict,
+    operations: list[dict],
+) -> None:
+    document = load_document(root, relative)
+    patches = document.setdefault("patches", [])
+    if not isinstance(patches, list):
+        raise AssertionError(
+            f"self-test setup: patches is not a list in {relative}"
+        )
+    patches.append(
+        {
+            "target": target,
+            "patch": yaml.safe_dump(operations, sort_keys=False),
+        }
+    )
+    write_document(root, relative, document)
+
+
+def root_connector_policy_patch(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        "clusters/talos-cluster/kustomization.yaml",
+        {
+            "kind": "CiliumNetworkPolicy",
+            "name": "cloudflared-nwp-public-egress",
+            "namespace": "cloudflared-nwp-public",
+        },
+        [
+            {
+                "op": "add",
+                "path": "/spec/egress/-",
+                "value": {
+                    "toEndpoints": [
+                        {
+                            "matchLabels": {
+                                "k8s:io.kubernetes.pod.namespace": (
+                                    "nwp-1306985678"
+                                ),
+                                "k8s:nwarila.io/tunnel-exposed": "nwp-mtls",
+                            }
+                        }
+                    ],
+                    "toPorts": [
+                        {
+                            "ports": [
+                                {"port": "8080", "protocol": "TCP"},
+                            ]
+                        }
+                    ],
+                },
+            }
+        ],
+    )
+
+
+def root_tenant_policy_patch(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        "clusters/talos-cluster/kustomization.yaml",
+        {
+            "kind": "CiliumNetworkPolicy",
+            "name": "allow-tunnel-proxy-nwp-mtls",
+            "namespace": "nwp-1306985678",
+        },
+        [
+            {
+                "op": "add",
+                "path": "/spec/ingress/-",
+                "value": {
+                    "fromEndpoints": [
+                        {
+                            "matchLabels": {
+                                "k8s:io.kubernetes.pod.namespace": (
+                                    "cloudflared-nwp-public"
+                                ),
+                                "k8s:app.kubernetes.io/name": "cloudflared",
+                                "k8s:app.kubernetes.io/instance": "nwp-public",
+                            }
+                        }
+                    ],
+                    "toPorts": [
+                        {
+                            "ports": [
+                                {"port": "8080", "protocol": "TCP"},
+                            ]
+                        }
+                    ],
+                },
+            }
+        ],
+    )
+
+
+def widened_public_route(root: Path) -> str:
+    configmap = load_document(
+        root,
+        f"{APPS}/cloudflared-nwp-public/configmap.yaml",
+    )
+    config = yaml.safe_load(configmap["data"]["config.yaml"])
+    config["ingress"].insert(
+        -1,
+        {
+            "hostname": "leak.nicholaswarila.com",
+            "service": "http://protected-origin.nwp-1306985678.svc:8080",
+        },
+    )
+    return yaml.safe_dump(config, sort_keys=False)
+
+
+def widened_sibling_proxy_route(root: Path) -> str:
+    configmap = load_document(
+        root,
+        f"{APPS}/cloudflared-nwp-public/configmap.yaml",
+    )
+    config = yaml.safe_load(configmap["data"]["config.yaml"])
+    config["ingress"].insert(
+        -1,
+        {
+            "hostname": "leak.nicholaswarila.com",
+            "service": "http://traefik-nwp-mtls.traefik-nwp-mtls.svc:80",
+        },
+    )
+    return yaml.safe_dump(config, sort_keys=False)
+
+
+def root_route_patch(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        "clusters/talos-cluster/kustomization.yaml",
+        {
+            "kind": "ConfigMap",
+            "name": "cloudflared-config",
+            "namespace": "cloudflared-nwp-public",
+        },
+        [
+            {
+                "op": "replace",
+                "path": "/data/config.yaml",
+                "value": widened_public_route(root),
+            }
+        ],
+    )
+
+
+def apps_index_route_patch(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        f"{APPS}/kustomization.yaml",
+        {
+            "kind": "ConfigMap",
+            "name": "cloudflared-config",
+            "namespace": "cloudflared-nwp-public",
+        },
+        [
+            {
+                "op": "replace",
+                "path": "/data/config.yaml",
+                "value": widened_sibling_proxy_route(root),
+            }
+        ],
+    )
+
+
+def apps_index_flux_child_patch(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        f"{APPS}/kustomization.yaml",
+        {
+            "kind": "Kustomization",
+            "name": "traefik-nwp-public",
+            "namespace": "flux-system",
+        },
+        [
+            {
+                "op": "add",
+                "path": "/spec/patches",
+                "value": [
+                    {
+                        "target": {
+                            "kind": "CiliumNetworkPolicy",
+                            "name": "traefik-nwp-public-network",
+                        },
+                        "patch": yaml.safe_dump(
+                            [
+                                {
+                                    "op": "add",
+                                    "path": "/spec/egress/-",
+                                    "value": {
+                                        "toEndpoints": [
+                                            {
+                                                "matchLabels": {
+                                                    "k8s:io.kubernetes.pod.namespace": (
+                                                        "nwp-1306985678"
+                                                    ),
+                                                    "k8s:nwarila.io/tunnel-exposed": (
+                                                        "nwp-mtls"
+                                                    ),
+                                                }
+                                            }
+                                        ],
+                                        "toPorts": [
+                                            {
+                                                "ports": [
+                                                    {
+                                                        "port": "8080",
+                                                        "protocol": "TCP",
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                    },
+                                }
+                            ],
+                            sort_keys=False,
+                        ),
+                    }
+                ],
+            }
+        ],
+    )
+
+
+def aggregate_source_rotator_ccnp(root: Path) -> None:
+    relative = f"{APPS}/kustomization-source-rotator.yaml"
+    documents = load_documents(root, relative)
+    documents.append(
+        {
+            "apiVersion": "cilium.io/v2",
+            "kind": "CiliumClusterwideNetworkPolicy",
+            "metadata": {"name": "reviewer-cross-tunnel"},
+            "specs": [
+                {
+                    "endpointSelector": {
+                        "matchLabels": {
+                            "nwarila.io/tunnel-proxy": "nwp-public"
+                        }
+                    },
+                    "egress": [
+                        {
+                            "toEndpoints": [
+                                {
+                                    "matchLabels": {
+                                        "k8s:io.kubernetes.pod.namespace": (
+                                            "nwp-1306985678"
+                                        ),
+                                        "k8s:nwarila.io/tunnel-exposed": (
+                                            "nwp-mtls"
+                                        ),
+                                    }
+                                }
+                            ],
+                            "toPorts": [
+                                {
+                                    "ports": [
+                                        {"port": "8080", "protocol": "TCP"},
+                                    ]
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "endpointSelector": {
+                        "matchLabels": {
+                            "nwarila.io/tunnel-exposed": "nwp-mtls"
+                        }
+                    },
+                    "ingress": [
+                        {
+                            "fromEndpoints": [
+                                {
+                                    "matchLabels": {
+                                        "k8s:io.kubernetes.pod.namespace": (
+                                            "traefik-nwp-public"
+                                        ),
+                                        "k8s:nwarila.io/tunnel-proxy": (
+                                            "nwp-public"
+                                        ),
+                                    }
+                                }
+                            ],
+                            "toPorts": [
+                                {
+                                    "ports": [
+                                        {"port": "8080", "protocol": "TCP"},
+                                    ]
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    write_documents(root, relative, documents)
+
+
+def protected_flux_child_document(
+    name: str,
+    path: str,
+    target_name: str,
+    operation: dict,
+) -> dict:
+    return {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {"name": name, "namespace": "flux-system"},
+        "spec": {
+            "interval": "10m",
+            "path": path,
+            "prune": True,
+            "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
+            "patches": [
+                {
+                    "target": {
+                        "kind": "CiliumNetworkPolicy",
+                        "name": target_name,
+                    },
+                    "patch": yaml.safe_dump(
+                        [operation],
+                        sort_keys=False,
+                    ),
+                }
+            ],
+        },
+    }
+
+
+def add_protected_flux_child(
+    root: Path,
+    filename: str,
+    name: str,
+    path: str,
+    target_name: str,
+    operation: dict,
+) -> None:
+    relative = f"{APPS}/{filename}"
+    write_document(
+        root,
+        relative,
+        protected_flux_child_document(
+            name,
+            path,
+            target_name,
+            operation,
+        ),
+    )
+    index = load_document(root, f"{APPS}/kustomization.yaml")
+    index["resources"].append(filename)
+    write_document(root, f"{APPS}/kustomization.yaml", index)
+
+
+def extra_proxy_path_flux_child(root: Path) -> None:
+    add_protected_flux_child(
+        root,
+        "kustomization-proxy-hardening.yaml",
+        "proxy-hardening",
+        f"./{APPS}/traefik-nwp-mtls",
+        "traefik-nwp-mtls-network",
+        {
+            "op": "add",
+            "path": "/spec/ingress/-",
+            "value": {
+                "fromEndpoints": [
+                    {
+                        "matchLabels": {
+                            "k8s:io.kubernetes.pod.namespace": (
+                                "cloudflared-nwp-public"
+                            ),
+                            "k8s:app.kubernetes.io/name": "cloudflared",
+                            "k8s:app.kubernetes.io/instance": "nwp-public",
+                        }
+                    }
+                ],
+                "toPorts": [
+                    {
+                        "ports": [
+                            {"port": "8000", "protocol": "TCP"},
+                        ]
+                    }
+                ],
+            },
+        },
+    )
+
+
+def extra_tenant_path_flux_child(root: Path) -> None:
+    add_protected_flux_child(
+        root,
+        "kustomization-reviewer-tenant.yaml",
+        "reviewer-tenant",
+        f"./{TENANTS}/nwp-1306985678",
+        "allow-tunnel-proxy-nwp-mtls",
+        {
+            "op": "add",
+            "path": "/spec/ingress/-",
+            "value": {
+                "fromEndpoints": [
+                    {
+                        "matchLabels": {
+                            "k8s:io.kubernetes.pod.namespace": (
+                                "traefik-nwp-public"
+                            ),
+                            "k8s:nwarila.io/tunnel-proxy": "nwp-public",
+                        }
+                    }
+                ],
+                "toPorts": [
+                    {
+                        "ports": [
+                            {"port": "8080", "protocol": "TCP"},
+                        ]
+                    }
+                ],
+            },
+        },
+    )
+
+
+def reviewer_proxy_ingress_operation() -> dict:
+    return {
+        "op": "add",
+        "path": "/spec/ingress/-",
+        "value": {
+            "fromEndpoints": [
+                {
+                    "matchLabels": {
+                        "k8s:io.kubernetes.pod.namespace": (
+                            "cloudflared-nwp-public"
+                        ),
+                        "k8s:app.kubernetes.io/name": "cloudflared",
+                        "k8s:app.kubernetes.io/instance": "nwp-public",
+                    }
+                }
+            ],
+            "toPorts": [
+                {
+                    "ports": [
+                        {"port": "8000", "protocol": "TCP"},
+                    ]
+                }
+            ],
+        },
+    }
+
+
+def append_source_rotator_document(root: Path, document: dict) -> None:
+    relative = f"{APPS}/kustomization-source-rotator.yaml"
+    documents = load_documents(root, relative)
+    documents.append(document)
+    write_documents(root, relative, documents)
+
+
+def aggregate_proxy_namespace_cnp(root: Path) -> None:
+    append_source_rotator_document(
+        root,
+        {
+            "apiVersion": "cilium.io/v2",
+            "kind": "CiliumNetworkPolicy",
+            "metadata": {
+                "name": "reviewer-proxy-egress",
+                "namespace": "traefik-nwp-public",
+            },
+            "spec": {
+                "endpointSelector": {
+                    "matchLabels": {
+                        "nwarila.io/tunnel-proxy": "nwp-public"
+                    }
+                },
+                "egress": [
+                    {
+                        "toEndpoints": [
+                            {
+                                "matchLabels": {
+                                    "k8s:io.kubernetes.pod.namespace": (
+                                        "nwp-1306985678"
+                                    ),
+                                    "k8s:nwarila.io/tunnel-exposed": "nwp-mtls",
+                                }
+                            }
+                        ],
+                        "toPorts": [
+                            {
+                                "ports": [
+                                    {"port": "8080", "protocol": "TCP"},
+                                ]
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+
+
+def list_wrapped_flux_child(root: Path) -> None:
+    append_source_rotator_document(
+        root,
+        {
+            "apiVersion": "v1",
+            "kind": "List",
+            "items": [
+                protected_flux_child_document(
+                    "list-wrapped-proxy",
+                    f"./{APPS}/traefik-nwp-mtls",
+                    "traefik-nwp-mtls-network",
+                    reviewer_proxy_ingress_operation(),
+                )
+            ],
+        },
+    )
+
+
+def json_flux_child(root: Path) -> None:
+    directory = root / APPS / "source-rotator"
+    filename = "reviewer-proxy-flux.json"
+    document = protected_flux_child_document(
+        "json-proxy",
+        f"./{APPS}/traefik-nwp-mtls",
+        "traefik-nwp-mtls-network",
+        reviewer_proxy_ingress_operation(),
+    )
+    (directory / filename).write_text(
+        json.dumps(document, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    kustomization = load_document(root, f"{APPS}/source-rotator/kustomization.yaml")
+    kustomization["resources"].append(filename)
+    write_document(root, f"{APPS}/source-rotator/kustomization.yaml", kustomization)
+
+
+def extensionless_flux_child(root: Path) -> None:
+    directory = root / APPS / "source-rotator"
+    filename = "reviewer-extensionless"
+    write_document(
+        root,
+        f"{APPS}/source-rotator/{filename}",
+        protected_flux_child_document(
+            "extensionless-proxy",
+            f"./{APPS}/traefik-nwp-mtls",
+            "traefik-nwp-mtls-network",
+            reviewer_proxy_ingress_operation(),
+        ),
+    )
+    kustomization = load_document(
+        root,
+        f"{APPS}/source-rotator/kustomization.yaml",
+    )
+    kustomization["resources"].append(filename)
+    write_document(root, f"{APPS}/source-rotator/kustomization.yaml", kustomization)
+
+
+def symlink_flux_child(root: Path) -> None:
+    alias = root / APPS / "proxy-alias"
+    alias.symlink_to("traefik-nwp-mtls", target_is_directory=True)
+    append_source_rotator_document(
+        root,
+        protected_flux_child_document(
+            "symlink-proxy",
+            f"./{APPS}/proxy-alias",
+            "traefik-nwp-mtls-network",
+            reviewer_proxy_ingress_operation(),
+        ),
+    )
+
+
+def proxy_namespace_enforce_removed(root: Path) -> None:
+    add_kustomize_patch(
+        root,
+        f"{APPS}/traefik-nwp-public/kustomization.yaml",
+        {"kind": "Namespace", "name": "traefik-nwp-public"},
+        [
+            {
+                "op": "remove",
+                "path": (
+                    "/metadata/labels/"
+                    "pod-security.kubernetes.io~1enforce"
+                ),
+            }
+        ],
+    )
+
+
+def tenant_namespace_enforce_removed(root: Path) -> None:
+    edit(
+        root,
+        f"{TENANTS}/_template/zero-touch/base/namespace.yaml",
+        "    pod-security.kubernetes.io/enforce: restricted\n",
+        "",
+    )
+
+
+def connector_host_network(root: Path) -> None:
+    relative = f"{CONNECTOR}/deployment.yaml"
+    deployment = load_document(root, relative)
+    deployment["spec"]["template"]["spec"]["hostNetwork"] = True
+    write_document(root, relative, deployment)
+
+
+def proxy_host_network(root: Path) -> None:
+    relative = f"{PROXY}/helmrelease.yaml"
+    release = load_document(root, relative)
+    release["spec"]["values"]["hostNetwork"] = True
+    write_document(root, relative, release)
+
+
+def hostname_policy_audit(root: Path) -> None:
+    edit(
+        root,
+        f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml",
+        "  validationActions: [Deny]\n",
+        "  validationActions: [Audit]\n",
+    )
+
+
 def tenant_render_widened(root: Path) -> None:
     relative = f"{TENANTS}/nwp-1306985678/kustomization.yaml"
     document = load_document(root, relative)
@@ -1239,6 +1854,148 @@ CASES = (
         root_flux_build_patch,
     ),
     Case(
+        "D1 root connector policy patch is rejected by aggregate comparison",
+        1,
+        "clusters/talos-cluster (aggregate): aggregate object "
+        "CiliumNetworkPolicy/cloudflared-nwp-public-egress namespace "
+        "'cloudflared-nwp-public' differs from its closed expected object at "
+        "spec.egress",
+        root_connector_policy_patch,
+    ),
+    Case(
+        "D1 root tenant policy patch is rejected by aggregate comparison",
+        1,
+        "clusters/talos-cluster (aggregate): aggregate object "
+        "CiliumNetworkPolicy/allow-tunnel-proxy-nwp-mtls namespace "
+        "'nwp-1306985678' differs from its closed expected object at "
+        "spec.ingress",
+        root_tenant_policy_patch,
+    ),
+    Case(
+        "D1 root route patch is rejected by aggregate comparison",
+        1,
+        "clusters/talos-cluster (aggregate): aggregate object "
+        "ConfigMap/cloudflared-config namespace 'cloudflared-nwp-public' "
+        "differs from its closed expected object at data.config.yaml",
+        root_route_patch,
+    ),
+    Case(
+        "D1 aggregate CCNP appended to source-rotator is rejected",
+        1,
+        "clusters/talos-cluster (aggregate): unexpected aggregate policy "
+        "CiliumClusterwideNetworkPolicy/reviewer-cross-tunnel",
+        aggregate_source_rotator_ccnp,
+    ),
+    Case(
+        "D1 root-applied policy in a proxy namespace is rejected",
+        1,
+        "clusters/talos-cluster (aggregate): unexpected root-applied proxy "
+        "object CiliumNetworkPolicy/reviewer-proxy-egress namespace "
+        "'traefik-nwp-public'",
+        aggregate_proxy_namespace_cnp,
+    ),
+    Case(
+        "D1 apps-index route patch is rejected by its exact build contract",
+        1,
+        "clusters/talos-cluster/apps/kustomization.yaml: unexpected build "
+        "key(s): ['patches']",
+        apps_index_route_patch,
+    ),
+    Case(
+        "D1 apps-index Flux-child patch is rejected by its exact build contract",
+        1,
+        "clusters/talos-cluster/apps/kustomization.yaml: unexpected build "
+        "key(s): ['patches']",
+        apps_index_flux_child_patch,
+    ),
+    Case(
+        "D2 additional proxy-path Flux Kustomization is rejected",
+        1,
+        "kustomization-proxy-hardening.yaml: document 1: unexpected Flux "
+        "Kustomization Kustomization/proxy-hardening namespace 'flux-system' "
+        "targets protected path './clusters/talos-cluster/apps/"
+        "traefik-nwp-mtls'",
+        extra_proxy_path_flux_child,
+    ),
+    Case(
+        "D2 additional tenant-path Flux Kustomization is rejected",
+        1,
+        "kustomization-reviewer-tenant.yaml: document 1: unexpected Flux "
+        "Kustomization Kustomization/reviewer-tenant namespace 'flux-system' "
+        "targets protected path './clusters/talos-cluster/tenants/"
+        "nwp-1306985678'",
+        extra_tenant_path_flux_child,
+    ),
+    Case(
+        "D2 List-wrapped proxy-path Flux Kustomization is rejected",
+        1,
+        "kustomization-source-rotator.yaml: document 2.items[0]: unexpected "
+        "Flux Kustomization Kustomization/list-wrapped-proxy namespace "
+        "'flux-system' targets protected path './clusters/talos-cluster/apps/"
+        "traefik-nwp-mtls'",
+        list_wrapped_flux_child,
+    ),
+    Case(
+        "D2 JSON proxy-path Flux Kustomization is rejected",
+        1,
+        "source-rotator/reviewer-proxy-flux.json: document 1: unexpected Flux "
+        "Kustomization Kustomization/json-proxy namespace 'flux-system' "
+        "targets protected path './clusters/talos-cluster/apps/"
+        "traefik-nwp-mtls'",
+        json_flux_child,
+    ),
+    Case(
+        "D2 extensionless proxy-path Flux Kustomization is rejected",
+        1,
+        "source-rotator/reviewer-extensionless: document 1: unexpected Flux "
+        "Kustomization Kustomization/extensionless-proxy namespace "
+        "'flux-system' targets protected path './clusters/talos-cluster/apps/"
+        "traefik-nwp-mtls'",
+        extensionless_flux_child,
+    ),
+    Case(
+        "D2 symlink-resolved proxy-path Flux Kustomization is rejected",
+        1,
+        "kustomization-source-rotator.yaml: document 2: unexpected Flux "
+        "Kustomization Kustomization/symlink-proxy namespace 'flux-system' "
+        "targets protected path './clusters/talos-cluster/apps/proxy-alias'",
+        symlink_flux_child,
+    ),
+    Case(
+        "D3 proxy Namespace missing a PSS label is rejected whole-object",
+        1,
+        "namespace object Namespace/traefik-nwp-public differs from its closed "
+        "expected object at metadata.labels.pod-security.kubernetes.io/enforce",
+        proxy_namespace_enforce_removed,
+    ),
+    Case(
+        "D3 tenant Namespace missing a PSS label is rejected whole-object",
+        1,
+        "namespace object Namespace/hwg-1268831311 differs from its closed "
+        "expected object at metadata.labels.pod-security.kubernetes.io/enforce",
+        tenant_namespace_enforce_removed,
+    ),
+    Case(
+        "D3 connector hostNetwork is rejected",
+        1,
+        "connector pod spec hostNetwork must be absent or false",
+        connector_host_network,
+    ),
+    Case(
+        "D3 proxy HelmRelease hostNetwork is rejected",
+        1,
+        "proxy HelmRelease values.hostNetwork must be absent or false",
+        proxy_host_network,
+    ),
+    Case(
+        "D4 Kyverno Audit posture is rejected",
+        1,
+        "clusters/talos-cluster/apps/kyverno/policies/"
+        "restrict-tunnel-hostnames.yaml: spec.validationActions must be "
+        "exactly ['Deny']",
+        hostname_policy_audit,
+    ),
+    Case(
         "missing inherited tenant allow is rejected",
         1,
         "missing template document CiliumNetworkPolicy/"
@@ -1368,9 +2125,8 @@ CASES = (
     Case(
         "P6 tenant overlay policy widening is rejected",
         1,
-        "CiliumNetworkPolicy/allow-tunnel-proxy-nwp-mtls namespace "
-        "'nwp-1306985678' differs from its closed expected object at "
-        "spec.ingress",
+        "clusters/talos-cluster/tenants/nwp-1306985678/kustomization.yaml: "
+        "build key 'patches' differs from its recorded content hash",
         tenant_render_widened,
     ),
     Case(

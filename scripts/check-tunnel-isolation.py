@@ -7,22 +7,24 @@ rests on the tunnel inventory, rendered policy objects, exact policy rule
 shapes, tenant ownership, route tables, and admission-policy registrations all
 staying in agreement.
 
-Connectors and proxies render from shared kustomize components, so this guard
-compares every tunnel- and tenant-rendered policy with a closed expected object.
-It also rejects Flux build modifiers that would make the applied child differ
-from the inspected overlay rather than trusting authored contract literals.
+The guard compares closed connector, tenant, Namespace, route, and policy
+objects across the local renders and the root aggregate Flux applies. It admits
+only exact content-hashed build indexes, enumerates every Flux Kustomization by
+resolved path, and pins host-namespace and Kyverno enforcement posture.
 
 Usage: check-tunnel-isolation.py [REPO_ROOT]
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import posixpath
 import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from runpy import run_path
 from shutil import which
 
@@ -30,6 +32,9 @@ import yaml
 
 APPS = "clusters/talos-cluster/apps"
 TENANTS = "clusters/talos-cluster/tenants"
+ROOT_CLUSTER = "clusters/talos-cluster"
+ROOT_INDEX = f"{ROOT_CLUSTER}/kustomization.yaml"
+TENANTS_INDEX = f"{TENANTS}/kustomization.yaml"
 TEMPLATE_CNP = (
     f"{TENANTS}/_template/zero-touch/base/"
     "ciliumnetworkpolicy-allow-tunnel-proxy.yaml"
@@ -59,6 +64,61 @@ TUNNEL_TENANTS = {
     "hwg": "hwg-1268831311",
     "nwp-public": "nwp-1306985678",
     "nwp-mtls": "nwp-1306985678",
+}
+TENANT_CONTRACTS = {
+    "hwg-1268831311": {
+        "deploy_repo": "deploy-herowars-engine-porter",
+        "org": "the-hero-wars-guys",
+        "repo_id": "1268831311",
+    },
+    "nwp-1306985678": {
+        "deploy_repo": "deploy-platform-canary",
+        "org": "nwarila-platform",
+        "repo_id": "1306985678",
+    },
+}
+PSS_LABELS = {
+    "pod-security.kubernetes.io/audit": "restricted",
+    "pod-security.kubernetes.io/audit-version": "latest",
+    "pod-security.kubernetes.io/enforce": "restricted",
+    "pod-security.kubernetes.io/enforce-version": "latest",
+    "pod-security.kubernetes.io/warn": "restricted",
+    "pod-security.kubernetes.io/warn-version": "latest",
+}
+# Each digest is SHA-256 over the canonical JSON value of one current build key.
+# Any index change therefore requires an explicit, reviewable guard update.
+INDEX_BUILD_KEY_HASHES = {
+    ROOT_INDEX: {
+        "resources": "d3c8704ae394df15ee06aa437283a483ff96c00a279a68fa8999f9647ed0468f",
+        "patches": "95ba8013aa3bba6d766ac1dd17d809be32f257f59c226386eb4864632e4284b6",
+    },
+    APPS_INDEX: {
+        "resources": "4e2113a4ebaf09b1efcf6ebd18db93e7285ac2e033f06ecd374d1dab35cf0995",
+    },
+    TENANTS_INDEX: {
+        "resources": "30cadcb0565e15da6a0aab468b3ea58d1b46bb79405f8593f7457d4bf53bf4cd",
+    },
+    f"{TENANTS}/hwg-1268831311/kustomization.yaml": {
+        "namespace": "2981fc1034cc29dbb6be2e246b2b247a7eaa35a0bbcb79eec42a796370c55a24",
+        "resources": "be029c396fd984c1763772347517577d39609c95ba1c933d35c74429c0d9a277",
+        "configMapGenerator": "eb9ebcfea631268b710aa333e18bd8bb8fee2ea31a5258df64bb514a0fe43558",
+        "generatorOptions": "b4657318540eee66f84ada741e32c4b3769f5b04b712abbb80455b4e778a8390",
+        "patches": "d464bfb4d21d10350815894d3de6a52e008135aacec36851f3f11a0fb2c8f5ce",
+        "replacements": "f895b147ec2881fc6cfee6dcc585c7f1390b2502f26d3e2e588d95b8ca5d4f26",
+    },
+    f"{TENANTS}/nwp-1306985678/kustomization.yaml": {
+        "namespace": "eb0d383386a08e195afa838201ef91e7e1ce422771d3cdd5e25ccb3c15c94143",
+        "resources": "be029c396fd984c1763772347517577d39609c95ba1c933d35c74429c0d9a277",
+        "configMapGenerator": "b58f7d9abb4be95e29302f8b130d89e466af8cd2f800c3cbdb6224a29bf33272",
+        "generatorOptions": "b4657318540eee66f84ada741e32c4b3769f5b04b712abbb80455b4e778a8390",
+        "patches": "b04ba6b426f145ae7123514d7eb3e502c3b856441b19dcead0d0a0348077271a",
+        "replacements": "f895b147ec2881fc6cfee6dcc585c7f1390b2502f26d3e2e588d95b8ca5d4f26",
+    },
+}
+ROUTE_OBJECT_HASHES = {
+    "hwg": "1e3e2ae9a4c3fb14475bda27acb06c9268040e627b0eff70cf309bac9e0af09a",
+    "nwp-mtls": "51adb1a3c3d15036bdafa8f828c8423106a943ec80541a961e87e796a4032d45",
+    "nwp-public": "f942f5f8681cf60eb443455df3390ac700ccf8326ccabc13041c5b81ab55789c",
 }
 DISABLED_VALUES = (
     ("ingressClass", "enabled"),
@@ -126,6 +186,20 @@ class Guard:
                 raise ValueError(f"{relative}: document {position} is not a mapping")
             documents.append(document)
         return documents
+
+    def load_candidate_mappings(self, relative: str) -> list[tuple[int, dict]]:
+        # Kustomize accepts extensionless and arbitrary-suffix resource files.
+        # Decode or parse failures cannot be Kubernetes manifest documents.
+        try:
+            text = (self.root / relative).read_text(encoding="utf-8")
+            documents = list(yaml.safe_load_all(text))
+        except (UnicodeDecodeError, yaml.YAMLError):
+            return []
+        return [
+            (position, document)
+            for position, document in enumerate(documents, start=1)
+            if isinstance(document, dict)
+        ]
 
 
 def nested(mapping: dict, path: tuple[str, ...]):
@@ -212,6 +286,63 @@ def canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def content_digest(value: object) -> str:
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
+def namespace_object(name: str, labels: dict[str, str]) -> dict:
+    return {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"labels": labels, "name": name},
+    }
+
+
+def tunnel_namespace_object(prefix: str, tunnel: str) -> dict:
+    name = f"{prefix}-{tunnel}"
+    return namespace_object(
+        name,
+        {**PSS_LABELS, "nwarila.io/platform-addon": name},
+    )
+
+
+def tenant_namespace_object(tenant: str) -> dict:
+    contract = TENANT_CONTRACTS[tenant]
+    return namespace_object(
+        tenant,
+        {
+            **PSS_LABELS,
+            "nwarila.io/deploy-repo": contract["deploy_repo"],
+            "nwarila.io/org": contract["org"],
+            "nwarila.io/repo-id": contract["repo_id"],
+            "nwarila.io/tenant": "true",
+        },
+    )
+
+
+def tenant_flux_child(tenant: str) -> dict:
+    source = TENANT_CONTRACTS[tenant]["deploy_repo"]
+    return {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+            "labels": {"nwarila.io/deploy-repo": "true"},
+            "name": tenant,
+            "namespace": tenant,
+        },
+        "spec": {
+            "interval": "10m",
+            "path": "./kubernetes/overlays/talos-cluster",
+            "prune": True,
+            "serviceAccountName": "deploy-reconciler",
+            "sourceRef": {"kind": "GitRepository", "name": source},
+            "targetNamespace": tenant,
+            "timeout": "10m",
+            "wait": True,
+        },
+    }
+
+
 def difference_paths(actual: object, expected: object, path: str = "") -> list[str]:
     if type(actual) is not type(expected):
         return [path or "<object>"]
@@ -278,6 +409,106 @@ def check_policy_objects(
             f"{where}: {noun} {identity_label(identity)} differs from its "
             f"closed expected object at {', '.join(paths)}"
         )
+
+
+def check_namespace_object(g: Guard, where: str, objects: list[dict], expected: dict) -> None:
+    namespaces = [document for document in objects if document.get("kind") == "Namespace"]
+    check_policy_objects(
+        g,
+        where,
+        namespaces,
+        [expected],
+        all_documents=True,
+        noun="namespace object",
+    )
+
+
+def check_connector_pod_posture(g: Guard, where: str, deployment: dict) -> None:
+    pod_spec = nested(deployment, ("spec", "template", "spec"))
+    if not g.check(
+        isinstance(pod_spec, dict),
+        f"{where}: connector pod spec must be a mapping",
+    ):
+        return
+    g.check(
+        "hostNetwork" not in pod_spec or pod_spec.get("hostNetwork") is False,
+        f"{where}: connector pod spec hostNetwork must be absent or false",
+    )
+    for key in ("hostPID", "hostIPC"):
+        g.check(
+            key not in pod_spec,
+            f"{where}: connector pod spec {key} must be absent",
+        )
+    g.check(
+        pod_spec.get("automountServiceAccountToken") is False,
+        f"{where}: connector pod spec automountServiceAccountToken must be false",
+    )
+
+
+def check_proxy_host_posture(g: Guard, where: str, values: dict) -> None:
+    g.check(
+        "hostNetwork" not in values or values.get("hostNetwork") is False,
+        f"{where}: proxy HelmRelease values.hostNetwork must be absent or false",
+    )
+    for key in ("hostPID", "hostIPC"):
+        g.check(
+            key not in values,
+            f"{where}: proxy HelmRelease values.{key} must be absent",
+        )
+
+
+def check_route_object(g: Guard, where: str, tunnel: str, objects: list[dict]) -> None:
+    configmap = find_object(g, objects, "ConfigMap", "cloudflared-config", where)
+    if configmap is None:
+        return
+    actual = content_digest(configmap)
+    expected = ROUTE_OBJECT_HASHES[tunnel]
+    g.check(
+        actual == expected,
+        f"{where}: route ConfigMap/cloudflared-config differs from its closed "
+        f"expected object (sha256 {actual}, expected {expected})",
+    )
+
+
+def check_build_indexes(g: Guard) -> None:
+    structural = {"apiVersion", "kind"}
+    for relative, expected_hashes in INDEX_BUILD_KEY_HASHES.items():
+        documents = g.load(relative)
+        if not g.check(
+            len(documents) == 1,
+            f"{relative}: expected exactly one Kustomize index document, "
+            f"found {len(documents)}",
+        ):
+            continue
+        document = documents[0]
+        g.check(
+            document.get("apiVersion") == "kustomize.config.k8s.io/v1beta1",
+            f"{relative}: apiVersion must be kustomize.config.k8s.io/v1beta1",
+        )
+        g.check(
+            document.get("kind") == "Kustomization",
+            f"{relative}: kind must be Kustomization",
+        )
+        actual_keys = set(document) - structural
+        expected_keys = set(expected_hashes)
+        missing = sorted(expected_keys - actual_keys)
+        extra = sorted(actual_keys - expected_keys)
+        g.check(
+            not missing,
+            f"{relative}: missing recorded build key(s): {missing!r}",
+        )
+        g.check(
+            not extra,
+            f"{relative}: unexpected build key(s): {extra!r}",
+        )
+        for key in sorted(actual_keys & expected_keys):
+            actual = content_digest(document[key])
+            expected = expected_hashes[key]
+            g.check(
+                actual == expected,
+                f"{relative}: build key {key!r} differs from its recorded "
+                f"content hash (sha256 {actual}, expected {expected})",
+            )
 
 
 def rule_signature(rule: object) -> str:
@@ -578,7 +809,7 @@ def parse_ternary_map(document: dict, variable: str) -> dict[str, str]:
     return {}
 
 
-def check_connector(g: Guard, tunnel: str) -> dict | None:
+def check_connector(g: Guard, tunnel: str) -> tuple[dict | None, list[dict]]:
     relative = f"{APPS}/cloudflared-{tunnel}"
     where = f"{relative} (rendered)"
     text, objects = g.render(relative)
@@ -599,9 +830,17 @@ def check_connector(g: Guard, tunnel: str) -> dict | None:
             ),
         ],
     )
+    check_namespace_object(
+        g,
+        where,
+        objects,
+        tunnel_namespace_object("cloudflared", tunnel),
+    )
+    check_route_object(g, where, tunnel, objects)
 
     deployment = find_object(g, objects, "Deployment", f"cloudflared-{tunnel}", where)
     if deployment is not None:
+        check_connector_pod_posture(g, where, deployment)
         labels = nested(deployment, ("spec", "template", "metadata", "labels"))
         actual = labels.get(INSTANCE) if isinstance(labels, dict) else None
         g.check(
@@ -633,21 +872,21 @@ def check_connector(g: Guard, tunnel: str) -> dict | None:
 
     configmap = find_object(g, objects, "ConfigMap", "cloudflared-config", where)
     if configmap is None:
-        return None
+        return None, objects
     data = configmap.get("data")
     raw_config = data.get("config.yaml") if isinstance(data, dict) else None
     if not g.check(
         isinstance(raw_config, str),
         f"{where}: cloudflared-config data.config.yaml is missing",
     ):
-        return None
+        return None, objects
     config = yaml.safe_load(raw_config)
     if not g.check(
         isinstance(config, dict),
         f"{where}: cloudflared-config data.config.yaml must be a mapping",
     ):
-        return None
-    return config
+        return None, objects
+    return config, objects
 
 
 def check_routes(
@@ -780,6 +1019,12 @@ def check_proxy(g: Guard, tunnel: str) -> None:
             ),
         ],
     )
+    check_namespace_object(
+        g,
+        where,
+        objects,
+        tunnel_namespace_object("traefik", tunnel),
+    )
 
     klass = f"{CLASS_PREFIX}{tunnel}"
     ingress_class = find_object(g, objects, "IngressClass", klass, where)
@@ -795,6 +1040,7 @@ def check_proxy(g: Guard, tunnel: str) -> None:
     if release is not None:
         values = nested(release, ("spec", "values"))
         values = values if isinstance(values, dict) else {}
+        check_proxy_host_posture(g, where, values)
         provider = nested(values, ("providers", "kubernetesIngress"))
         provider = provider if isinstance(provider, dict) else {}
         g.check(
@@ -883,6 +1129,170 @@ def internal_source_ref(value: object, owner_namespace: object) -> bool:
     )
 
 
+def is_flux_kustomization(document: dict) -> bool:
+    api_version = document.get("apiVersion")
+    return (
+        isinstance(api_version, str)
+        and api_version.split("/", 1)[0] == "kustomize.toolkit.fluxcd.io"
+        and document.get("kind") == "Kustomization"
+    )
+
+
+def normalize_flux_path(root: Path, value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = PurePosixPath(value)
+    if path.is_absolute():
+        return None
+    normalized = posixpath.normpath(value)
+    if normalized in {"", ".", ".."} or normalized.startswith("../"):
+        return None
+    resolved_root = root.resolve()
+    resolved = (resolved_root / normalized).resolve()
+    try:
+        return resolved.relative_to(resolved_root).as_posix()
+    except ValueError:
+        return None
+
+
+def paths_intersect(left: str, right: str) -> bool:
+    left_parts = PurePosixPath(left).parts
+    right_parts = PurePosixPath(right).parts
+    shortest = min(len(left_parts), len(right_parts))
+    return left_parts[:shortest] == right_parts[:shortest]
+
+
+def expand_list_document(
+    document: dict,
+    where: str,
+) -> list[tuple[str, dict]]:
+    if document.get("kind") != "List":
+        return [(where, document)]
+    items = document.get("items")
+    if not isinstance(items, list):
+        raise ValueError(f"{where}: List.items must be a list")
+    expanded: list[tuple[str, dict]] = []
+    for index, item in enumerate(items):
+        item_where = f"{where}.items[{index}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{item_where}: List item must be a mapping")
+        expanded.extend(expand_list_document(item, item_where))
+    return expanded
+
+
+def check_flux_kustomizations(g: Guard, tunnels: list[str]) -> None:
+    protected_paths = {
+        f"{APPS}/_components/tunnel-connector",
+        f"{APPS}/_components/tunnel-proxy",
+        *(f"{APPS}/cloudflared-{tunnel}" for tunnel in tunnels),
+        *(f"{APPS}/traefik-{tunnel}" for tunnel in tunnels),
+        *(f"{TENANTS}/{tenant}" for tenant in set(TUNNEL_TENANTS.values())),
+    }
+    expected = {
+        ROOT_CLUSTER: (ROOT_FLUX_SYNC, "flux-system", "flux-system"),
+        **{
+            f"{APPS}/traefik-{tunnel}": (
+                f"{APPS}/kustomization-traefik-{tunnel}.yaml",
+                f"traefik-{tunnel}",
+                "flux-system",
+            )
+            for tunnel in tunnels
+        },
+    }
+    counts: Counter[str] = Counter()
+    cluster = g.root / ROOT_CLUSTER
+    paths = sorted(
+        path
+        for path in cluster.rglob("*")
+        if path.is_file()
+    )
+    for path in paths:
+        relative = path.relative_to(g.root).as_posix()
+        strict_manifest = path.suffix.casefold() in {".json", ".yaml", ".yml"}
+        candidates = (
+            list(enumerate(g.load(relative), start=1))
+            if strict_manifest
+            else g.load_candidate_mappings(relative)
+        )
+        for position, document in candidates:
+            document_where = f"{relative}: document {position}"
+            for where, candidate in expand_list_document(
+                document,
+                document_where,
+            ):
+                if not is_flux_kustomization(candidate):
+                    continue
+                spec = candidate.get("spec")
+                if not g.check(
+                    isinstance(spec, dict),
+                    f"{where}: Flux Kustomization spec must be a mapping",
+                ):
+                    continue
+                raw_path = spec.get("path")
+                normalized = normalize_flux_path(g.root, raw_path)
+                if not g.check(
+                    normalized is not None,
+                    f"{where}: Flux Kustomization spec.path {raw_path!r} must "
+                    "resolve to a non-empty path inside the repository",
+                ):
+                    continue
+                touches_protected = any(
+                    paths_intersect(normalized, protected)
+                    for protected in protected_paths
+                )
+                if not touches_protected:
+                    continue
+                counts[normalized] += 1
+                identity = object_identity(candidate)
+                contract = expected.get(normalized)
+                if contract is None:
+                    g.errors.append(
+                        f"{where}: unexpected Flux Kustomization "
+                        f"{identity_label(identity)} targets protected path "
+                        f"{raw_path!r}"
+                    )
+                else:
+                    expected_file, expected_name, expected_namespace = contract
+                    g.check(
+                        relative == expected_file
+                        and identity
+                        == ("Kustomization", expected_name, expected_namespace),
+                        f"{where}: unexpected Flux Kustomization "
+                        f"{identity_label(identity)} targets protected path "
+                        f"{raw_path!r}; only Kustomization/{expected_name} "
+                        f"namespace {expected_namespace!r} in {expected_file} "
+                        "may own it",
+                    )
+                allowed = (
+                    frozenset({"decryption"})
+                    if normalized == ROOT_CLUSTER
+                    else frozenset()
+                )
+                forbidden = forbidden_build_content_keys(spec, allowed=allowed)
+                g.check(
+                    not forbidden,
+                    f"{where}: Flux Kustomization targeting protected path "
+                    f"{raw_path!r} contains forbidden build-affecting key(s): "
+                    f"{forbidden!r}",
+                )
+                g.check(
+                    internal_source_ref(
+                        spec.get("sourceRef"),
+                        metadata(candidate).get("namespace"),
+                    ),
+                    f"{where}: Flux Kustomization targeting protected path "
+                    f"{raw_path!r} must reference GitRepository/flux-system "
+                    "in namespace 'flux-system'",
+                )
+    for path, (_file, name, namespace) in sorted(expected.items()):
+        g.check(
+            counts[path] == 1,
+            f"{ROOT_CLUSTER}: protected path './{path}' must have exactly one "
+            f"Flux Kustomization owner {name!r} in namespace {namespace!r}; "
+            f"found {counts[path]}",
+        )
+
+
 def check_flux_child(g: Guard, tunnel: str) -> None:
     relative = f"{APPS}/kustomization-traefik-{tunnel}.yaml"
     documents = g.load(relative)
@@ -954,8 +1364,11 @@ def check_root_flux_build(g: Guard) -> None:
     )
 
 
-def check_tenant_namespaces(g: Guard) -> dict[str, str]:
+def check_tenant_namespaces(
+    g: Guard,
+) -> tuple[dict[str, str], dict[str, list[dict]]]:
     tenant_orgs: dict[str, str] = {}
+    rendered: dict[str, list[dict]] = {}
     for tenant in sorted(set(TUNNEL_TENANTS.values())):
         relative = f"{TENANTS}/{tenant}"
         directory = g.root / relative
@@ -965,39 +1378,136 @@ def check_tenant_namespaces(g: Guard) -> dict[str, str]:
         ):
             continue
         _text, objects = g.render(relative)
+        rendered[tenant] = objects
         check_policy_objects(
             g,
             f"{relative} (rendered)",
             objects,
             tenant_policies(tenant),
         )
-        namespaces = [
+        check_namespace_object(
+            g,
+            f"{relative} (rendered)",
+            objects,
+            tenant_namespace_object(tenant),
+        )
+        flux_children = [
             document
             for document in objects
-            if document.get("kind") == "Namespace"
-            and metadata(document).get("name") == tenant
+            if is_flux_kustomization(document)
         ]
-        if not g.check(
-            len(namespaces) == 1,
-            f"{relative}: expected exactly one rendered Namespace/{tenant}, "
-            f"found {len(namespaces)}",
-        ):
-            continue
-        labels = metadata(namespaces[0]).get("labels")
-        labels = labels if isinstance(labels, dict) else {}
-        g.check(
-            labels.get("nwarila.io/tenant") == "true",
-            f"{relative}: Namespace/{tenant} must carry "
-            'nwarila.io/tenant: "true"',
+        check_policy_objects(
+            g,
+            f"{relative} (rendered)",
+            flux_children,
+            [tenant_flux_child(tenant)],
+            all_documents=True,
+            noun="rendered Flux Kustomization",
         )
-        org = labels.get("nwarila.io/org")
-        if g.check(
-            isinstance(org, str) and bool(org),
-            f"{relative}: Namespace/{tenant} must carry a non-empty "
-            "nwarila.io/org label",
-        ):
-            tenant_orgs[tenant] = org
-    return tenant_orgs
+        tenant_orgs[tenant] = TENANT_CONTRACTS[tenant]["org"]
+    return tenant_orgs, rendered
+
+
+def namespace_scope(objects: list[dict], namespace: str) -> list[dict]:
+    return [
+        document
+        for document in objects
+        if metadata(document).get("namespace") == namespace
+        or (
+            document.get("kind") == "Namespace"
+            and metadata(document).get("name") == namespace
+        )
+    ]
+
+
+def check_root_aggregate(
+    g: Guard,
+    tunnels: list[str],
+    connector_renders: dict[str, list[dict]],
+    tenant_renders: dict[str, list[dict]],
+) -> None:
+    _text, aggregate = g.render(ROOT_CLUSTER)
+    where = f"{ROOT_CLUSTER} (aggregate)"
+    for tunnel in tunnels:
+        namespace = f"cloudflared-{tunnel}"
+        applied = namespace_scope(aggregate, namespace)
+        expected = namespace_scope(connector_renders[tunnel], namespace)
+        check_policy_objects(
+            g,
+            where,
+            applied,
+            expected,
+            all_documents=True,
+            noun="aggregate object",
+        )
+        check_route_object(g, where, tunnel, applied)
+        deployment = find_object(
+            g,
+            applied,
+            "Deployment",
+            f"cloudflared-{tunnel}",
+            where,
+        )
+        if deployment is not None:
+            check_connector_pod_posture(g, where, deployment)
+
+        proxy_namespace = f"traefik-{tunnel}"
+        check_policy_objects(
+            g,
+            where,
+            namespace_scope(aggregate, proxy_namespace),
+            [],
+            all_documents=True,
+            noun="root-applied proxy object",
+        )
+
+    for tenant, expected_objects in sorted(tenant_renders.items()):
+        check_policy_objects(
+            g,
+            where,
+            namespace_scope(aggregate, tenant),
+            namespace_scope(expected_objects, tenant),
+            all_documents=True,
+            noun="aggregate object",
+        )
+
+    guarded_namespaces = {
+        *(f"cloudflared-{tunnel}" for tunnel in tunnels),
+        *(f"traefik-{tunnel}" for tunnel in tunnels),
+        *tenant_renders,
+    }
+    applied_policies = [
+        document
+        for document in aggregate
+        if document.get("kind") == "CiliumClusterwideNetworkPolicy"
+        or (
+            document.get("kind") in POLICY_KINDS
+            and metadata(document).get("namespace") in guarded_namespaces
+        )
+    ]
+    expected_policies = [
+        policy
+        for tunnel in tunnels
+        for policy in (
+            connector_policy(tunnel),
+            default_deny_policy(
+                f"cloudflared-{tunnel}-default-deny",
+                f"cloudflared-{tunnel}",
+            ),
+        )
+    ]
+    expected_policies.extend(
+        policy
+        for tenant in sorted(tenant_renders)
+        for policy in tenant_policies(tenant)
+    )
+    check_policy_objects(
+        g,
+        where,
+        applied_policies,
+        expected_policies,
+        noun="aggregate policy",
+    )
 
 
 def check_template(g: Guard, tunnels: list[str]) -> None:
@@ -1037,6 +1547,53 @@ def check_template(g: Guard, tunnels: list[str]) -> None:
         )
 
 
+def ingress_resource_rule(
+    operations: list[str],
+    resource: str,
+) -> dict:
+    return {
+        "apiGroups": ["networking.k8s.io"],
+        "apiVersions": ["v1"],
+        "operations": operations,
+        "resources": [resource],
+    }
+
+
+def check_kyverno_posture(
+    g: Guard,
+    relative: str,
+    document: dict,
+    resource_rules: list[dict],
+) -> None:
+    spec = document.get("spec")
+    if not g.check(
+        isinstance(spec, dict),
+        f"{relative}: spec must be a mapping",
+    ):
+        return
+    g.check(
+        spec.get("validationActions") == ["Deny"],
+        f"{relative}: spec.validationActions must be exactly ['Deny']",
+    )
+    g.check(
+        spec.get("failurePolicy") == "Fail",
+        f"{relative}: spec.failurePolicy must be exactly 'Fail'",
+    )
+    constraints = spec.get("matchConstraints")
+    constraints = constraints if isinstance(constraints, dict) else {}
+    g.check(
+        constraints.get("namespaceSelector")
+        == {"matchLabels": {"nwarila.io/tenant": "true"}},
+        f"{relative}: spec.matchConstraints.namespaceSelector must match the "
+        "closed tenant selector exactly",
+    )
+    g.check(
+        constraints.get("resourceRules") == resource_rules,
+        f"{relative}: spec.matchConstraints.resourceRules must match the "
+        "closed rules exactly",
+    )
+
+
 def check_policies(
     g: Guard,
     tunnels: list[str],
@@ -1050,6 +1607,16 @@ def check_policies(
     ):
         return {}, {}
     binding = binding_documents[0]
+    check_kyverno_posture(
+        g,
+        BINDING_POLICY,
+        binding,
+        [
+            ingress_resource_rule(["CREATE", "UPDATE"], "ingresses"),
+            ingress_resource_rule(["UPDATE"], "ingresses/status"),
+            ingress_resource_rule(["CREATE", "UPDATE"], "ingressclasses"),
+        ],
+    )
     binding_spec = binding.get("spec")
     variables = (
         binding_spec.get("variables", [])
@@ -1106,6 +1673,12 @@ def check_policies(
     ):
         return {}, {}
     hostnames = hostname_documents[0]
+    check_kyverno_posture(
+        g,
+        HOSTNAME_POLICY,
+        hostnames,
+        [ingress_resource_rule(["CREATE", "UPDATE"], "ingresses")],
+    )
     zones = parse_ternary_map(hostnames, "zone")
     protected = parse_ternary_map(hostnames, "protectedZone")
     canaries = parse_ternary_map(hostnames, "canaryHost")
@@ -1289,14 +1862,23 @@ def main(argv: list[str]) -> int:
     g = Guard(root, kubectl)
     try:
         check_no_retired_boolean(g)
+        check_build_indexes(g)
         tunnels = discover_tunnels(g)
         check_root_flux_build(g)
-        tenant_orgs = check_tenant_namespaces(g)
+        check_flux_kustomizations(g, tunnels)
+        tenant_orgs, tenant_renders = check_tenant_namespaces(g)
         configs: dict[str, dict | None] = {}
+        connector_renders: dict[str, list[dict]] = {}
         for tunnel in tunnels:
-            configs[tunnel] = check_connector(g, tunnel)
+            configs[tunnel], connector_renders[tunnel] = check_connector(g, tunnel)
             check_proxy(g, tunnel)
             check_flux_child(g, tunnel)
+        check_root_aggregate(
+            g,
+            tunnels,
+            connector_renders,
+            tenant_renders,
+        )
         zones, protected = check_policies(g, tunnels, tenant_orgs)
         seen: dict[str, str] = {}
         for tunnel, config in configs.items():
@@ -1311,8 +1893,22 @@ def main(argv: list[str]) -> int:
                     seen,
                 )
         check_template(g, tunnels)
+    except RenderError as error:
+        if g.errors:
+            print("check-tunnel-isolation: FAILED", file=sys.stderr)
+            for finding in g.errors:
+                print(f"  - {finding}", file=sys.stderr)
+            print(
+                f"  - {ROOT_CLUSTER}: aggregate render also failed: {error}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"check-tunnel-isolation: unreadable tunnel inventory: {error}",
+                file=sys.stderr,
+            )
+        return 1
     except (
-        RenderError,
         FileNotFoundError,
         KeyError,
         OSError,
@@ -1332,9 +1928,9 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"check-tunnel-isolation: OK ({len(tunnels)} tunnels: "
-        f"{', '.join(tunnels)}; exact pairing, closed whole-policy objects in "
-        "tunnel and tenant renders, forbidden Flux build modifiers absent, "
-        "tenant ownership, routes, and policy registrations verified)"
+        f"{', '.join(tunnels)}; exact pairing; closed aggregate, tunnel, tenant, "
+        "Namespace, route, and policy objects; content-hashed indexes; all Flux "
+        "paths; host posture; tenant ownership; and Kyverno enforcement verified)"
     )
     return 0
 
