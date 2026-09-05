@@ -51,6 +51,34 @@ for key, expected in expected_common.items():
     if spec.get(key) != expected:
         raise SystemExit(f"static guard: spec.{key} must remain {expected!r}")
 
+variables = {
+    entry.get("name"): " ".join(entry.get("expression", "").split())
+    for entry in spec.get("variables", [])
+}
+expected_variables = {
+    "zone": (
+        "variables.class == 'cf-tunnel-hwg' ? 'theherowarsguys.com' : "
+        "variables.class == 'cf-tunnel-nwp-public' ? 'nickwarila.com' : "
+        "variables.class == 'cf-tunnel-nwp-mtls' ? 'nickwarila.com' : ''"
+    ),
+    "protectedZone": "''",
+    "reservedHosts": (
+        "variables.class == 'cf-tunnel-hwg' ? "
+        "['canary-hwg.theherowarsguys.com'] : "
+        "variables.class == 'cf-tunnel-nwp-public' ? "
+        "['canary-nwp-public.nickwarila.com', "
+        "'canary-nwp-mtls.nickwarila.com'] : "
+        "variables.class == 'cf-tunnel-nwp-mtls' ? "
+        "['canary-nwp-public.nickwarila.com', "
+        "'canary-nwp-mtls.nickwarila.com'] : []"
+    ),
+}
+for name, expected in expected_variables.items():
+    if variables.get(name) != expected:
+        raise SystemExit(
+            f"static guard: variable {name} must remain {expected!r}"
+        )
+
 rules = spec.get("matchConstraints", {}).get("resourceRules")
 if rules != [{
     "apiGroups": ["networking.k8s.io"],
@@ -68,10 +96,10 @@ required_fragments = (
     "variables.class == 'cf-tunnel-hwg'",
     "variables.class == 'cf-tunnel-nwp-public'",
     "variables.class == 'cf-tunnel-nwp-mtls'",
-    # The protected zone must stay barred from the unprotected class. Losing
-    # this fragment would silently reopen the mTLS bypass.
-    "variables.class == 'cf-tunnel-nwp-public' ? 'secure.nicholaswarila.com' : ''",
+    # Preserve the generic nested-zone fail-closed rule even though both nwp
+    # classes deliberately share one zone and protectedZone is currently empty.
     "!rule.host.endsWith('.' + variables.protectedZone)",
+    "!variables.reservedHosts.exists(reservedHost,",
     "path.backend.service.port.number == 8080",
     "!key.startsWith('traefik.ingress.kubernetes.io/')",
     "!key.startsWith('traefik.io/')",
@@ -162,13 +190,14 @@ PY
 run_case "admit/numeric-8080.yaml" "pass" "success"
 run_case "admit/nwp-public-in-zone.yaml" "pass" "success"
 run_case "admit/nwp-mtls-in-zone.yaml" "pass" "success"
+run_case "admit/nwp-mtls-same-zone-as-public.yaml" "pass" "success"
 
 run_case "deny/out-of-zone.yaml" "fail" \
   "tunnel Ingress hosts must be inside theherowarsguys.com"
 run_case "deny/apex.yaml" "fail" \
   "the bare theherowarsguys.com apex is reserved"
 run_case "deny/canary.yaml" "fail" \
-  "canary-hwg.theherowarsguys.com is reserved"
+  "tunnel canary hostnames are reserved"
 run_case "deny/wildcard.yaml" "fail" \
   "wildcard tunnel Ingress hosts are not permitted"
 run_case "deny/no-rules.yaml" "fail" \
@@ -190,20 +219,20 @@ run_case "deny/resource-backend.yaml" "fail" \
 run_case "deny/no-paths.yaml" "fail" \
   "every tunnel Ingress rule must declare at least one HTTP path"
 
-run_case "deny/nwp-public-enters-protected.yaml" "fail" \
-  "unprotected tunnel Ingress hosts must not be inside secure.nicholaswarila.com"
-run_case "deny/nwp-public-protected-apex.yaml" "fail" \
-  "unprotected tunnel Ingress hosts must not be inside secure.nicholaswarila.com"
 run_case "deny/nwp-mtls-out-of-zone.yaml" "fail" \
-  "tunnel Ingress hosts must be inside secure.nicholaswarila.com"
+  "tunnel Ingress hosts must be inside nickwarila.com"
 run_case "deny/nwp-public-apex.yaml" "fail" \
-  "the bare nicholaswarila.com apex is reserved"
+  "the bare nickwarila.com apex is reserved"
 run_case "deny/nwp-mtls-apex.yaml" "fail" \
-  "the bare secure.nicholaswarila.com apex is reserved"
+  "the bare nickwarila.com apex is reserved"
 run_case "deny/nwp-public-canary.yaml" "fail" \
-  "canary-nwp-public.nicholaswarila.com is reserved"
+  "tunnel canary hostnames are reserved"
 run_case "deny/nwp-mtls-canary.yaml" "fail" \
-  "canary-nwp-mtls.secure.nicholaswarila.com is reserved"
+  "tunnel canary hostnames are reserved"
+run_case "deny/nwp-public-claims-mtls-canary.yaml" "fail" \
+  "tunnel canary hostnames are reserved"
+run_case "deny/nwp-mtls-claims-public-canary.yaml" "fail" \
+  "tunnel canary hostnames are reserved"
 
 run_case "unaffected/wrong-class.yaml" "pass" "success"
 run_case "unaffected/missing-class.yaml" "pass" "success"

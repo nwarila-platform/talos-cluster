@@ -7,9 +7,10 @@ rests on the tunnel inventory, rendered policy objects, exact policy rule
 shapes, tenant ownership, route tables, and admission-policy registrations all
 staying in agreement.
 
-Connectors and proxies render from shared kustomize components, so this guard
-inspects what kustomize renders for each overlay -- what Flux applies -- rather
-than trusting the component sources or overlay contract literals.
+Connectors and proxies render from shared kustomize components, so enforcement
+checks inspect what kustomize renders for each overlay -- what Flux applies.
+The pruned overlay ``tier=`` literal remains an auditable declaration, but it
+must agree with the fixed ``CLASS_TIERS`` map and never defines posture itself.
 
 Usage: check-tunnel-isolation.py [REPO_ROOT]
 """
@@ -52,6 +53,11 @@ TUNNEL_TENANTS = {
     "nwp-public": "nwp-1306985678",
     "nwp-mtls": "nwp-1306985678",
 }
+CLASS_TIERS = {
+    "cf-tunnel-hwg": "public",
+    "cf-tunnel-nwp-public": "public",
+    "cf-tunnel-nwp-mtls": "mtls",
+}
 DISABLED_VALUES = (
     ("ingressClass", "enabled"),
     ("rbac", "enabled"),
@@ -62,7 +68,12 @@ DISABLED_VALUES = (
 )
 
 UUID_RE = re.compile(r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+ACCESS_AUD_RE = re.compile(r"^[0-9a-f]{64}$")
 TERNARY_RE = re.compile(r"variables\.class == '([^']+)' \?\s*'([^']*)'")
+LIST_TERNARY_RE = re.compile(
+    r"variables\.class == '([^']+)'\s*\?\s*\[([^\]]*)\]"
+)
+LIST_ITEM_RE = re.compile(r"\s*'([^']*)'\s*")
 ORG_CLASSES_RE = re.compile(r"variables\.org == '([^']+)' \?\s*\[([^\]]*)\]")
 QUOTED_RE = re.compile(r"'([^']+)'")
 CHILD_RE = re.compile(r"kustomization-traefik-(.+)\.ya?ml")
@@ -333,6 +344,122 @@ def parse_ternary_map(document: dict, variable: str) -> dict[str, str]:
         if isinstance(entry, dict) and entry.get("name") == variable:
             return dict(TERNARY_RE.findall(str(entry.get("expression", ""))))
     return {}
+
+
+def parse_list_ternary_map(
+    document: dict,
+    variable: str,
+) -> dict[str, list[str]]:
+    spec = document.get("spec")
+    variables = spec.get("variables", []) if isinstance(spec, dict) else []
+    for entry in variables:
+        if isinstance(entry, dict) and entry.get("name") == variable:
+            values: defaultdict[str, list[str]] = defaultdict(list)
+            for klass, raw_items in LIST_TERNARY_RE.findall(
+                str(entry.get("expression", ""))
+            ):
+                if not raw_items.strip():
+                    continue
+                for raw_item in raw_items.split(","):
+                    match = LIST_ITEM_RE.fullmatch(raw_item)
+                    values[klass].append(
+                        match.group(1)
+                        if match
+                        else f"<invalid CEL list item: {raw_item.strip()}>"
+                    )
+            return dict(values)
+    return {}
+
+
+def check_overlay_tier(g: Guard, tunnel: str) -> None:
+    """Require the overlay declaration to agree with the closed tier map."""
+    relative = f"{APPS}/cloudflared-{tunnel}/kustomization.yaml"
+    documents = g.load(relative)
+    if not g.check(
+        len(documents) == 1,
+        f"{relative}: expected exactly one document, found {len(documents)}",
+    ):
+        return
+
+    generators = documents[0].get("configMapGenerator")
+    generators = generators if isinstance(generators, list) else []
+    contracts = [
+        generator
+        for generator in generators
+        if isinstance(generator, dict)
+        and generator.get("name") == "tunnel-contract"
+    ]
+    if not g.check(
+        len(contracts) == 1,
+        f"{relative}: expected exactly one tunnel-contract generator, "
+        f"found {len(contracts)}",
+    ):
+        return
+
+    literals = contracts[0].get("literals")
+    literals = literals if isinstance(literals, list) else []
+    tiers = [
+        literal.split("=", 1)[1]
+        for literal in literals
+        if isinstance(literal, str) and literal.startswith("tier=")
+    ]
+    if not g.check(
+        len(tiers) == 1,
+        f"{relative}: tunnel-contract must declare exactly one tier= literal, "
+        f"found {tiers}",
+    ):
+        return
+
+    klass = f"{CLASS_PREFIX}{tunnel}"
+    expected = CLASS_TIERS.get(klass)
+    if expected is None:
+        return
+    g.check(
+        tiers[0] == expected,
+        f"{relative}: overlay declares tier {tiers[0]!r}, but closed "
+        f"CLASS_TIERS requires {expected!r} for class {klass!r}",
+    )
+
+
+def check_connector_tier(
+    g: Guard,
+    tunnel: str,
+    tier: str,
+    config: dict,
+) -> None:
+    """Enforce connector posture from CLASS_TIERS, never from the overlay."""
+    where = f"{APPS}/cloudflared-{tunnel}/configmap.yaml"
+    access = nested(config, ("originRequest", "access"))
+    if tier == "mtls":
+        if not g.check(
+            isinstance(access, dict) and access.get("required") is True,
+            f"{where}: an mTLS-tier connector must set "
+            "originRequest.access.required: true tunnel-wide",
+        ):
+            return
+        auds = access.get("audTag")
+        g.check(
+            isinstance(auds, list)
+            and bool(auds)
+            and all(ACCESS_AUD_RE.fullmatch(str(aud)) for aud in auds),
+            f"{where}: originRequest.access.audTag must list at least one "
+            f"64-hex Access application aud, found {auds!r}",
+        )
+        team_name = access.get("teamName")
+        g.check(
+            isinstance(team_name, str) and bool(team_name.strip()),
+            f"{where}: originRequest.access.teamName must be set",
+        )
+    elif tier == "public":
+        g.check(
+            not access,
+            f"{where}: a public-tier connector must not require Cloudflare "
+            "Access; every hostname behind it would be locked out",
+        )
+    else:
+        g.errors.append(
+            f"{where}: closed CLASS_TIERS assigns unsupported tier {tier!r}"
+        )
 
 
 def check_connector(g: Guard, tunnel: str) -> dict | None:
@@ -765,7 +892,7 @@ def check_policies(
     hostnames = hostname_documents[0]
     zones = parse_ternary_map(hostnames, "zone")
     protected = parse_ternary_map(hostnames, "protectedZone")
-    canaries = parse_ternary_map(hostnames, "canaryHost")
+    reserved_hosts = parse_list_ternary_map(hostnames, "reservedHosts")
     for klass in sorted(expected):
         zone = zones.get(klass, "")
         g.check(
@@ -773,12 +900,29 @@ def check_policies(
             f"{HOSTNAME_POLICY}: class {klass!r} has no zone; "
             "its hostnames would be unconstrained",
         )
-        canary = canaries.get(klass, "")
-        if canary and zone:
-            g.check(
-                canary.endswith(f".{zone}"),
-                f"{HOSTNAME_POLICY}: canary {canary!r} is outside zone {zone!r}",
-            )
+        if not zone:
+            continue
+        same_zone_classes = {
+            sibling
+            for sibling in expected
+            if zones.get(sibling, "") == zone
+        }
+        required_hosts = [
+            f"canary-{sibling.removeprefix(CLASS_PREFIX)}.{zone}"
+            for sibling in sorted(same_zone_classes)
+        ]
+        actual_hosts = reserved_hosts.get(klass, [])
+        g.check(
+            Counter(actual_hosts) == Counter(required_hosts),
+            f"{HOSTNAME_POLICY}: class {klass!r} reservedHosts must match "
+            "the closed same-zone canary set exactly; "
+            f"expected {required_hosts!r}, found {actual_hosts!r}",
+        )
+    for klass in sorted(set(reserved_hosts) - expected):
+        g.errors.append(
+            f"{HOSTNAME_POLICY}: reservedHosts registers unknown class "
+            f"{klass!r}"
+        )
     for outer, outer_zone in sorted(zones.items()):
         for inner, inner_zone in sorted(zones.items()):
             if (
@@ -922,6 +1066,19 @@ def discover_tunnels(g: Guard) -> list[str]:
             f"{APPS}: closed TUNNEL_TENANTS entry {tunnel!r} has no tunnel "
             "inventory"
         )
+    discovered_classes = {
+        f"{CLASS_PREFIX}{tunnel}" for tunnel in discovered
+    }
+    for klass in sorted(discovered_classes - set(CLASS_TIERS)):
+        g.errors.append(
+            f"{APPS}: class {klass!r} is absent from the closed "
+            "CLASS_TIERS map"
+        )
+    for klass in sorted(set(CLASS_TIERS) - discovered_classes):
+        g.errors.append(
+            f"{APPS}: closed CLASS_TIERS entry {klass!r} has no tunnel "
+            "inventory"
+        )
     return complete
 
 
@@ -946,6 +1103,10 @@ def main(argv: list[str]) -> int:
         configs: dict[str, dict | None] = {}
         for tunnel in tunnels:
             configs[tunnel] = check_connector(g, tunnel)
+            check_overlay_tier(g, tunnel)
+            tier = CLASS_TIERS.get(f"{CLASS_PREFIX}{tunnel}")
+            if configs[tunnel] is not None and tier is not None:
+                check_connector_tier(g, tunnel, tier, configs[tunnel])
             check_proxy(g, tunnel)
             check_flux_child(g, tunnel)
         zones, protected = check_policies(g, tunnels, tenant_orgs)
@@ -984,7 +1145,8 @@ def main(argv: list[str]) -> int:
     print(
         f"check-tunnel-isolation: OK ({len(tunnels)} tunnels: "
         f"{', '.join(tunnels)}; exact pairing, closed policy inventory/rule "
-        "shapes, tenant ownership, routes, and policy registrations verified)"
+        "shapes, tenant ownership, canonical tier posture, routes, and policy "
+        "registrations verified)"
     )
     return 0
 

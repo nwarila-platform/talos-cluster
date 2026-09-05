@@ -267,45 +267,11 @@ def template_unknown_tunnel(root: Path) -> None:
     )
 
 
-GUARD_RULE = (
-    "      - hostname: '*.secure.nicholaswarila.com'\n"
-    "        service: http_status:404\n"
-)
-WILDCARD_RULE = (
-    "      - hostname: '*.nicholaswarila.com'\n"
-    "        service: http://traefik-nwp-public.traefik-nwp-public.svc:80\n"
-)
-
-
-def fail_closed_rule_removed(root: Path) -> None:
-    edit(
-        root,
-        f"{APPS}/cloudflared-nwp-public/configmap.yaml",
-        GUARD_RULE,
-        "",
-    )
-
-
-def fail_closed_rule_reordered(root: Path) -> None:
-    path = root / f"{APPS}/cloudflared-nwp-public/configmap.yaml"
-    text = path.read_text(encoding="utf-8")
-    if GUARD_RULE not in text or WILDCARD_RULE not in text:
-        raise AssertionError("self-test setup: route block changed")
-    path.write_text(
-        text.replace(GUARD_RULE, "", 1).replace(
-            WILDCARD_RULE,
-            WILDCARD_RULE + GUARD_RULE,
-            1,
-        ),
-        encoding="utf-8",
-    )
-
-
 def out_of_zone_route(root: Path) -> None:
     edit(
         root,
         f"{APPS}/cloudflared-nwp-mtls/configmap.yaml",
-        "      - hostname: '*.secure.nicholaswarila.com'\n"
+        "      - hostname: '*.nickwarila.com'\n"
         "        service: http://traefik-nwp-mtls",
         "      - hostname: '*.elsewhere.example.com'\n"
         "        service: http://traefik-nwp-mtls",
@@ -335,13 +301,68 @@ def class_deregistered(root: Path) -> None:
     )
 
 
-def protected_zone_dropped(root: Path) -> None:
+NWP_PUBLIC_CANARY = "canary-nwp-public.nickwarila.com"
+NWP_MTLS_CANARY = "canary-nwp-mtls.nickwarila.com"
+
+
+def set_policy_reserved_hosts(
+    root: Path,
+    public_hosts: list[str],
+    mtls_hosts: list[str],
+) -> None:
+    relative = f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml"
+    document = load_document(root, relative)
+    spec = document.get("spec")
+    variables = spec.get("variables") if isinstance(spec, dict) else None
+    entries = [
+        entry
+        for entry in variables or []
+        if isinstance(entry, dict) and entry.get("name") == "reservedHosts"
+    ]
+    if len(entries) != 1:
+        raise AssertionError(
+            "self-test setup: expected one reservedHosts policy variable"
+        )
+
+    def cel_list(hosts: list[str]) -> str:
+        return "[" + ", ".join(f"'{host}'" for host in hosts) + "]"
+
+    entries[0]["expression"] = (
+        "variables.class == 'cf-tunnel-hwg' ? "
+        "['canary-hwg.theherowarsguys.com'] : "
+        "variables.class == 'cf-tunnel-nwp-public' ? "
+        f"{cel_list(public_hosts)} : "
+        "variables.class == 'cf-tunnel-nwp-mtls' ? "
+        f"{cel_list(mtls_hosts)} : []"
+    )
+    write_document(root, relative, document)
+
+
+def nested_zone_without_protection(root: Path) -> None:
     edit(
         root,
         f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml",
-        "variables.class == 'cf-tunnel-nwp-public' ? "
-        "'secure.nicholaswarila.com' : ''",
-        "variables.class == 'cf-tunnel-nwp-public' ? '' : ''",
+        "variables.class == 'cf-tunnel-nwp-mtls' ? "
+        "'nickwarila.com' : ''",
+        "variables.class == 'cf-tunnel-nwp-mtls' ? "
+        "'secure.nickwarila.com' : ''",
+    )
+    edit(
+        root,
+        f"{APPS}/cloudflared-nwp-mtls/configmap.yaml",
+        "- hostname: '*.nickwarila.com'",
+        "- hostname: '*.secure.nickwarila.com'",
+    )
+    edit(
+        root,
+        f"{APPS}/cloudflared-nwp-mtls/configmap.yaml",
+        "canary-nwp-mtls.nickwarila.com",
+        "canary-nwp-mtls.secure.nickwarila.com",
+    )
+    set_policy_reserved_hosts(
+        root,
+        [NWP_PUBLIC_CANARY],
+        ["canary-nwp-mtls.secure.nickwarila.com"],
     )
 
 
@@ -350,9 +371,118 @@ def zone_dropped(root: Path) -> None:
         root,
         f"{APPS}/kyverno/policies/restrict-tunnel-hostnames.yaml",
         "variables.class == 'cf-tunnel-nwp-mtls' ? "
-        "'secure.nicholaswarila.com' : ''",
+        "'nickwarila.com' : ''",
         "variables.class == 'cf-tunnel-nwp-mtls-absent' ? "
-        "'secure.nicholaswarila.com' : ''",
+        "'nickwarila.com' : ''",
+    )
+
+
+def public_drops_mtls_canary_reservation(root: Path) -> None:
+    set_policy_reserved_hosts(
+        root,
+        [NWP_PUBLIC_CANARY],
+        [NWP_PUBLIC_CANARY, NWP_MTLS_CANARY],
+    )
+
+
+def mtls_drops_public_canary_reservation(root: Path) -> None:
+    set_policy_reserved_hosts(
+        root,
+        [NWP_PUBLIC_CANARY, NWP_MTLS_CANARY],
+        [NWP_MTLS_CANARY],
+    )
+
+
+def update_connector_config(
+    root: Path,
+    tunnel: str,
+    mutate: Callable[[dict], None],
+) -> None:
+    relative = f"{APPS}/cloudflared-{tunnel}/configmap.yaml"
+    configmap = load_document(root, relative)
+    data = configmap.get("data")
+    raw_config = data.get("config.yaml") if isinstance(data, dict) else None
+    config = yaml.safe_load(raw_config) if isinstance(raw_config, str) else None
+    if not isinstance(config, dict):
+        raise AssertionError(
+            f"self-test setup: {relative} data.config.yaml is not a mapping"
+        )
+    mutate(config)
+    data["config.yaml"] = yaml.safe_dump(config, sort_keys=False)
+    write_document(root, relative, configmap)
+
+
+def access_mapping(config: dict) -> dict:
+    origin_request = config.get("originRequest")
+    access = (
+        origin_request.get("access")
+        if isinstance(origin_request, dict)
+        else None
+    )
+    if not isinstance(access, dict):
+        raise AssertionError(
+            "self-test setup: mTLS connector Access mapping is missing"
+        )
+    return access
+
+
+def mtls_connector_drops_access(root: Path) -> None:
+    def drop_access(config: dict) -> None:
+        access_mapping(config)
+        config["originRequest"].pop("access")
+
+    update_connector_config(root, "nwp-mtls", drop_access)
+
+
+def mtls_connector_access_not_required(root: Path) -> None:
+    def make_optional(config: dict) -> None:
+        access_mapping(config)["required"] = False
+
+    update_connector_config(root, "nwp-mtls", make_optional)
+
+
+def mtls_connector_bogus_aud(root: Path) -> None:
+    def replace_aud(config: dict) -> None:
+        access_mapping(config)["audTag"] = ["replace-me"]
+
+    update_connector_config(root, "nwp-mtls", replace_aud)
+
+
+def public_connector_requires_access(root: Path) -> None:
+    mtls_relative = f"{APPS}/cloudflared-nwp-mtls/configmap.yaml"
+    mtls_configmap = load_document(root, mtls_relative)
+    mtls_config = yaml.safe_load(mtls_configmap["data"]["config.yaml"])
+    access = access_mapping(mtls_config)
+
+    def add_access(config: dict) -> None:
+        config["originRequest"] = {"access": dict(access)}
+
+    update_connector_config(root, "nwp-public", add_access)
+
+
+def tier_missing(root: Path) -> None:
+    edit(
+        root,
+        f"{APPS}/cloudflared-nwp-mtls/kustomization.yaml",
+        "      - tier=mtls\n",
+        "",
+    )
+
+
+def tier_lies_with_access_removed(root: Path) -> None:
+    edit(
+        root,
+        f"{APPS}/cloudflared-nwp-mtls/kustomization.yaml",
+        "      - tier=mtls\n",
+        "      - tier=public\n",
+    )
+    mtls_connector_drops_access(root)
+
+
+def unknown_tunnel_directory(root: Path) -> None:
+    shutil.copytree(
+        root / APPS / "cloudflared-nwp-public",
+        root / APPS / "cloudflared-nwp-unknown",
     )
 
 
@@ -665,12 +795,12 @@ def cross_tunnel_additive_rules(root: Path) -> None:
     config["ingress"].insert(
         -1,
         {
-            "hostname": "leak.nicholaswarila.com",
+            "hostname": "leak.nickwarila.com",
             "service": (
                 "http://traefik-nwp-mtls.traefik-nwp-mtls.svc:80"
             ),
             "originRequest": {
-                "httpHostHeader": "app.secure.nicholaswarila.com"
+                "httpHostHeader": "app.nickwarila.com"
             },
         },
     )
@@ -888,18 +1018,6 @@ CASES = (
         template_unknown_tunnel,
     ),
     Case(
-        "removed protected-zone fail-closed route is rejected",
-        1,
-        "missing fail-closed http_status rule",
-        fail_closed_rule_removed,
-    ),
-    Case(
-        "protected-zone route ordered after the wildcard is rejected",
-        1,
-        "must precede",
-        fail_closed_rule_reordered,
-    ),
-    Case(
         "connector routing outside its zone is rejected",
         1,
         "outside the zone",
@@ -918,10 +1036,24 @@ CASES = (
         class_deregistered,
     ),
     Case(
-        "dropped protectedZone under zone nesting is rejected",
+        "a nested protected zone with no protectedZone bar is rejected",
         1,
         "must declare protectedZone",
-        protected_zone_dropped,
+        nested_zone_without_protection,
+    ),
+    Case(
+        "public class must reserve the mTLS sibling canary",
+        1,
+        "class 'cf-tunnel-nwp-public' reservedHosts must match the closed "
+        "same-zone canary set exactly",
+        public_drops_mtls_canary_reservation,
+    ),
+    Case(
+        "mTLS class must reserve the public sibling canary",
+        1,
+        "class 'cf-tunnel-nwp-mtls' reservedHosts must match the closed "
+        "same-zone canary set exactly",
+        mtls_drops_public_canary_reservation,
     ),
     Case(
         "class with no zone is rejected",
@@ -1037,6 +1169,52 @@ CASES = (
         "template ingress rule for tunnel 'nwp-public' must match the "
         "closed allow-list exactly",
         template_without_to_ports,
+    ),
+    Case(
+        "mTLS connector without tunnel-wide Access is rejected",
+        1,
+        "an mTLS-tier connector must set "
+        "originRequest.access.required: true tunnel-wide",
+        mtls_connector_drops_access,
+    ),
+    Case(
+        "mTLS connector with access.required false is rejected",
+        1,
+        "an mTLS-tier connector must set "
+        "originRequest.access.required: true tunnel-wide",
+        mtls_connector_access_not_required,
+    ),
+    Case(
+        "mTLS connector with a non-aud audTag is rejected",
+        1,
+        "originRequest.access.audTag must list at least one 64-hex",
+        mtls_connector_bogus_aud,
+    ),
+    Case(
+        "public connector requiring Access is rejected",
+        1,
+        "a public-tier connector must not require Cloudflare Access",
+        public_connector_requires_access,
+    ),
+    Case(
+        "overlay without a tier literal is rejected",
+        1,
+        "tunnel-contract must declare exactly one tier= literal",
+        tier_missing,
+    ),
+    Case(
+        "lying tier cannot erase canonical mTLS posture",
+        1,
+        "overlay declares tier 'public', but closed CLASS_TIERS requires "
+        "'mtls'",
+        tier_lies_with_access_removed,
+    ),
+    Case(
+        "unknown tunnel directory is absent from the tier map",
+        1,
+        "class 'cf-tunnel-nwp-unknown' is absent from the closed "
+        "CLASS_TIERS map",
+        unknown_tunnel_directory,
     ),
 )
 

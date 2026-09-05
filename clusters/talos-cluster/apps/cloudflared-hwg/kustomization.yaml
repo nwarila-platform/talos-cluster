@@ -10,6 +10,7 @@ configMapGenerator:
     namespace: cloudflared-hwg
     literals:
       - tunnel=hwg
+      - tier=public
       # Bump whenever configmap.yaml changes: a projected ConfigMap update does
       # not make cloudflared reload its ingress rules.
       - configRevision=cft3a-mvp-v1
