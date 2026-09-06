@@ -11,6 +11,7 @@
 
 # -- Top-level repo files -----------------------------------------------------
 !/.editorconfig
+!/.gitleaks.toml
 !/.pre-commit-config.yaml
 !/AGENTS.md
 !/CONTRIBUTING.md
