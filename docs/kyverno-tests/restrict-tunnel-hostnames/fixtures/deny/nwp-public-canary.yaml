@@ -6,7 +6,7 @@ metadata:
 spec:
   ingressClassName: cf-tunnel-nwp-public
   rules:
-    - host: canary-nwp-public.nicholaswarila.com
+    - host: canary-nwp-public.nickwarila.com
       http:
         paths:
           - path: /

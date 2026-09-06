@@ -1,10 +1,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources:
-  - namespace.yaml
-  - helmrepository.yaml
-  - helmrelease.yaml
-  - ingressclass.yaml
-  - rbac.yaml
-  - ciliumnetworkpolicy.yaml
-  - networkpolicy-default-deny.yaml
+configMapGenerator:
+  # Namespaced so overlays accumulated under one parent index keep distinct
+  # ids; the local-config annotation still prunes it from the render.
+  - name: tunnel-contract
+    namespace: traefik-hwg
+    literals:
+      - tunnel=hwg
+      - tenantNamespace=hwg-1268831311
+generatorOptions:
+  disableNameSuffixHash: true
+  annotations:
+    config.kubernetes.io/local-config: "true"
+components:
+  - ../_components/tunnel-proxy

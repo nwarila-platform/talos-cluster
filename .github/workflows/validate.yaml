@@ -207,6 +207,9 @@ jobs:
       - name: "Guard self-test: tunnel-isolation guard bites"
         run: python3 scripts/check-tunnel-isolation.selftest.py
 
+      - name: "Guard self-test: tunnel-hostname registration state machine"
+        run: python3 scripts/register-tunnel-hostname.selftest.py
+
       - name: "Guard self-test: workflow-health stale-exception logic"
         run: python3 scripts/check-workflow-health.selftest.py
 

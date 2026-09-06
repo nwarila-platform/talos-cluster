@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: traefik-hwg
-  namespace: traefik-hwg
+  name: traefik-tunnelplaceholder
+  namespace: traefik-tunnelplaceholder
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: traefik-hwg
+  name: traefik-tunnelplaceholder
 rules:
   - apiGroups: [networking.k8s.io]
     resources: [ingressclasses]
@@ -19,21 +19,21 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: traefik-hwg
+  name: traefik-tunnelplaceholder
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: traefik-hwg
+  name: traefik-tunnelplaceholder
 subjects:
   - kind: ServiceAccount
-    name: traefik-hwg
-    namespace: traefik-hwg
+    name: traefik-tunnelplaceholder
+    namespace: traefik-tunnelplaceholder
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: traefik-hwg
-  namespace: hwg-1268831311
+  name: traefik-tunnelplaceholder
+  namespace: tenantnsplaceholder
 rules:
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]
@@ -45,7 +45,7 @@ rules:
     resources: [endpointslices]
     verbs: [get, list, watch]
   # Accepted risk: stock Traefik waits for this informer cache. This exposes
-  # the two rotatable tenant Secrets documented in the rotation runbook.
+  # the rotatable tenant Secrets documented in the rotation runbook.
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, list, watch]
@@ -53,13 +53,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: traefik-hwg
-  namespace: hwg-1268831311
+  name: traefik-tunnelplaceholder
+  namespace: tenantnsplaceholder
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: traefik-hwg
+  name: traefik-tunnelplaceholder
 subjects:
   - kind: ServiceAccount
-    name: traefik-hwg
-    namespace: traefik-hwg
+    name: traefik-tunnelplaceholder
+    namespace: traefik-tunnelplaceholder

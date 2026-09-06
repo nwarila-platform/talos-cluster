@@ -1,168 +1,142 @@
 # Operate The nwarila-platform Tunnel Pair
 
-`nwarila-platform` runs two Cloudflare Tunnels over the same tenant namespace,
-at two protection tiers:
+`nwarila-platform` runs two Cloudflare Tunnels over the same tenant namespace
+and the same DNS zone, at two protection tiers:
 
-| Tunnel | Cloudflare tunnel id | Zone | Protection |
+| Tunnel | Cloudflare tunnel ID | Tier | Required or intended edge posture |
 |---|---|---|---|
-| `nwp-public` | `1f59f78a-16f8-4e3c-8567-de0235e39871` | `nicholaswarila.com` | none |
-| `nwp-mtls` | `fb6932d9-c6e4-4ccb-8e4c-dee47aa05313` | `secure.nicholaswarila.com` | client certificate at the Cloudflare edge |
+| `nwp-public` | `1f59f78a-16f8-4e3c-8567-de0235e39871` | public | no per-host security controls; owner-gated wildcard and public-canary DNS routes |
+| `nwp-mtls` | `fb6932d9-c6e4-4ccb-8e4c-dee47aa05313` | mTLS | client certificate, Access OTP, WAF block, and configured connector-side Access JWT |
 
-Both tunnels watch the same tenant namespace `nwp-1306985678`, so namespace
-scoping cannot separate them. The separation is the `nwarila.io/tunnel-exposed`
-pod label carrying the tunnel *name*: a Kubernetes label holds one value per
-key, so a pod is reachable from exactly one proxy. Three independent layers
-enforce the boundary, and `scripts/check-tunnel-isolation.py` fails CI if any of
-them drifts:
+Both stacks are configured to watch tenant namespace `nwp-1306985678` and
+serve `nickwarila.com`, so neither namespace nor hostname alone separates them. The
+`nwarila.io/tunnel-exposed` pod label carries the tunnel name; because a
+Kubernetes label has one value per key, a pod is reachable from exactly one
+proxy. Admission, exact network-policy rules, connector routes, and the fixed
+class-to-tier map are checked by `scripts/check-tunnel-isolation.py`.
 
-1. **Admission** — `restrict-tunnel-binding` permits the org only its two
-   registered classes; `restrict-tunnel-hostnames` pins each class to its zone
-   and bars `cf-tunnel-nwp-public` from `secure.nicholaswarila.com` entirely.
-2. **Connector routing** — `cloudflared-nwp-public` answers `http_status:404`
-   for the protected zone in a rule ordered *ahead* of its own wildcard, so a
-   lost DNS route fails closed rather than serving protected hostnames
-   unauthenticated. `cloudflared-nwp-mtls` serves nothing outside the protected
-   zone.
-3. **Network policy** — each Traefik proxy may egress only to pods labelled
-   with its own tunnel name, on TCP 8080.
+## How A Hostname Becomes Live
 
-## Status
+After the owner-gated wildcard route is provisioned, the public tier is
+zero-touch per hostname. A tenant labels its pod
+`nwarila.io/tunnel-exposed: nwp-public` and declares an Ingress of class
+`cf-tunnel-nwp-public` with an admitted in-zone hostname. The wildcard then
+routes the hostname to that connector.
 
-The Git side is complete and the tunnels exist in Cloudflare. Two Cloudflare
-edge steps remain owner-gated and are **not** yet done:
+The mTLS tier needs the matching `nwp-mtls` label and Ingress class plus four
+per-hostname Cloudflare controls. `scripts/register-tunnel-hostname.py`
+converges them in this order:
 
-- neither tunnel has a DNS route, so no hostname resolves to either connector;
-- the `nwp-mtls` client-certificate configuration is not chosen or applied, so
-  the protected zone is currently protected only by having no DNS route.
+1. add the zone mTLS hostname association;
+2. add the hostname to the existing multi-domain Access application;
+3. add the hostname to the WAF client-certificate block rule;
+4. create the explicit CNAME to the mTLS tunnel.
 
-Until both land, `nwp-mtls` must be treated as unproven, not as protected.
+DNS is last. Once the public wildcard has been provisioned, it receives the
+request until the explicit CNAME exists, but the public proxy does not watch an
+mTLS-class Ingress and cannot select an mTLS-labelled pod. The request
+therefore cannot reach the protected origin.
+Removal reverses the safety boundary: the script deletes every stale mTLS CNAME
+first, then narrows the association, Access domains, and WAF rule in that
+order. Its offline fake-client selftest asserts the exact write order for add,
+remove, and reconcile-with-drop paths; that is not evidence of live edge state.
+
+The mTLS connector is configured to require a valid Access JWT for the intended
+`nwp-mtls` Access application (`9bea7759-a20e-4496-afb5-efb454eeec50`) on every
+request. Its aud is pinned in
+`clusters/talos-cluster/apps/cloudflared-nwp-mtls/configmap.yaml`. The
+registration script updates only the application's multi-domain fields and
+fails closed unless the live application is self-hosted and has an allow
+policy containing a nonempty email-domain or OTP include rule.
+
+This offline change does not prove that the pinned aud belongs to that live
+application or that its live OTP, certificate, and WAF controls are active.
+
+### Register, remove, or reconcile protected hostnames
+
+These are owner-gated edge operations. Use the registration script with
+`--tier mtls` and one or more hostnames; add `--dry-run` to inspect the plan or
+`--remove` to deregister them. Use `--reconcile`, optionally with `--dry-run`,
+to derive the full desired set from the cluster. Consult the script's `--help`
+output before an approved run. No registration, removal, or reconciliation
+command was executed against the edge in this offline change window.
+
+`--reconcile` derives the desired set only from Ingresses in namespaces labelled
+`nwarila.io/tenant=true`, using class `cf-tunnel-nwp-mtls`, then pins the mTLS
+canary. Malformed hostnames are reported and skipped so one bad Ingress does
+not hide valid desired hosts. A reserved hostname makes the reconciliation
+fail before any write.
+
+A direct registration keeps `tmp.nickwarila.com` registered until explicit
+removal or a later reconciliation omits it. Only a live eligible Ingress
+preserves it across reconciliations. No scheduler is added in this change;
+`--reconcile` is operator-invoked until the follow-up reconciler exists.
+
+The script refuses the zone apex and the reserved names `kasm`, `www`,
+`autoconfig`, and `localhost` on every input path. If `kasm.nickwarila.com` is
+already present in the mTLS association it is preserved, but the script never
+adds it. An existing DNS record is updated only when it is a CNAME already
+pointing to one of the two NWP tunnel targets.
+
+The token comes from `CLOUDFLARE_API_TOKEN` or
+`~/.cloudflare/api-token` and is never printed. Every planned or applied change
+prints its before and after state.
 
 ## Reconcile And Prove The Rollout
 
-```bash
-flux reconcile kustomization flux-system -n flux-system --with-source
-flux reconcile kustomization traefik-nwp-public -n flux-system
-flux reconcile kustomization traefik-nwp-mtls -n flux-system
-flux reconcile kustomization kyverno-policies -n flux-system
-kubectl rollout status deployment/cloudflared-nwp-public -n cloudflared-nwp-public --timeout=10m
-kubectl rollout status deployment/cloudflared-nwp-mtls -n cloudflared-nwp-mtls --timeout=10m
-kubectl rollout status deployment/traefik-nwp-public -n traefik-nwp-public --timeout=10m
-kubectl rollout status deployment/traefik-nwp-mtls -n traefik-nwp-mtls --timeout=10m
-```
+After an approved Git deployment, reconcile Flux and wait for the two NWP
+connector Deployments whose `configRevision` changed. Separately confirm both
+Traefik Deployments remain Ready, both IngressClasses retain the stock
+controller without a default-class annotation, and the hwg connector and proxy
+pod identities did not change. Exact commands and captured results belong in
+the deployment change evidence; this offline window did not deploy anything.
 
-All four Deployments must report two Ready pods. Confirm both hand-authored
-classes carry the stock controller string and no default-class annotation:
+## Owner-Gated One-Time Public DNS
+
+The public wildcard and public canary require these one-time routes. They were
+not executed in this offline change window:
 
 ```bash
-for class in cf-tunnel-nwp-public cf-tunnel-nwp-mtls; do
-  kubectl get ingressclass "${class}" -o json | jq -e '
-    .spec.controller == "traefik.io/ingress-controller" and
-    (.metadata.annotations["ingressclass.kubernetes.io/is-default-class"] == null)
-  '
-done
+cloudflared tunnel route dns 1f59f78a-16f8-4e3c-8567-de0235e39871 '*.nickwarila.com'
+cloudflared tunnel route dns 1f59f78a-16f8-4e3c-8567-de0235e39871 canary-nwp-public.nickwarila.com
 ```
 
-Confirm the hwg tunnel is untouched — its connector and proxy must not have
-rolled:
-
-```bash
-kubectl get pods -n cloudflared-hwg -l app.kubernetes.io/instance=hwg -o wide
-kubectl get pods -n traefik-hwg -l nwarila.io/tunnel-proxy=hwg -o wide
-```
-
-## Owner-Gated: DNS Routes
-
-Not yet run. Each command claims the wildcard for one tunnel; the more specific
-`*.secure` wildcard must exist before or with the broader one, so protected
-hostnames never transit the unprotected connector:
-
-```bash
-cloudflared tunnel route dns fb6932d9-c6e4-4ccb-8e4c-dee47aa05313 '*.secure.nicholaswarila.com'
-cloudflared tunnel route dns fb6932d9-c6e4-4ccb-8e4c-dee47aa05313 canary-nwp-mtls.secure.nicholaswarila.com
-cloudflared tunnel route dns 1f59f78a-16f8-4e3c-8567-de0235e39871 '*.nicholaswarila.com'
-cloudflared tunnel route dns 1f59f78a-16f8-4e3c-8567-de0235e39871 canary-nwp-public.nicholaswarila.com
-```
-
-Record any pre-existing answer for each owner name before changing it; the
-tunnel command cannot reconstruct a replaced record:
-
-```bash
-dig +noall +answer '*.nicholaswarila.com' A
-dig +noall +answer '*.secure.nicholaswarila.com' A
-```
-
-Add `--overwrite-dns` only for a name that already exists, and only after its
-current answer is recorded in the change evidence.
-
-## Owner-Gated: Client-Certificate Enforcement
-
-Deferred pending a decision, and pending access to inspect how the existing
-account already does this. Both candidate mechanisms are edge-side and need no
-in-cluster change:
-
-- **Zero Trust Access mTLS** — upload a root CA under Access controls > Service
-  credentials > Mutual TLS, list the protected FQDNs as associated hostnames,
-  and write an Access policy using the `Valid Certificate` or `Common Name`
-  selector. Accepts a self-signed or private CA, so Vault PKI can be the
-  issuer, which matches ADR-0013.
-- **Zone client certificates** — enable mTLS for the hostname under
-  SSL/TLS > Client Certificates and enforce it with a WAF custom rule. Bringing
-  your own CA on this path is Enterprise-only, so Cloudflare's managed CA would
-  issue the client certificates instead of Vault.
-
-Hostname associations are per-FQDN, not wildcards. Whichever mechanism is
-chosen, decide before first use whether the protected tier keeps the hwg
-zero-touch property (any subdomain, no platform edit) by automating hostname
-association through the Cloudflare API, or accepts per-hostname registration.
+Do not add `--overwrite-dns`. The work order records that neither name exists;
+the operator must still recheck immediately before an approved execution.
 
 ## Canary Proof
 
-After the DNS routes exist, both canaries must answer 418 from the built-in
-responder with no origin behind them. Use a unique query value so no cached
-response is reused:
+After the owner-gated public DNS commands run, probe the public canary with a
+unique query value. The built-in responder should answer `418` without an
+origin behind it.
 
-```bash
-curl -sS -o /dev/null -w '%{http_code}\n' \
-  "https://canary-nwp-public.nicholaswarila.com/?nwp=$(date +%s)"
-curl -sS -o /dev/null -w '%{http_code}\n' \
-  "https://canary-nwp-mtls.secure.nicholaswarila.com/?nwp=$(date +%s)"
-```
+The registration script is designed to manage
+`canary-nwp-mtls.nickwarila.com`. Without a client certificate, the intended
+WAF result is `403`; with a certificate and successful Access authentication,
+the intended connector response is `418`. Both expectations are **UNPROVEN**
+until an approved live run reaches and verifies the WAF and connector steps.
+Do not interpret any current response as proof of mTLS posture from this
+offline change alone.
 
-Once client-certificate enforcement is live, the second request must instead
-fail without a client certificate and return 418 with one. A protected canary
-that still answers 418 to an unauthenticated client means enforcement is not
-in effect.
+## DNS Layout
 
-## Publishing An App
-
-In the `deploy-platform-canary` tenant repository, an app needs exactly two
-things and no platform edit:
-
-1. `nwarila.io/tunnel-exposed: nwp-public` or `nwarila.io/tunnel-exposed:
-   nwp-mtls` on its pod template, serving TCP 8080; and
-2. an Ingress using the matching class, a host inside that tunnel's zone, at
-   least one HTTP path, and a numeric Service backend port of 8080.
-
-The label and the class must name the same tunnel. Mismatching them yields a
-route with no reachable origin rather than a cross-tier leak: admission accepts
-the Ingress because the class is registered to the org, but the proxy's egress
-policy does not select the pod.
+| Name | Points at | Managed by |
+|---|---|---|
+| `*.nickwarila.com` | intended `nwp-public` tunnel target | owner-gated one-time command above |
+| `canary-nwp-public.nickwarila.com` | intended `nwp-public` tunnel target | owner-gated one-time command above |
+| `canary-nwp-mtls.nickwarila.com` | intended `nwp-mtls` tunnel target | register script |
+| `tmp.nickwarila.com` | intended `nwp-mtls` target while desired | register script |
+| `guacd.nickwarila.com` | intended `nwp-mtls` target while desired | register script |
+| `kasm.nickwarila.com` | external to this automation | reserved; existing association preserved |
 
 ## Rollback
 
-Revert the Git change and reconcile Flux. That prunes both connectors, both
-proxies, both classes, their scoped RBAC, both sides of each network-policy
-contract, and the per-tunnel entries in the tenant template, while restoring
-`restrict-tunnel-binding` and `restrict-tunnel-hostnames` to their hwg-only
-form. The hwg tunnel is untouched throughout; assert its empty diff.
+Revert this Git change and reconcile Flux to restore the previous connector
+route tables and admission zones. Before permanently removing an mTLS hostname,
+run the registration script's dry-run and approved removal; it deletes the
+explicit DNS record before dropping its three edge controls. Reverting Git does
+not delete Cloudflare tunnels or DNS records.
 
-Reverting Git does not delete the Cloudflare tunnels or any DNS route. Remove
-those explicitly if the rollback is permanent:
-
-```bash
-cloudflared tunnel delete nwp-public
-cloudflared tunnel delete nwp-mtls
-```
-
-Deleting a tunnel does not remove its DNS records; delete those through the
-zone's DNS provider or they become dangling CNAMEs to a dead tunnel.
+Do not remove `tmp.nickwarila.com` unless it is absent from the desired mTLS
+Ingress set and its registration is intentionally retired. Do not pass any
+reserved hostname to the script.

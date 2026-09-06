@@ -1,0 +1,17 @@
+[extend]
+useDefault = true
+
+# `fb6932d9-c6e4-4ccb-8e4c-dee47aa05313` identifies the Cloudflare `nwp-mtls`
+# tunnel. It is public resource metadata, not a credential, and is already public
+# on `main` in `clusters/talos-cluster/apps/cloudflared-nwp-mtls/configmap.yaml`.
+# `9bea7759-a20e-4496-afb5-efb454eeec50` identifies the Cloudflare Access
+# application. It is public resource metadata, not a credential.
+# The real Cloudflare tunnel credentials are SOPS-encrypted in the
+# `clusters/talos-cluster/apps/cloudflared-*/tunnel-credentials.sops.yaml` files
+# as `ENC[AES256_GCM,...]` values.
+[[allowlists]]
+description = "Cloudflare tunnel ID and Access application ID"
+regexes = [
+  '''^fb6932d9-c6e4-4ccb-8e4c-dee47aa05313$''',
+  '''^9bea7759-a20e-4496-afb5-efb454eeec50$''',
+]

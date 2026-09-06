@@ -1,11 +1,11 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: cloudflared-hwg
-  namespace: cloudflared-hwg
+  name: cloudflared-tunnelplaceholder
+  namespace: cloudflared-tunnelplaceholder
 spec:
   maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: cloudflared
-      app.kubernetes.io/instance: hwg
+      app.kubernetes.io/instance: tunnelplaceholder

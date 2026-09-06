@@ -1,13 +1,13 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: cloudflared-hwg-egress
-  namespace: cloudflared-hwg
+  name: cloudflared-tunnelplaceholder-egress
+  namespace: cloudflared-tunnelplaceholder
 spec:
   endpointSelector:
     matchLabels:
       app.kubernetes.io/name: cloudflared
-      app.kubernetes.io/instance: hwg
+      app.kubernetes.io/instance: tunnelplaceholder
   egress:
     - toEndpoints:
         - matchLabels:
@@ -34,16 +34,8 @@ spec:
               protocol: UDP
     - toEndpoints:
         - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": hello-hwg
-            "k8s:app.kubernetes.io/name": hello-hwg
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
-    - toEndpoints:
-        - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": traefik-hwg
-            "k8s:nwarila.io/tunnel-proxy": hwg
+            "k8s:io.kubernetes.pod.namespace": traefik-tunnelplaceholder
+            "k8s:nwarila.io/tunnel-proxy": tunnelplaceholder
       toPorts:
         - ports:
             - port: "8000"

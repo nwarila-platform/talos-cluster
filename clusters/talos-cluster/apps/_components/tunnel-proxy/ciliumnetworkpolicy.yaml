@@ -1,18 +1,18 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: traefik-nwp-mtls-network
-  namespace: traefik-nwp-mtls
+  name: traefik-tunnelplaceholder-network
+  namespace: traefik-tunnelplaceholder
 spec:
   endpointSelector:
     matchLabels:
-      nwarila.io/tunnel-proxy: nwp-mtls
+      nwarila.io/tunnel-proxy: tunnelplaceholder
   ingress:
     - fromEndpoints:
         - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": cloudflared-nwp-mtls
+            "k8s:io.kubernetes.pod.namespace": cloudflared-tunnelplaceholder
             "k8s:app.kubernetes.io/name": cloudflared
-            "k8s:app.kubernetes.io/instance": nwp-mtls
+            "k8s:app.kubernetes.io/instance": tunnelplaceholder
       toPorts:
         - ports:
             - port: "8000"
@@ -31,8 +31,8 @@ spec:
     # the sibling tunnel's proxy in the same tenant namespace.
     - toEndpoints:
         - matchLabels:
-            "k8s:io.kubernetes.pod.namespace": nwp-1306985678
-            "k8s:nwarila.io/tunnel-exposed": "nwp-mtls"
+            "k8s:io.kubernetes.pod.namespace": tenantnsplaceholder
+            "k8s:nwarila.io/tunnel-exposed": "tunnelplaceholder"
       toPorts:
         - ports:
             - port: "8080"

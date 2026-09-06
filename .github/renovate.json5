@@ -65,10 +65,9 @@
     ],
   },
   kubernetes: {
-    // Every per-tunnel connector, not just the first one. A new
-    // cloudflared-<tunnel> directory must not silently fall out of digest
-    // management.
-    managerFilePatterns: ["/^clusters/talos-cluster/apps/cloudflared-[^/]+/deployment\\.ya?ml$/"],
+    // The single shared connector Deployment; every cloudflared-<tunnel>
+    // overlay renders from it, so one pin covers every tunnel.
+    managerFilePatterns: ["/^clusters/talos-cluster/apps/_components/tunnel-connector/deployment\\.ya?ml$/"],
   },
   packageRules: [
     {
