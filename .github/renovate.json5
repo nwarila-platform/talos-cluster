@@ -65,9 +65,11 @@
     ],
   },
   kubernetes: {
-    // The single shared connector Deployment; every cloudflared-<tunnel>
-    // overlay renders from it, so one pin covers every tunnel.
-    managerFilePatterns: ["/^clusters/talos-cluster/apps/_components/tunnel-connector/deployment\\.ya?ml$/"],
+    // Workload manifests with deliberate third-party image digest pins.
+    managerFilePatterns: [
+      "/^clusters/talos-cluster/apps/_components/tunnel-connector/deployment\\.ya?ml$/",
+      "/^clusters/talos-cluster/apps/dr-(?:etcd-)?backup/cronjob\\.ya?ml$/",
+    ],
   },
   packageRules: [
     {

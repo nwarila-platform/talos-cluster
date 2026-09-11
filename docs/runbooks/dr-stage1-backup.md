@@ -15,17 +15,20 @@ Longhorn NFS backup protocol is kept.
 
 The data path is:
 
-1. Vault uses Longhorn volumes through the `longhorn-vault` StorageClass (ADR-0013).
-   No Vault Raft snapshots are retained today, so these Longhorn volume backups are
-   the current Vault DR artifact — treat them as crown-jewel-class.
-2. The `vault-daily-backup` Longhorn RecurringJob backs up matching volumes.
-3. Longhorn writes backup data to
+1. Vault uses Longhorn volumes through the `longhorn-vault` StorageClass (ADR-0013),
+   and `vault-daily-backup` retains crash-consistent backups of those data volumes.
+2. The `vault-raft-snapshot` CronJob authenticates with the snapshot-only Vault
+   role, captures a Raft snapshot, validates it, and whole-file encrypts it with
+   SOPS/age onto the `vault-raft-snapshots` PVC.
+3. The EXISTING approved `vault-daily-backup` Longhorn RecurringJob (cron `17 8 * * *`, retain 14), to which the
+   new StorageClass assigns the artifact volume via `recurringJobSelector`, backs up that encrypted
+   artifact volume at 08:17 UTC, ~5 h after the latest permitted CronJob completion (03:15 worst case).
+4. Longhorn writes both backup paths to
    `nfs://10.69.128.115:/volume1/longhorn-backup?nfsOptions=nfsvers=4.1,actimeo=1`.
-4. The NFS server is the Synology `TCNHQ-BKUP01` (RS3621rpxs, DSM 7.2.1), a Btrfs
-   volume on RAID6, on its own storage VLAN `10.69.128.0/24`. It is an always-on
-   appliance (redundant PSU), not session-bound like the retired WSL target.
-5. Access is controlled by a per-node-IP NFS export on the NAS plus the `dr-backup`
-   egress CiliumNetworkPolicy; the mount is pinned to NFSv4.1.
+5. The NFS server is the Synology `TCNHQ-BKUP01` (RS3621rpxs, DSM 7.2.1), a Btrfs
+   volume on RAID6, on its own storage VLAN `10.69.128.0/24`.
+6. Access is controlled by a per-node-IP NFS export on the NAS plus scoped Cilium
+   egress; NFS is pinned to v4.1.
 
 The Synology is a shared production appliance (it also serves an ESXi datastore and
 Active Backup for Business / M365 / Google backups). Everything here is confined to

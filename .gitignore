@@ -76,6 +76,9 @@
 !/clusters/talos-cluster/apps/dr-backup/ciliumnetworkpolicy-egress.yaml
 !/clusters/talos-cluster/apps/dr-backup/vault-ingress.yaml
 !/clusters/talos-cluster/apps/dr-backup/vault-ca-configmap.yaml
+!/clusters/talos-cluster/apps/dr-backup/pvc.yaml
+!/clusters/talos-cluster/apps/dr-backup/configmap-snapshot-script.yaml
+!/clusters/talos-cluster/apps/dr-backup/cronjob.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/
 !/clusters/talos-cluster/apps/dr-etcd-backup/kustomization.yaml
 !/clusters/talos-cluster/apps/dr-etcd-backup/namespace.yaml
@@ -252,6 +255,7 @@
 !/clusters/talos-cluster/apps/longhorn-vault-storage/node-tags.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/recurringjob-vault-backup.yaml
 !/clusters/talos-cluster/apps/longhorn-vault-storage/storageclass.yaml
+!/clusters/talos-cluster/apps/longhorn-vault-storage/storageclass-vault-snapshot.yaml
 !/clusters/talos-cluster/apps/longhorn-etcd-storage/
 !/clusters/talos-cluster/apps/longhorn-etcd-storage/kustomization.yaml
 !/clusters/talos-cluster/apps/longhorn-etcd-storage/storageclass.yaml

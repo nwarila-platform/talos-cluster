@@ -16,7 +16,7 @@
 etcd snapshots are captured **in-cluster** by a daily Flux-reconciled CronJob
 (`clusters/talos-cluster/apps/dr-etcd-backup/`): a restricted pod saves a
 snapshot over apid with a role-scoped `os:etcd:backup` talosconfig, whole-file
-encrypts it to a dedicated age recipient whose private key is escrowed
+encrypts it to the shared DR snapshot age recipient whose private key is escrowed
 off-cluster, and lands it on a Longhorn volume that the `etcd-daily-backup`
 RecurringJob ships to the Stage-1 Synology target. This completes the etcd leg
 of [ADR-0014](0014-use-stage-1-local-backup-server-for-dr.md) and retires the
@@ -125,8 +125,8 @@ Chosen option: **Option 1.**
   mostly-detached volume. Both guard layers of the restore-validator boundary
   allowlist exactly the two backup RecurringJobs by name and pin
   `spec.task: backup`.
-- **Key management**: a dedicated age keypair, generated 2026-07-11. The
-  cluster holds only the **public** recipient (an environment value on the
+- **Key management**: the shared DR snapshot age keypair, generated 2026-07-11. The
+  dr-etcd-backup and dr-backup workloads hold only the **public** recipient (an environment value on the
   CronJob) — it cannot decrypt its own archives. The private key is escrowed
   twice: raw to Stage-0 S3 (staged at `.s3/secrets/etcd-snapshot-age.agekey`),
   and repo-key-encrypted at `docs/dr-escrow/etcd-snapshot-age-key.sops.yaml`

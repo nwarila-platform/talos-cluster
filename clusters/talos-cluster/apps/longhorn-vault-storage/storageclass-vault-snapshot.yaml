@@ -1,0 +1,21 @@
+# StorageClass for encrypted Vault Raft snapshot artifacts.
+#
+# Volumes provisioned here are bound directly to the existing approved
+# vault-daily-backup RecurringJob. Omitting nodeSelector avoids a forced
+# co-location constraint with Vault-tagged nodes; it does not guarantee
+# physical separation from the Vault data replicas.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-vault-snapshot
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "3"
+  fsType: ext4
+  dataLocality: disabled
+  recurringJobSelector: '[{"name":"vault-daily-backup","isGroup":false}]'

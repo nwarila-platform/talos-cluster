@@ -1,0 +1,88 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-raft-snapshot
+  namespace: dr-backup
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: dr-backup
+            app.kubernetes.io/component: backup
+        spec:
+          serviceAccountName: dr-backup
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: snapshot
+              image: ghcr.io/getsops/sops@sha256:0bc8915bce25ea3bf0f3e27a74cb5ad092488e6e5245af384816d628ed7fd426
+              command: ["/bin/sh", "/opt/vault-snapshot/snapshot.sh"]
+              env:
+                - name: VAULT_ADDR
+                  value: https://vault.deploy-vault.svc.cluster.local:8200
+                - name: VAULT_CACERT
+                  value: /vault-ca/ca.crt
+                - name: AGE_RECIPIENT
+                  value: age18scjc2mepug263cnqmkxe6drne6mqs5h77y9j3fh3fuxshxesuhsyh0vhx
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: data
+                  mountPath: /data
+                - name: script
+                  mountPath: /opt/vault-snapshot
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: vault-ca
+                  mountPath: /vault-ca
+                  readOnly: true
+                - name: sa-token
+                  mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                  readOnly: true
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: data
+              persistentVolumeClaim:
+                claimName: vault-raft-snapshots
+            - name: script
+              configMap:
+                name: vault-snapshot-script
+                defaultMode: 0555
+            - name: tmp
+              emptyDir: {}
+            - name: vault-ca
+              configMap:
+                name: vault-ca
+            - name: sa-token
+              projected:
+                defaultMode: 0440
+                sources:
+                  - serviceAccountToken:
+                      path: token
+                      expirationSeconds: 600

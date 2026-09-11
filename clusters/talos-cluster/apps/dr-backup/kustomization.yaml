@@ -7,3 +7,6 @@ resources:
   - ciliumnetworkpolicy-egress.yaml
   - vault-ingress.yaml
   - vault-ca-configmap.yaml
+  - pvc.yaml
+  - configmap-snapshot-script.yaml
+  - cronjob.yaml

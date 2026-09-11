@@ -2,24 +2,22 @@
 # kustomization: the cluster must hold only the PUBLIC half of this key
 # (encrypt-only). Applying the private half in-cluster would let anyone who
 # compromises the cluster (or the shared Synology target plus the cluster)
-# decrypt every archived etcd snapshot.
+# decrypt every archived etcd and Vault snapshot.
 #
-# What this is: the dedicated age identity that the dr-etcd-backup CronJob
-# encrypts etcd snapshots TO (recipient
+# What this is: the shared DR snapshot age identity used by both the
+# dr-etcd-backup and dr-backup CronJobs (recipient
 # age18scjc2mepug263cnqmkxe6drne6mqs5h77y9j3fh3fuxshxesuhsyh0vhx).
-# Encrypted here with the repository SOPS age recipient, so decrypting this
-# file requires the repo age key (in-cluster sops-age Secret /
-# .s3/secrets/age.agekey / Stage-0). The RAW key is also escrowed at
-# .s3/secrets/etcd-snapshot-age.agekey -> S3 Stage-0 (owner sync).
+# The legacy filename and stringData key retain their etcd-specific names to
+# avoid rewriting encrypted escrow material. Disclosure of this identity
+# decrypts both etcd and Vault snapshot archives.
 #
-# Dead-cluster restore path:
-#   1. Fetch this key: S3 Stage-0 copy, or `sops -d` this file with the
-#      Stage-0 repo age key.
-#   2. Pull the newest etcd-<stamp>.db.sops.json from the Synology Longhorn
-#      backup (or the live PVC).
-#   3. SOPS_AGE_KEY_FILE=<this key> sops -d --input-type json \
-#        --output-type binary etcd-<stamp>.db.sops.json > etcd.db
-#   4. talosctl bootstrap --recover-from=etcd.db (see the DR runbook).
+# It is encrypted here with the repository SOPS age recipient. The raw identity
+# is also escrowed at .s3/secrets/etcd-snapshot-age.agekey in Stage-0.
+#
+# Dead-cluster restore: obtain this identity from Stage-0 or decrypt this file;
+# decrypt the selected *.sops.json with `sops --decrypt --input-type json
+# --output-type binary`; then follow the artifact-specific etcd or Vault restore
+# runbook. Never apply this private identity to the cluster.
 kind: EscrowedAgeKey
 stringData:
     etcd-snapshot-age.agekey: ENC[AES256_GCM,data:PUxFbu1gedaIpiMcde9c2CgEmySUectk+juiraPtLVH0sFL+tSKkpWP0SA3Jaoy+PeghqmQZAeoyqCeCrfKM13O5HEge6YAOp1G+LWNemvialgDJEg2dJBY3TUFLSnKzHfEcqINAkNTV6Y+XPKQGxBROAfwOjBdgALoZg6Vtf5rCQyO4TwDE8VsljXxUEc4QtYYazTHdhE2EffCI9WOfIBq1joBAKJVAr5miYaPhEyMnm4mmDIlSMw==,iv:9SF8w2Z7J58EigsS6rEMpIJh7txnOYCnZoqzsrDHIk4=,tag:OAqCxvPoIZyfL/sLYpQ5ZA==,type:str]

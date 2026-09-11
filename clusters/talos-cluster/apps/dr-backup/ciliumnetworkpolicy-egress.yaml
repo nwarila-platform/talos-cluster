@@ -20,6 +20,9 @@ spec:
           rules:
             dns:
               - matchName: vault.deploy-vault.svc.cluster.local
+              # Only the active node serves a Raft snapshot, so the client must
+              # follow Vault's 307 to vault-N.vault-internal.deploy-vault.svc.cluster.local.
+              - matchPattern: "*.vault-internal.deploy-vault.svc.cluster.local"
     - toServices:
         - k8sService:
             serviceName: vault
