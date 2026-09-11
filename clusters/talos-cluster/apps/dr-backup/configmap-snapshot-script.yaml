@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-snapshot-script
+  namespace: dr-backup
+data:
+  snapshot.sh: |
+    #!/bin/sh
+    set -eu
+    umask 077
+    LC_ALL=C
+    export LC_ALL
+    cd /work
+
+    TOKEN_PATH=/var/run/secrets/kubernetes.io/serviceaccount/token
+    LOGIN_BODY=/work/login-response.json
+    SNAP=/work/vault-raft.snap
+    PARTIAL=
+
+    fatal() {
+      echo "FATAL: $*" >&2
+      exit 1
+    }
+    cleanup() {
+      rm -f -- "$LOGIN_BODY" "$SNAP"
+      if [ -n "$PARTIAL" ]; then
+        rm -f -- "$PARTIAL"
+      fi
+    }
+    trap cleanup 0
+    trap 'exit 1' HUP INT TERM
+
+    JWT=$(cat "$TOKEN_PATH")
+    [ -n "$JWT" ] || fatal "projected service-account token is empty"
+    if LOGIN_CODE=$(
+      printf '{"role":"vault-snapshot-backup","jwt":"%s"}' "$JWT" |
+        curl --proto '=https' --tlsv1.2 --silent --show-error \
+          --connect-timeout 10 --max-time 60 \
+          --cacert "$VAULT_CACERT" \
+          --header 'Content-Type: application/json' \
+          --data-binary @- \
+          --output "$LOGIN_BODY" --write-out '%{http_code}' \
+          "$VAULT_ADDR/v1/auth/kubernetes/login"
+    ); then
+      :
+    else
+      CURL_RC=$?
+      fatal "Vault login curl failed (rc=$CURL_RC)"
+    fi
+    unset JWT
+    echo "login_http_code=$LOGIN_CODE"
+    [ "$LOGIN_CODE" = 200 ] || fatal "Vault Kubernetes login returned HTTP $LOGIN_CODE"
+    TOKEN=$(sed -n 's/^.*"client_token"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*$/\1/p' "$LOGIN_BODY")
+    rm -f -- "$LOGIN_BODY"
+    [ -n "$TOKEN" ] || fatal "Vault Kubernetes login returned HTTP 200 without client_token"
+
+    if SNAP_CODE=$(
+      curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+        --silent --show-error --location --max-redirs 1 \
+        --connect-timeout 10 --max-time 600 \
+        --cacert "$VAULT_CACERT" \
+        --header "X-Vault-Token: $TOKEN" \
+        --output "$SNAP" --write-out '%{http_code}' \
+        "$VAULT_ADDR/v1/sys/storage/raft/snapshot"
+    ); then
+      :
+    else
+      CURL_RC=$?
+      fatal "Vault snapshot curl failed (rc=$CURL_RC)"
+    fi
+    unset TOKEN
+    echo "snapshot_http_code=$SNAP_CODE"
+    [ "$SNAP_CODE" = 200 ] || fatal "Vault snapshot returned HTTP $SNAP_CODE"
+    [ -s "$SNAP" ] || fatal "$SNAP missing or empty"
+    gzip -t "$SNAP" || fatal "$SNAP is not a valid gzip stream"
+    SIZE=$(stat -c%s "$SNAP")
+    MIN_BYTES=50000
+    [ "$SIZE" -ge "$MIN_BYTES" ] || fatal "snapshot is $SIZE bytes (< $MIN_BYTES)"
+    echo "snapshot_bytes=$SIZE"
+
+    STAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
+    OUT="/data/vault-raft-$STAMP.snap.sops.json"
+    PARTIAL="$OUT.partial"
+    [ ! -e "$OUT" ] || fatal "refusing to overwrite existing $OUT"
+    sops --encrypt --age "$AGE_RECIPIENT" \
+      --input-type binary --output-type json "$SNAP" > "$PARTIAL"
+    [ -s "$PARTIAL" ] || fatal "sops produced an empty ciphertext"
+    mv -- "$PARTIAL" "$OUT"
+    PARTIAL=
+    echo "encrypted: $SIZE bytes -> $OUT ($(stat -c%s "$OUT") bytes)"
+
+    ls -1 /data/vault-raft-*.snap.sops.json | sort | head -n -14 | while read -r old; do
+      rm -- "$old"
+      echo "pruned: $old"
+    done
+
+    df -k /data | tail -1

@@ -665,13 +665,13 @@ Stage-0 S3 storage holds rebuild-critical secrets and access material only.
 Operational state ships to the Stage-1 Synology backup target
 ([ADR-0014](docs/decision-records/repo/0014-use-stage-1-local-backup-server-for-dr.md),
 [ADR-0021](docs/decision-records/repo/0021-synology-nfs-backup-target-for-longhorn.md)):
-Longhorn volume backups daily (Vault data included), and etcd snapshots via the
-in-cluster `dr-etcd-backup` CronJob
-([ADR-0026](docs/decision-records/repo/0026-in-cluster-etcd-snapshot-pipeline.md))
-- captured with a snapshot-only Talos role, whole-file encrypted to an
-off-cluster-escrowed age key, landed on a Longhorn volume, and shipped by the
-`etcd-daily-backup` RecurringJob. The ADR-0006-era GitHub Actions S3 workflow
-is retired (deleted; it never ran successfully).
+Longhorn volume backups run daily for Vault data. In addition, restricted
+in-cluster CronJobs capture etcd and Vault Raft snapshots, whole-file encrypt
+them to the shared off-cluster-escrowed DR snapshot age key, land them on
+Retain-class Longhorn volumes, and ship those volumes to Stage-1 through the
+`vault-daily-backup` and `etcd-daily-backup` RecurringJobs — the allowlist is UNCHANGED and remains exactly those two names. The
+ADR-0006-era GitHub Actions S3 workflow is retired (deleted; it never ran
+successfully).
 
 Restore is not accepted as working until it is drilled. Use
 [Backup And DR Restore Drill](docs/runbooks/restore-drill-backup-dr.md) for the

@@ -252,6 +252,10 @@ Source files verified for this diagram:
 `clusters/talos-cluster/apps/dr-backup/namespace.yaml`,
 `clusters/talos-cluster/apps/dr-backup/serviceaccount.yaml`,
 `clusters/talos-cluster/apps/dr-backup/ciliumnetworkpolicy-egress.yaml`,
+`clusters/talos-cluster/apps/dr-backup/pvc.yaml`,
+`clusters/talos-cluster/apps/dr-backup/configmap-snapshot-script.yaml`,
+`clusters/talos-cluster/apps/dr-backup/cronjob.yaml`,
+`clusters/talos-cluster/apps/longhorn-vault-storage/storageclass-vault-snapshot.yaml`,
 `clusters/talos-cluster/apps/vault/vault-config/auth/kubernetes/roles/vault-snapshot-backup.json`,
 `clusters/talos-cluster/apps/vault/vault-config/policies/vault-snapshot-backup.hcl`,
 `clusters/talos-cluster/apps/vault-restore-validator/README.md`,
@@ -278,16 +282,18 @@ flowchart TD
     VaultPVC["Vault StatefulSet data PVCs<br/>storageClassName longhorn-vault<br/>Raft storage at /vault/data"]
     LonghornVault["StorageClass longhorn-vault<br/>3 replicas, nodeSelector vault"]
     VaultDailyBackup["Longhorn RecurringJob vault-daily-backup<br/>backup cron 17 8 daily, retain 14"]
+    VaultSnapshotRole["vault-snapshot-backup role and policy<br/>read sys/storage/raft/snapshot"]
+    VaultSnapshotCron["CronJob vault-raft-snapshot in dr-backup<br/>02:00 daily, HTTP login plus leader redirect"]
+    VaultRaftSnapshots["PVC vault-raft-snapshots<br/>14 age-encrypted local dailies"]
+    VaultSnapshotSC["StorageClass longhorn-vault-snapshot<br/>recurringJobSelector -> existing vault-daily-backup"]
     Synology["TCNHQ-BKUP01 Synology NFS<br/>10.69.128.115:/volume1/longhorn-backup<br/>Btrfs RAID6 with immutable snapshots"]
-    CurrentVaultDR["Current Vault DR artifact<br/>Longhorn volume backups<br/>no retained Raft snapshots today"]
+    CurrentVaultDR["Current Vault DR artifacts<br/>age-encrypted Raft snapshots<br/>plus Vault data-volume backups"]
     EtcdCronJob["CronJob etcd-snapshot in dr-etcd-backup<br/>talosctl os:etcd:backup role, 03:00 daily<br/>whole-file age encryption, escrowed key"]
     EtcdPVC["PVC etcd-snapshots<br/>storageClassName longhorn-etcd-snapshot<br/>14 encrypted local dailies"]
     EtcdDailyBackup["Longhorn RecurringJob etcd-daily-backup<br/>backup cron 47 3 daily, retain 14<br/>detached-volume backup enabled"]
   end
 
   subgraph NotLive["Accepted or present, but NOT LIVE"]
-    VaultSnapshotRole["vault-snapshot-backup role and policy<br/>read sys/storage/raft/snapshot"]
-    VaultRaftSnapshots["Vault Raft snapshots<br/>none retained today"]
     RestoreValidator["CronJob dr-restore-driver<br/>suspend true<br/>schedule 0 6 31 2 *"]
     ValidatorGuard["VAP plus Kyverno Audit guard<br/>scratch volume only; boundary protected"]
     FutureValidator["Deferred validator slices<br/>scratch Vault, generate-root,<br/>signed results, live schedule"]
@@ -298,18 +304,21 @@ flowchart TD
   VaultPVC --> LonghornVault
   LonghornVault --> VaultDailyBackup
   VaultDailyBackup --> Synology
+  VaultSnapshotRole --> VaultSnapshotCron
+  VaultSnapshotCron --> VaultRaftSnapshots
+  VaultRaftSnapshots --> CurrentVaultDR
+  VaultRaftSnapshots --> VaultSnapshotSC
+  VaultSnapshotSC --> VaultDailyBackup
   Synology --> CurrentVaultDR
 
   EtcdCronJob --> EtcdPVC
   EtcdPVC --> EtcdDailyBackup
   EtcdDailyBackup --> Synology
-  VaultSnapshotRole -. "foundation only; no scheduled capture" .-> VaultRaftSnapshots
-  VaultRaftSnapshots -. "not current Vault DR source" .-> CurrentVaultDR
   RestoreValidator -. "inert and owner-supervised only" .-> ValidatorGuard
   ValidatorGuard -. "go-live requires later slices" .-> FutureValidator
 
   classDef live fill:#eaf5ea,stroke:#2e7d32,stroke-width:2px;
   classDef notlive fill:#fff8e1,stroke:#8a6d00,stroke-width:2px,stroke-dasharray: 5 5;
-  class Stage0Local,S3Sync,S3Bucket,VaultPVC,LonghornVault,VaultDailyBackup,Synology,CurrentVaultDR,EtcdCronJob,EtcdPVC,EtcdDailyBackup,LiveLegend live;
-  class VaultSnapshotRole,VaultRaftSnapshots,RestoreValidator,ValidatorGuard,FutureValidator,NotLiveLegend notlive;
+  class Stage0Local,S3Sync,S3Bucket,VaultPVC,LonghornVault,VaultDailyBackup,VaultSnapshotRole,VaultSnapshotCron,VaultRaftSnapshots,VaultSnapshotSC,Synology,CurrentVaultDR,EtcdCronJob,EtcdPVC,EtcdDailyBackup,LiveLegend live;
+  class RestoreValidator,ValidatorGuard,FutureValidator,NotLiveLegend notlive;
 ```

@@ -35,7 +35,7 @@ object references; it does not prove the bytes behind every PVC are recoverable.
 - Stage-0: `secrets.yaml`, `age.agekey`, `talosconfig`, and kubeconfig access.
 - Stage-1 or interim encrypted media:
   - one etcd snapshot (`*.db`) and its manifest
-  - one Vault Raft snapshot and its manifest
+  - one `vault-raft-*.snap.sops.json` artifact and the shared DR snapshot age identity
 - The repo revision used to generate the machine configs.
 - Tooling compatible with the snapshot versions: `talosctl`, `kubectl`, and
   `vault`.
@@ -186,9 +186,13 @@ update access to `sys/storage/raft/snapshot` and
    Raft snapshot restore.
 5. Restore the selected Raft snapshot:
 
-   ```bash
-   vault operator raft snapshot restore -force .s3/restore/vault-raft.snap
-   ```
+```bash
+SOPS_AGE_KEY_FILE=<path-to-shared-dr-snapshot-age-identity> \
+  sops --decrypt --input-type json --output-type binary \
+  vault-raft-<timestamp>.snap.sops.json > vault-raft.snap
+gzip -t vault-raft.snap
+vault operator raft snapshot restore -force vault-raft.snap
+```
 
 6. Wait for Vault to restart or reload as required by the restore behavior, then
    verify status and Raft peers:
