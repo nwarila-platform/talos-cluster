@@ -2,7 +2,7 @@
 # kustomization: the cluster must hold only the PUBLIC half of this key
 # (encrypt-only). Applying the private half in-cluster would let anyone who
 # compromises the cluster (or the shared Synology target plus the cluster)
-# decrypt every archived etcd snapshot.
+# decrypt every archived etcd and Vault snapshot.
 #
 # What this is: the shared DR snapshot age identity used by both the
 # dr-etcd-backup and dr-backup CronJobs (recipient

@@ -22,13 +22,24 @@ data:
       exit 1
     }
     cleanup() {
-      rm -f -- "$LOGIN_BODY" "$SNAP"
+      rm -f -- "$LOGIN_BODY" "$SNAP" \
+        /work/finals.txt /work/finals-sorted.txt /work/prune.txt /work/df.txt
       if [ -n "$PARTIAL" ]; then
         rm -f -- "$PARTIAL"
       fi
     }
     trap cleanup 0
     trap 'exit 1' HUP INT TERM
+
+    # The pinned image's /bin/sh is dash, which implements `ulimit -c`; SC3045 flags
+    # strict-POSIX portability only. Verified: dash sets the core limit to 0.
+    # shellcheck disable=SC3045
+    ulimit -c 0 || fatal "disabling core dumps failed"
+    CORE_PATTERN=$(cat /proc/sys/kernel/core_pattern) || fatal "reading core-dump policy failed"
+    case "$CORE_PATTERN" in
+      \|*) fatal "piped core-dump collection defeats RLIMIT_CORE" ;;
+    esac
+    unset CORE_PATTERN
 
     JWT=$(cat "$TOKEN_PATH")
     [ -n "$JWT" ] || fatal "projected service-account token is empty"
@@ -55,11 +66,12 @@ data:
     [ -n "$TOKEN" ] || fatal "Vault Kubernetes login returned HTTP 200 without client_token"
 
     if SNAP_CODE=$(
-      curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      printf 'header = "X-Vault-Token: %s"\n' "$TOKEN" |
+      curl --config - \
+        --proto '=https' --proto-redir '=https' --tlsv1.2 \
         --silent --show-error --location --max-redirs 1 \
         --connect-timeout 10 --max-time 600 \
         --cacert "$VAULT_CACERT" \
-        --header "X-Vault-Token: $TOKEN" \
         --output "$SNAP" --write-out '%{http_code}' \
         "$VAULT_ADDR/v1/sys/storage/raft/snapshot"
     ); then
@@ -89,9 +101,12 @@ data:
     PARTIAL=
     echo "encrypted: $SIZE bytes -> $OUT ($(stat -c%s "$OUT") bytes)"
 
-    ls -1 /data/vault-raft-*.snap.sops.json | sort | head -n -14 | while read -r old; do
-      rm -- "$old"
+    ls -1 /data/vault-raft-*.snap.sops.json > /work/finals.txt || fatal "listing retained snapshots failed"
+    sort /work/finals.txt > /work/finals-sorted.txt || fatal "sorting retained snapshots failed"
+    head -n -14 /work/finals-sorted.txt > /work/prune.txt || fatal "selecting prunable snapshots failed"
+    while read -r old; do
+      rm -- "$old" || fatal "failed to prune $old"
       echo "pruned: $old"
-    done
-
-    df -k /data | tail -1
+    done < /work/prune.txt
+    df -k /data > /work/df.txt || fatal "df on /data failed"
+    tail -1 /work/df.txt

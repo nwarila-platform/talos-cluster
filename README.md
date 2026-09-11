@@ -669,8 +669,8 @@ Longhorn volume backups run daily for Vault data. In addition, restricted
 in-cluster CronJobs capture etcd and Vault Raft snapshots, whole-file encrypt
 them to the shared off-cluster-escrowed DR snapshot age key, land them on
 Retain-class Longhorn volumes, and ship those volumes to Stage-1 through the
-`vault-daily-backup` and `etcd-daily-backup` RecurringJobs — the allowlist is UNCHANGED and remains exactly those two names. The
-ADR-0006-era GitHub Actions S3 workflow is retired (deleted; it never ran
+`vault-daily-backup` and `etcd-daily-backup` RecurringJobs. The ADR-0006-era
+GitHub Actions S3 workflow is retired (deleted; it never ran
 successfully).
 
 Restore is not accepted as working until it is drilled. Use

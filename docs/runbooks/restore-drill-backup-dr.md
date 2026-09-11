@@ -186,13 +186,13 @@ update access to `sys/storage/raft/snapshot` and
    Raft snapshot restore.
 5. Restore the selected Raft snapshot:
 
-```bash
-SOPS_AGE_KEY_FILE=<path-to-shared-dr-snapshot-age-identity> \
-  sops --decrypt --input-type json --output-type binary \
-  vault-raft-<timestamp>.snap.sops.json > vault-raft.snap
-gzip -t vault-raft.snap
-vault operator raft snapshot restore -force vault-raft.snap
-```
+   ```bash
+   SOPS_AGE_KEY_FILE=<path-to-shared-dr-snapshot-age-identity> \
+     sops --decrypt --input-type json --output-type binary \
+     vault-raft-<timestamp>.snap.sops.json > vault-raft.snap
+   gzip -t vault-raft.snap
+   vault operator raft snapshot restore -force vault-raft.snap
+   ```
 
 6. Wait for Vault to restart or reload as required by the restore behavior, then
    verify status and Raft peers:
