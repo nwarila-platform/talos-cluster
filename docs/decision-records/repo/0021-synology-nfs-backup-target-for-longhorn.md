@@ -167,6 +167,15 @@ path: mounted at `vers=4.1` (`rw,hard,sec=sys`), wrote/read/**deleted** a file
 export scoping matches the post-SNAT node source IP. The old WSL target remained
 live throughout, so cutover carries no backup gap.
 
+### 2026-09-11 Vault Raft snapshot retention update
+
+The Context statement that no Vault Raft snapshots were retained describes the
+state when this decision was accepted on 2026-07-09. This implementation meets
+Assumption 5's named expiry condition: Vault DR no longer relies on Longhorn
+volume backups of the Vault PVCs alone. The target remains crown-jewel-class
+because it now also stores Longhorn backups of the age-encrypted Vault Raft
+snapshot artifact volume.
+
 ## Pros and Cons of the Options
 
 ### Endpoint Option 1: Synology NFS (chosen)

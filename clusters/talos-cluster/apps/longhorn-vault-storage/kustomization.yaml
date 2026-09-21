@@ -5,3 +5,4 @@ resources:
   - node-tags.yaml
   - recurringjob-vault-backup.yaml
   - storageclass.yaml
+  - storageclass-vault-snapshot.yaml

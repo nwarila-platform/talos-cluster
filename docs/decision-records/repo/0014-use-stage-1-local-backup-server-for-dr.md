@@ -159,6 +159,20 @@ The restore drill runbook is
 Production restore remains an owner-gated emergency operation because it wipes
 control-plane disks and/or overwrites Vault Raft state.
 
+### 2026-09-11 Vault snapshot implementation status
+
+The first automated Vault Raft capture implementation is a daily 02:00 UTC
+restricted CronJob with 14 encrypted local files and 14 Longhorn backups on
+Stage-1. It whole-file encrypts the already barrier-encrypted Raft snapshot to
+the existing shared DR snapshot age recipient before the artifact reaches the
+PVC. Reusing that recipient keeps one owner-escrow path but means disclosure of
+the snapshot age identity decrypts both etcd and Vault archives.
+
+This daily MVP reduces the immediate zero-snapshot recovery risk; it does not
+satisfy this ADR's hourly, 7-day/90-day/12-month retention, per-snapshot
+manifest, or 90-minute freshness-alert targets. Those targets remain open and
+must not be reported as complete merely because this CronJob exists.
+
 ## Pros and Cons of the Options
 
 ### Option 1: Stage-1 local backup server (chosen)
