@@ -516,6 +516,7 @@
 !/docs/decision-records/repo/0029-mvp-stability-contract-and-security-floor.md
 !/docs/decision-records/repo/0030-per-org-source-token-minter.md
 !/docs/decision-records/repo/0031-adopt-github-oidc-jwt-auth.md
+!/docs/decision-records/repo/0032-hold-kyverno-below-chart-3-9.md
 !/docs/decision-records/repo/vault/
 !/docs/decision-records/repo/vault/**
 !/docs/decision-records/template/
