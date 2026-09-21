@@ -28,6 +28,7 @@ the ADRs; this register tracks the *debt* those decisions leave behind.
 | TD-0020 | Render-anchored Vault guards are not runnable offline | Open | Low |
 | TD-0021 | Vault guard 1 CNP assertion does not consume owning Flux transforms | Open | **High** |
 | TD-0022 | PF-5: cft3a-MVP ingress hardening and proof backlog | Open | **High** |
+| TD-0023 | Kyverno chart held below 3.9.0 | Open | **High** |
 
 ---
 
@@ -1237,6 +1238,77 @@ succeeds; that is the MVP gate, not the hardening target.
 
 - `docs/runbooks/operate-hwg-self-service-ingress.md`
 - `docs/kyverno-tests/restrict-tunnel-hostnames/README.md`
+
+---
+
+## TD-0023 — Kyverno chart held below 3.9.0
+
+**Opened:** 2026-09-21 · **Status:** Open · **Priority:** High
+
+### Gap
+
+Kyverno v1.18.2 pins `kyverno/sdk` commit `3c70db82e2e4`, and v1.19.1 pins
+commit `68d74afcb07a`. At both commits,
+`extensions/imagedataloader/context.go` has two concurrency defects:
+
+- `AddImages` starts workers that write the shared `idc.list` map without
+  synchronization between them; and
+- `Get` returns from a cache hit without releasing its read lock, so the next
+  write lock never returns.
+
+Kyverno v1.19.1 no longer calls `AddImages` (kyverno/kyverno#17327); it ranges
+an image-category map and calls `Get` serially. On v1.19.1, the live exposure
+is therefore the `Get` read-lock leak, not the `AddImages` race.
+
+The focused SDK test proves `[h,h,v]` hangs; Kyverno v1.19.1 builds its prefetch
+list by ranging an image-category map and then calls `Get` serially, so a Vault
+request CAN present that ordering. The frequency of that ordering and an
+in-cluster Vault denial on v1.19.1 are UNPROVEN.
+
+### Impact
+
+Renovate applies `allowedVersions: "<3.9.0"` as a ceiling over all releases at
+or above chart 3.9.0. Later 3.8.x releases, including security patches, remain
+eligible. Every release in 3.9.x and every later line, including security and
+fix releases, is blocked. The rule does not constrain a chart's `appVersion`.
+
+This hold also blocks TD-0013's resolution path. TD-0013's statement that no
+v1.19 release, tag, or release candidate exists is stale as of chart 3.9.1 /
+app v1.19.1.
+
+Because `allowedVersions` filters releases before updates are flattened, the
+actionable blocked-update entry disappears from the dependency dashboard. The
+top-level `dependencyDashboardFooter` is the visible marker for this hold.
+
+No repository guard couples the package matcher to this footer. Matcher drift
+can silently stop the hold from matching while the config validator and current
+Renovate coverage guard remain green and the footer continues to assert an
+active hold.
+
+### Closure criteria
+
+**Removal condition:** *lift the hold when the newest stable Kyverno chart above
+the current pin has an app version whose `go.mod` pins a `kyverno/sdk` commit in
+which `extensions/imagedataloader/context.go` both releases the read lock on
+every `Get` cache-hit return path and performs no `idc.list` write inside an
+`AddImages` worker closure*.
+
+A fixed older candidate must NOT trigger removal: removing the unbounded
+ceiling would also expose a newer defective line. Checking the removal
+condition is currently MANUAL. Piece 2, the expiry detector, owns both
+automating this check and detecting the matcher/footer drift described above.
+
+### References
+
+- [ADR-0032](decision-records/repo/0032-hold-kyverno-below-chart-3-9.md)
+- [Renovate configuration](../.github/renovate.json5)
+- [kyverno/sdk#123](https://github.com/kyverno/sdk/issues/123) (closed; fix
+  [PR #124](https://github.com/kyverno/sdk/pull/124) closed unmerged)
+- [kyverno/sdk#125](https://github.com/kyverno/sdk/issues/125) (open)
+- [kyverno/sdk#127](https://github.com/kyverno/sdk/pull/127) (open; fixes only
+  the read-lock defect)
+- [kyverno/kyverno#17327](https://github.com/kyverno/kyverno/pull/17327) (the
+  v1.19.1 workaround)
 
 ---
 

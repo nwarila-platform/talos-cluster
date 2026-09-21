@@ -77,6 +77,7 @@ The format used here is established by [ADR-0001](org/0001-use-architecture-deci
 | [0029](repo/0029-mvp-stability-contract-and-security-floor.md) | Define the MVP Stability Contract and Security Floor | Accepted | 2026-07-17 | Define the minimum platform invariants, evidence gates, and named residuals required before the cluster MVP can be called stable. |
 | [0030](repo/0030-per-org-source-token-minter.md) | Per-Org Source-Token Minter — Shared Script, Per-Org Identity | Accepted | 2026-07-20 | Give each GitHub organization its own minter identity and envelope while sharing one env-driven credential-minting script. |
 | [0031](repo/0031-adopt-github-oidc-jwt-auth.md) | Adopt GitHub OIDC JWT Authentication for CI | Accepted | 2026-07-28 | Add a CI-only jwt-github auth mount alongside Kubernetes auth, exact role contracts, and a logged mount-scoped deploy-* bootstrap deviation. |
+| [0032](repo/0032-hold-kyverno-below-chart-3-9.md) | Hold Kyverno Below Chart 3.9.0 | Accepted | 2026-09-21 | Hold Kyverno below chart 3.9.0 until the newest stable chart above the current pin uses an SDK commit that fixes both `imagedataloader` concurrency defects; keep later 3.8.x releases Renovate-eligible. |
 
 ### Imported Vault ADRs
 
