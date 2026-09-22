@@ -39,9 +39,9 @@ jobs:
       - name: Install kubescape CLI (pinned, into RUNNER_TEMP; no sudo)
         run: |
           set -euo pipefail
-          KS_VERSION="v4.0.8"
-          KS_VER_NUM="4.0.8"
-          KS_SHA256="3603bab7dab0da948967769db803843af70c11295f05d63beff4ecd7c91a9b20"
+          KS_VERSION="v4.0.14"
+          KS_VER_NUM="4.0.14"
+          KS_SHA256="5d987374013ae5b6d9508146d51d5ee62c0d4c638313154f69be35123269badf"
           url="https://github.com/kubescape/kubescape/releases/download/${KS_VERSION}/kubescape_${KS_VER_NUM}_linux_amd64"
           mkdir -p "${RUNNER_TEMP}/bin"
           curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${RUNNER_TEMP}/bin/kubescape" "${url}"
