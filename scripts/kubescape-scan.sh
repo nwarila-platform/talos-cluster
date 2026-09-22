@@ -10,11 +10,11 @@
 # layout. See docs/compliance/README.md for the operator-facing
 # explanation.
 #
-# Why JSON-then-convert (not --format sarif directly): kubescape v4.0.8's
-# native SARIF output is only supported when scanning local files; live
-# cluster scans must emit JSON. scripts/kubescape-json-to-sarif.py converts
-# the JSON to SARIF 2.1.0 with stable per-finding fingerprints so Code
-# Scanning can track Open / Fixed / Dismissed state across runs.
+# JSON-then-convert is retained instead of `--format sarif` because native
+# live-cluster SARIF was not supported (upstream kubescape#1366), and that has
+# not been re-verified on the currently pinned version. The converter emits
+# SARIF 2.1.0 with stable per-finding fingerprints so Code Scanning can track
+# Open / Fixed / Dismissed state across runs.
 #
 # Exits:
 #   0 — scan ran, SARIF written

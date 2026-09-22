@@ -3,11 +3,10 @@
 # kubescape-json-to-sarif.py — convert a kubescape cluster-scan JSON report
 # into SARIF 2.1.0 suitable for GitHub Code Scanning ingestion.
 #
-# Why this script exists: kubescape v4.0.8's `--format sarif` is only
-# supported when scanning local files, not when scanning a live cluster
-# (kubescape rejects with `format "sarif" is only supported when scanning
-# local files`). Our use case is the live cluster, so we scan to JSON and
-# convert here.
+# This repository converts JSON rather than using `--format sarif` because
+# native SARIF was not supported for live-cluster scans (upstream
+# kubescape#1366), and that has not been re-verified on the currently pinned
+# version.
 #
 # Output: SARIF 2.1.0. Each (control, resource) pair becomes one result.
 # `partialFingerprints.kubescapeFingerprint` is the stable per-finding key
@@ -111,7 +110,13 @@ def fingerprint(control_id: str, resource_id: str) -> str:
     return hashlib.sha256(raw).hexdigest()[:32]
 
 
-def convert(scan: dict, kubescape_version: str = "v4.0.8") -> dict:
+def convert(scan: dict) -> dict:
+    try:
+        kubescape_version = scan["metadata"]["scanMetadata"]["kubescapeVersion"]
+    except (KeyError, TypeError):
+        raise ValueError("metadata.scanMetadata.kubescapeVersion is absent") from None
+    if not isinstance(kubescape_version, str) or not kubescape_version.strip():
+        raise ValueError("metadata.scanMetadata.kubescapeVersion is empty")
     summary = scan.get("summaryDetails", {})
     controls = summary.get("controls", {})  # dict keyed by control id
     results_in = scan.get("results", [])

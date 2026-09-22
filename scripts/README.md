@@ -156,7 +156,7 @@ Mapping-level anchors remain allowed.
 | Script (lines) | Does | Native alternative | Verdict |
 |---|---|---|---|
 | `kubescape-scan.sh` (104) | Live-cluster CIS scan → JSON → SARIF → validate (ADR-0009) | thin native `kubescape scan` usage → **NO** | **KEEP** |
-| `kubescape-json-to-sarif.py` (195) | Convert cluster-scan JSON → SARIF 2.1.0 with stable fingerprints (Code Scanning state tracking) | `kubescape --format sarif` is **not supported for live-cluster scans** (kubescape#1366) → **NO** | **KEEP** |
+| `kubescape-json-to-sarif.py` (200) | Convert cluster-scan JSON → SARIF 2.1.0 with stable fingerprints (Code Scanning state tracking) | Native SARIF was not supported for live-cluster scans (kubescape#1366), and that has not been re-verified on the currently pinned version → **NO** | **KEEP** |
 
 ---
 

@@ -73,7 +73,8 @@ Code Scanning is the system of record.
 ## Running a scan locally
 
 ```bash
-# Ensure the kubescape CLI is installed (v4.0.8+ recommended).
+# Install Kubescape v4.0.11 or newer (required for CEL controls). Use the
+# version pinned in .github/workflows/kubescape.yaml so local runs match CI.
 # Windows: download kubescape_X.Y.Z_windows_amd64.exe from
 #   https://github.com/kubescape/kubescape/releases
 # Linux:   download kubescape_X.Y.Z_linux_amd64
