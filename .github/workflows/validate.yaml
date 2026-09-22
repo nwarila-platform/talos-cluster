@@ -129,16 +129,27 @@ jobs:
           KUBERNETES_VERSION=$(grep '^KUBERNETES_VERSION=' cluster/config.env | cut -d'"' -f2)
           [ -n "${KUBERNETES_VERSION}" ] || { echo "KUBERNETES_VERSION missing from cluster/config.env"; exit 1; }
           url="https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
-          sums="https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/linux/amd64/kubectl.sha256"
           curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o kubectl "${url}"
-          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o kubectl.sha256 "${sums}"
-          expected=$(cat kubectl.sha256)
+          # Digest of the kubectl release pinned by KUBERNETES_VERSION in cluster/config.env.
+          # In-repo BY DESIGN: fetching it from dl.k8s.io — the same origin as the binary — lets a
+          # substituted-but-self-consistent pair pass (proven: _handoff/steps/evidence-same-host-regression/).
+          # Bumping KUBERNETES_VERSION REQUIRES updating this literal in the same PR.
+          KUBECTL_SHA256="ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336"
+          expected="${KUBECTL_SHA256}"
           actual=$(sha256sum kubectl | awk '{print $1}')
-          [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || { echo "kubectl checksum is not a lowercase SHA-256 digest"; exit 1; }
-          [ "${expected}" = "${actual}" ] || { echo "kubectl checksum mismatch: expected=${expected} actual=${actual}"; exit 1; }
+          [[ "${KUBECTL_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo "kubectl checksum is not a lowercase SHA-256 digest"; exit 1; }
+          [ "${expected}" = "${actual}" ] || {
+            echo "kubectl digest mismatch for ${KUBERNETES_VERSION}: expected=${expected} actual=${actual}"
+            echo "If KUBERNETES_VERSION was just bumped, update KUBECTL_SHA256 in this file to the new release digest."
+            exit 1
+          }
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
-          kubectl version --client=true
+          version_output=$(/usr/local/bin/kubectl version --client=true)
+          printf '%s\n' "${version_output}"
+          installed=$(printf '%s\n' "${version_output}" | awk '/^Client Version:/{print $3}')
+          [ "${installed}" = "${KUBERNETES_VERSION}" ] || {
+            echo "kubectl reports ${installed}, but cluster/config.env pins ${KUBERNETES_VERSION}"; exit 1; }
 
       - name: Install YAML parser
         run: |
