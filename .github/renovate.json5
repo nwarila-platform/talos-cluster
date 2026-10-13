@@ -1,102 +1,26 @@
-// =============================================================================
-// Renovate baseline for talos-cluster (TDNHQ-TALCL01).
-//
-// This repository does not extend a type-template because no Talos-cluster
-// type-template exists in the portfolio yet. The deviation is sanctioned by
-// docs/decision-records/repo/0001-renovate-without-template-lineage.md.
-// See docs/decision-records/org/0004-use-renovate-for-dependency-updates.md
-// for the org Renovate policy this baseline mirrors.
-// =============================================================================
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: [
-    "config:recommended",
-    ":dependencyDashboard",
-  ],
+  extends: ["config:recommended", ":dependencyDashboard"],
   schedule: ["before 6am on monday"],
-  dependencyDashboardFooter: "Active dependency hold: Kyverno chart <3.9.0 — see [TD-0023](https://github.com/nwarila-platform/talos-cluster/blob/main/docs/tech-debt.md#td-0023--kyverno-chart-held-below-390).",
   semanticCommits: "enabled",
   prConcurrentLimit: 5,
   minimumReleaseAge: "7 days",
-  internalChecksFilter: "strict",
   customManagers: [
     {
       customType: "regex",
       managerFilePatterns: ["/^cluster/config\\.env$/"],
       matchStrings: [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\w+=\"?(?<currentValue>[^\"\\s]+)\"?",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: registryUrl=(?<registryUrl>\\S+))?\\s+\\w+=\"(?<currentValue>[^\"]+)\"",
       ],
-      versioningTemplate: "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}",
-    },
-    {
-      customType: "regex",
-      managerFilePatterns: ["/^clusters/talos-cluster/apps/actions-runner-controller/scale-set/.+\\.ya?ml$/"],
-      matchStrings: [
-        "image:\\s+(?<depName>ghcr\\.io/actions/actions-runner):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)",
-      ],
-      datasourceTemplate: "docker",
-    },
-    {
-      customType: "regex",
-      managerFilePatterns: ["/^clusters/talos-cluster/apps/cert-manager/release/helmrelease\\.ya?ml$/"],
-      matchStrings: [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+tag:\\s*\"?(?<currentValue>[^\"\\s@]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?\"?",
-      ],
-    },
-    {
-      customType: "regex",
-      managerFilePatterns: ["/^clusters/talos-cluster/apps/vault-config-operator/release/helmrelease\\.ya?ml$/"],
-      matchStrings: [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+tag:\\s*\"?(?<currentValue>[^\"\\s@]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?\"?",
-      ],
-    },
-    {
-      customType: "regex",
-      managerFilePatterns: ["/^\\.github/workflows/.+\\.ya?ml$/"],
-      matchStrings: [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+source-ref:\\s*(?<currentDigest>[0-9a-f]{40})",
-      ],
-      currentValueTemplate: "main",
+      versioningTemplate: "semver",
     },
   ],
-  flux: {
-    managerFilePatterns: [
-      "/^clusters/talos-cluster/flux-system/gotk-components\\.ya?ml$/",
-      "/^clusters/talos-cluster/apps/.+\\.ya?ml$/",
-    ],
-  },
-  kubernetes: {
-    // Workload manifests with deliberate third-party image digest pins.
-    managerFilePatterns: [
-      "/^clusters/talos-cluster/apps/_components/tunnel-connector/deployment\\.ya?ml$/",
-      "/^clusters/talos-cluster/apps/dr-(?:etcd-)?backup/cronjob\\.ya?ml$/",
-    ],
-  },
   packageRules: [
     {
       matchManagers: ["github-actions"],
       semanticCommitType: "ci",
       semanticCommitScope: "deps",
       pinDigests: true,
-    },
-    {
-      // HOLD: a ceiling at chart <3.9.0, not a freeze on 3.9.x alone. 3.8.x patches stay
-      // eligible; every release >=3.9.0 is blocked until this rule is removed, including
-      // security fixes in those lines. It does not constrain a chart's appVersion.
-      // Reason: chart 3.9.x ships app v1.19.x, whose pinned kyverno/sdk still leaks a read
-      // lock in imagedataloader.Get (kyverno/sdk#125; fix PR #127 unmerged). A focused SDK
-      // test proves the ordering [h,h,v] hangs; v1.19.x builds its prefetch list by ranging a
-      // map, and Vault pods repeat an image across two init containers, so a request CAN
-      // present that ordering. How often, and whether it denies a Vault pod in-cluster, are
-      // UNPROVEN. The first-party ImageValidatingPolicy is failurePolicy: Fail, which is what
-      // would make such a hang a denial rather than a delay. Chart 3.9.0 (app v1.19.0)
-      // also predates kyverno/kyverno#17327. Evidence and the removal condition:
-      // docs/tech-debt.md TD-0023 and
-      // docs/decision-records/repo/0032-hold-kyverno-below-chart-3-9.md.
-      matchManagers: ["flux"],
-      matchDatasources: ["helm"],
-      matchPackageNames: ["kyverno"],
-      allowedVersions: "<3.9.0",
     },
   ],
 }

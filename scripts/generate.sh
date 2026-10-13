@@ -1,225 +1,103 @@
 #!/usr/bin/env bash
-# =============================================================================
-# generate.sh — Generate Talos machine configs from patches + secrets
-#
-# Generates base configs with talosctl gen config, then applies per-node
-# patches using talosctl machineconfig patch. Secrets are created on first
-# run and reused on subsequent runs.
-# =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
 source "${ROOT_DIR}/cluster/config.env"
 
-S3_DIR="${ROOT_DIR}/${LOCAL_S3_DIR}"
-TEMP_DIR=$(mktemp -d)
-trap 'rm -rf "${TEMP_DIR}"' EXIT
+for command in talosctl sed grep; do
+    command -v "${command}" >/dev/null || { echo "ERROR: ${command} is required" >&2; exit 1; }
+done
 
-# ---------------------------------------------------------------------------
-# Helper: set static hostname in a Talos 1.12+ multi-document config
-# Replaces the HostnameConfig "auto: stable" with "hostname: <name>"
-# ---------------------------------------------------------------------------
-set_hostname() {
-    local config_file="$1"
-    local desired_hostname="$2"
-
-    # Fail closed: sed -i exits 0 on zero substitutions, so without these
-    # guards a future Talos release that renames/indents the HostnameConfig
-    # field would silently produce auto-hostname configs.
-    if ! grep -q '^auto: stable' "${config_file}"; then
-        echo "ERROR: set_hostname expected '^auto: stable' in ${config_file}" >&2
-        echo "       Talos HostnameConfig format may have changed; refusing to" >&2
-        echo "       generate a config with the wrong hostname." >&2
-        exit 1
-    fi
-    sed -i "s/^auto: stable.*$/hostname: ${desired_hostname}/" "${config_file}"
-    if ! grep -q "^hostname: ${desired_hostname}$" "${config_file}"; then
-        echo "ERROR: set_hostname failed to install 'hostname: ${desired_hostname}' in ${config_file}" >&2
-        exit 1
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# Helper: staged SecureBoot+TPM migration node selection
-# ---------------------------------------------------------------------------
-is_secureboot_tpm_node() {
-    local node_name="$1"
-    local secureboot_node
-
-    for secureboot_node in ${SECUREBOOT_TPM_NODES:-}; do
-        if [[ "${node_name}" == "${secureboot_node}" ]]; then
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-write_secureboot_install_patch() {
-    local patch_file="$1"
-
-    if [[ -z "${TALOS_SECUREBOOT_INSTALL_IMAGE:-}" ]]; then
-        echo "ERROR: TALOS_SECUREBOOT_INSTALL_IMAGE is not set" >&2
-        exit 1
-    fi
-
-    cat > "${patch_file}" <<EOF
-machine:
-  install:
-    image: "${TALOS_SECUREBOOT_INSTALL_IMAGE}"
-EOF
-}
-
-patch_node_config() {
-    local base_config="$1"
-    local node_name="$2"
-    local output="$3"
-    local patch_args=(--patch @"${ROOT_DIR}/cluster/patches/${node_name}.yaml")
-
-    if is_secureboot_tpm_node "${node_name}"; then
-        local secureboot_install_patch="${TEMP_DIR}/${node_name}-secureboot-install.yaml"
-        write_secureboot_install_patch "${secureboot_install_patch}"
-        patch_args+=(--patch @"${secureboot_install_patch}")
-    fi
-
-    talosctl machineconfig patch "${base_config}" \
-        "${patch_args[@]}" \
-        --output "${output}"
-}
-
-# ---------------------------------------------------------------------------
-# Create directory structure
-# ---------------------------------------------------------------------------
-mkdir -p "${S3_DIR}/secrets"
-mkdir -p "${S3_DIR}/configs"
-mkdir -p "${S3_DIR}/generated/controlplane"
-mkdir -p "${S3_DIR}/generated/worker"
-
-# ---------------------------------------------------------------------------
-# Generate secrets (once)
-# ---------------------------------------------------------------------------
-if [[ ! -f "${S3_DIR}/secrets/secrets.yaml" ]]; then
-    echo "==> Generating Talos secrets bundle..."
-    talosctl gen secrets -o "${S3_DIR}/secrets/secrets.yaml"
-    echo "    Created ${S3_DIR}/secrets/secrets.yaml"
-else
-    echo "==> Secrets bundle already exists, reusing."
+client_version="$(talosctl version --client --short | awk '/Talos v/ {print $2; exit}')"
+if [[ "${client_version}" != "${TALOS_VERSION}" ]]; then
+    echo "ERROR: talosctl ${TALOS_VERSION} is required; found ${client_version:-unknown}" >&2
+    exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# Generate base configs
-# ---------------------------------------------------------------------------
-echo "==> Generating base machine configs..."
-echo "    Cluster:    ${CLUSTER_NAME}"
-echo "    Endpoint:   ${CLUSTER_ENDPOINT}"
-echo "    Talos:      ${TALOS_VERSION}"
-echo "    Kubernetes: ${KUBERNETES_VERSION}"
+STATE_ROOT="${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}"
+TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TEMP_DIR}"' EXIT
+umask 077
+
+mkdir -p "${STATE_ROOT}/secrets" "${STATE_ROOT}/configs"
+mkdir -p "${STATE_ROOT}/generated/controlplane" "${STATE_ROOT}/generated/worker"
+
+if [[ ! -f "${STATE_ROOT}/secrets/talos-secrets.yaml" ]]; then
+    talosctl gen secrets --output-file "${STATE_ROOT}/secrets/talos-secrets.yaml"
+fi
 
 talosctl gen config "${CLUSTER_NAME}" "${CLUSTER_ENDPOINT}" \
-    --with-secrets "${S3_DIR}/secrets/secrets.yaml" \
+    --with-secrets "${STATE_ROOT}/secrets/talos-secrets.yaml" \
     --kubernetes-version "${KUBERNETES_VERSION}" \
     --install-image "${TALOS_INSTALL_IMAGE}" \
     --config-patch @"${ROOT_DIR}/cluster/patches/common.yaml" \
     --config-patch-control-plane @"${ROOT_DIR}/cluster/patches/controlplane.yaml" \
     --config-patch-worker @"${ROOT_DIR}/cluster/patches/worker.yaml" \
-    --output "${TEMP_DIR}/" \
+    --output "${TEMP_DIR}" \
     --force
 
-# Copy talosconfig
-cp "${TEMP_DIR}/talosconfig" "${S3_DIR}/configs/talosconfig"
-echo "    Talosconfig saved."
+install -m 0600 "${TEMP_DIR}/talosconfig" "${STATE_ROOT}/configs/talosconfig"
 
-# ---------------------------------------------------------------------------
-# Patch per-node control plane configs
-# ---------------------------------------------------------------------------
-VOLUMES_PATCH="${ROOT_DIR}/cluster/patches/volumes.yaml"
-SECUREBOOT_TPM_VOLUMES_PATCH="${ROOT_DIR}/cluster/patches/volumes-secureboot-tpm.yaml"
-FIREWALL_PATCH="${ROOT_DIR}/cluster/patches/firewall.yaml"
+set_hostname() {
+    local config_file="$1"
+    local hostname="$2"
 
-# Append the multi-doc volumes patch (VolumeConfig + UserVolumeConfig).
-# `talosctl machineconfig patch` only strategically-merges the v1alpha1 main
-# doc; new top-level kinds like VolumeConfig must be appended after. SecureBoot
-# nodes get a per-node variant that includes TPM-backed STATE/EPHEMERAL
-# encryption while legacy nodes keep the existing unencrypted volume docs.
-append_volumes() {
-    local target="$1"
-    local node_name="$2"
-    local volumes_patch="${VOLUMES_PATCH}"
-
-    if is_secureboot_tpm_node "${node_name}"; then
-        volumes_patch="${SECUREBOOT_TPM_VOLUMES_PATCH}"
-    fi
-
-    if [[ ! -f "${volumes_patch}" ]]; then
-        echo "ERROR: ${volumes_patch} missing" >&2
+    grep -q '^auto: stable' "${config_file}" || {
+        echo "ERROR: Talos HostnameConfig format changed in ${config_file}" >&2
         exit 1
-    fi
-    cat "${volumes_patch}" >> "${target}"
+    }
+    sed -i "s/^auto: stable.*$/hostname: ${hostname}/" "${config_file}"
+    grep -q "^hostname: ${hostname}$" "${config_file}"
 }
 
-# Append the multi-doc host ingress firewall patch (NetworkDefaultActionConfig
-# + NetworkRuleConfig documents). Same append-after-strategic-merge pattern as
-# append_volumes; the NetworkRuleConfig kind isn't part of the v1alpha1 main
-# doc so it can't be strategically merged.
-append_firewall() {
-    local target="$1"
-    if [[ ! -f "${FIREWALL_PATCH}" ]]; then
-        echo "ERROR: ${FIREWALL_PATCH} missing" >&2
-        exit 1
-    fi
-    cat "${FIREWALL_PATCH}" >> "${target}"
+render_role() {
+    local role="$1"
+    local inventory="$2"
+    local base_config="$3"
+    local volume_patch="$4"
+    local entry hostname ip output node_patch
+
+    for entry in ${inventory}; do
+        hostname="${entry%%:*}"
+        ip="${entry##*:}"
+        output="${STATE_ROOT}/generated/${role}/${hostname}.yaml"
+        node_patch="${TEMP_DIR}/${hostname}.yaml"
+        {
+            printf 'machine:\n'
+            printf '  install:\n'
+            printf '    disk: %s\n' "${INSTALL_DISK}"
+            printf '  network:\n'
+            printf '    interfaces:\n'
+            printf '      - deviceSelector:\n'
+            printf '          busPath: "%s"\n' "${NIC_BUS_PATH}"
+            printf '        dhcp: false\n'
+            printf '        addresses: [%s/%s]\n' "${ip}" "${CLUSTER_NETMASK}"
+            printf '        routes:\n'
+            printf '          - network: 0.0.0.0/0\n'
+            printf '            gateway: %s\n' "${CLUSTER_GATEWAY}"
+            if [[ "${role}" == "controlplane" ]]; then
+                printf '        vip:\n'
+                printf '          ip: %s\n' "${CLUSTER_VIP}"
+            fi
+        } > "${node_patch}"
+        talosctl machineconfig patch "${base_config}" \
+            --patch @"${node_patch}" \
+            --output "${output}"
+        set_hostname "${output}" "${hostname}"
+        {
+            printf '\n'
+            sed -n '1,$p' "${volume_patch}"
+            printf '\n'
+            sed -n '1,$p' "${ROOT_DIR}/cluster/patches/firewall.yaml"
+        } >> "${output}"
+        chmod 0600 "${output}"
+    done
 }
 
-echo "==> Generating per-node control plane configs..."
-for entry in ${CP_NODES}; do
-    node_name="${entry%%:*}"
-    ip="${entry##*:}"
-    node_hostname=$(echo "${node_name}" | tr '[:upper:]' '[:lower:]')
-    echo "    ${node_name} (${ip}) → hostname: ${node_hostname}"
+render_role controlplane "${CP_NODES}" "${TEMP_DIR}/controlplane.yaml" \
+    "${ROOT_DIR}/cluster/patches/volumes-controlplane.yaml"
+render_role worker "${WORKER_NODES}" "${TEMP_DIR}/worker.yaml" \
+    "${ROOT_DIR}/cluster/patches/volumes-worker.yaml"
 
-    patch_node_config \
-        "${TEMP_DIR}/controlplane.yaml" \
-        "${node_name}" \
-        "${S3_DIR}/generated/controlplane/${node_name}.yaml"
-
-    set_hostname "${S3_DIR}/generated/controlplane/${node_name}.yaml" "${node_hostname}"
-    append_volumes "${S3_DIR}/generated/controlplane/${node_name}.yaml" "${node_name}"
-    append_firewall "${S3_DIR}/generated/controlplane/${node_name}.yaml"
-done
-
-# ---------------------------------------------------------------------------
-# Patch per-node worker configs
-# ---------------------------------------------------------------------------
-echo "==> Generating per-node worker configs..."
-for entry in ${WORKER_NODES}; do
-    node_name="${entry%%:*}"
-    ip="${entry##*:}"
-    node_hostname=$(echo "${node_name}" | tr '[:upper:]' '[:lower:]')
-    echo "    ${node_name} (${ip}) → hostname: ${node_hostname}"
-
-    patch_node_config \
-        "${TEMP_DIR}/worker.yaml" \
-        "${node_name}" \
-        "${S3_DIR}/generated/worker/${node_name}.yaml"
-
-    set_hostname "${S3_DIR}/generated/worker/${node_name}.yaml" "${node_hostname}"
-    append_volumes "${S3_DIR}/generated/worker/${node_name}.yaml" "${node_name}"
-    append_firewall "${S3_DIR}/generated/worker/${node_name}.yaml"
-done
-
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
-echo ""
-echo "==> Generation complete!"
-echo "    Secrets:        ${S3_DIR}/secrets/secrets.yaml"
-echo "    Talosconfig:    ${S3_DIR}/configs/talosconfig"
-echo "    CP configs:     ${S3_DIR}/generated/controlplane/"
-echo "    Worker configs: ${S3_DIR}/generated/worker/"
-echo ""
-echo "    Next steps:"
-echo "      make validate       # Validate generated configs"
-echo "      make apply-insecure # Apply to nodes (first time)"
-echo "      make apply          # Apply to nodes (after PKI)"
+echo "Generated six machine configs under ${STATE_ROOT}/generated."

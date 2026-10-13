@@ -1,0 +1,19 @@
+global:
+  nodeSelector:
+    nwarila.io/pool: management
+  tolerations:
+    - effect: NoSchedule
+      key: nwarila.io/management
+      operator: Exists
+  networkPolicy:
+    create: true
+    defaultDenyIngress: false
+
+dex:
+  enabled: false
+notifications:
+  enabled: false
+
+server:
+  service:
+    type: ClusterIP

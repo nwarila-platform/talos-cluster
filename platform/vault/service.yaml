@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-external
+  namespace: vault
+spec:
+  type: NodePort
+  externalTrafficPolicy: Cluster
+  ports:
+    - name: https
+      port: 8200
+      targetPort: 8200
+      nodePort: 30200
+  selector:
+    app.kubernetes.io/instance: vault
+    app.kubernetes.io/name: vault
+    component: server
+    vault-active: "true"

@@ -1,13 +1,10 @@
-# =============================================================================
-# Security — scheduled audits + PR secret scanning
-# =============================================================================
-name: Security Audit
+name: Secret Scan
 
 on:
-  schedule:
-    - cron: "0 6 * * 1"  # Weekly, Monday 06:00 UTC
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -15,232 +12,21 @@ permissions:
 
 jobs:
   gitleaks:
-    name: Gitleaks Secret Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-
       - name: Install gitleaks
         env:
           GITLEAKS_VERSION: 8.30.1
           GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
         run: |
           set -euo pipefail
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            -o gitleaks.tar.gz \
+          curl --proto '=https' --tlsv1.2 -fsSLo gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          printf '%s  gitleaks.tar.gz\n' "${GITLEAKS_SHA256}" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
-          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
-          gitleaks version
-
-      - name: Gitleaks Secret Scan
-        run: gitleaks detect --source . --verbose --redact --exit-code 1
-
-  config-audit:
-    name: Config Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # The image-signature guard shells out to `kubectl kustomize` to check the
-      # RENDERED policy set (a kustomize patch can otherwise rewrite the policy
-      # after the source-file checks pass), so this scheduled run needs kubectl.
-      # Version + sha256 are pinned as literals rather than fetched: pulling the
-      # checksum from the same host as the binary would add no integrity.
-      # Download-resilience flags mirror #339: force IPv4, retry, and fail a bad
-      # connect in 20s instead of hanging. This ubuntu-latest job was not affected
-      # by the ARC runner's Cilium policy. On ARC, the timeout was consistent
-      # with a policy drop; the manifest boundary plus successful downloads from
-      # allowlisted hosts makes that the best-supported explanation, not proof
-      # without a Hubble drop verdict. These flags are independent hardening, not
-      # evidence that an IPv6 path caused or fixed the ARC timeout.
-      - name: Install kubectl (pinned + checksum-verified)
-        run: |
-          set -euo pipefail
-          KUBECTL_VERSION="v1.36.3"
-          KUBECTL_SHA256="ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336"
-          bin="${RUNNER_TEMP}/kubectl"
-          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o "${bin}" \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-          echo "${KUBECTL_SHA256}  ${bin}" | sha256sum -c -
-          chmod +x "${bin}"
-          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
-          "${bin}" version --client
-
-      - name: Install YAML parser
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-yaml
-
-      - name: "Guard: first-party images are signature-policy-covered"
-        run: python3 scripts/check-image-signature-enforcement.py
-
-      - name: Check Talos firewall management ports
-        run: python3 scripts/check-firewall-management-ports.py
-
-      - name: Audit Talos config patches
-        run: |
-          echo "==> Auditing configuration patches..."
-          source cluster/config.env
-          FAIL=0
-
-          # 1. No secrets in patches
-          echo "--- Checking for embedded secrets ---"
-          if grep -rn "BEGIN.*PRIVATE KEY\|token:\s*[a-zA-Z0-9/+].\{20,\}\|password:\s*[a-zA-Z0-9].\{8,\}" cluster/patches/; then
-            echo "FAIL: Potential secrets found in config patches"
-            FAIL=1
-          else
-            echo "PASS: No embedded secrets detected"
-          fi
-
-          # 2. VIP consistency — a stale CLUSTER_VIP that doesn't match the
-          # per-CP vip.ip declarations or the kube-apiserver certSANs causes
-          # the floating control-plane address to either not float or to fail
-          # TLS validation. This check must enforce, not just report.
-          echo "--- Checking VIP consistency ---"
-          [ -n "${CLUSTER_VIP:-}" ] || { echo "FAIL: CLUSTER_VIP missing from cluster/config.env"; exit 1; }
-          echo "  Expected VIP: ${CLUSTER_VIP}"
-          VIP_RE="${CLUSTER_VIP//./\\.}"
-
-          if ! grep -q "^CLUSTER_ENDPOINT=\"https://${CLUSTER_VIP}:" cluster/config.env; then
-            echo "FAIL: CLUSTER_ENDPOINT does not target CLUSTER_VIP=${CLUSTER_VIP}"
-            FAIL=1
-          else
-            echo "PASS: CLUSTER_ENDPOINT targets the configured VIP"
-          fi
-
-          MISSING_VIP=()
-          for entry in ${CP_NODES}; do
-            hostname="${entry%%:*}"
-            patch="cluster/patches/${hostname}.yaml"
-            if ! grep -Eq "^[[:space:]]+ip:[[:space:]]+${VIP_RE}[[:space:]]*\$" "${patch}"; then
-              MISSING_VIP+=("${hostname}")
-            fi
-          done
-          if (( ${#MISSING_VIP[@]} > 0 )); then
-            echo "FAIL: CP node patches missing 'ip: ${CLUSTER_VIP}' VIP declaration: ${MISSING_VIP[*]}"
-            FAIL=1
-          else
-            echo "PASS: All CP node patches declare the VIP"
-          fi
-
-          # If controlplane.yaml declares certSANs explicitly, both lists must
-          # include the VIP:
-          #   - machine.certSANs           (Talos API server cert; talosctl)
-          #   - cluster.apiServer.certSANs (kube-apiserver cert; kubectl,
-          #                                 kubelet, in-cluster clients)
-          # If certSANs are intentionally omitted, Talos defaults carry the
-          # endpoint SANs; do not require explicit SANs just to satisfy CI.
-          if grep -q "certSANs:" cluster/patches/controlplane.yaml; then
-            sans_with_vip=$(grep -Ec "^[[:space:]]+-[[:space:]]+${VIP_RE}[[:space:]]*\$" cluster/patches/controlplane.yaml || true)
-            if (( sans_with_vip < 2 )); then
-              echo "FAIL: explicit controlplane.yaml certSANs must include VIP ${CLUSTER_VIP} in BOTH machine.certSANs and cluster.apiServer.certSANs (found ${sans_with_vip})"
-              FAIL=1
-            else
-              echo "PASS: explicit controlplane.yaml certSANs lists contain the VIP (${sans_with_vip} occurrences)"
-            fi
-          else
-            echo "PASS: controlplane.yaml omits certSANs; Talos defaults cover the configured endpoint"
-          fi
-
-          # 3. Version pinning check
-          # Enforce strict semver (vMAJOR.MINOR.PATCH with optional pre-release).
-          # The prior `*latest*` substring check passed empty strings, floating
-          # tags like "v1.12", branch names ("main", "stable"), and any alias
-          # that did not literally contain "latest" — defeating the supply-chain
-          # guarantee this audit claims to make.
-          echo "--- Checking version pinning ---"
-          echo "  Talos version:      ${TALOS_VERSION}"
-          echo "  Kubernetes version: ${KUBERNETES_VERSION}"
-          VERSION_RE='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
-          TALOS_OK=1; K8S_OK=1
-          if ! [[ "${TALOS_VERSION}" =~ $VERSION_RE ]]; then
-            echo "FAIL: TALOS_VERSION='${TALOS_VERSION}' is not a pinned semver (expected vMAJOR.MINOR.PATCH[-pre])"
-            FAIL=1; TALOS_OK=0
-          fi
-          if ! [[ "${KUBERNETES_VERSION}" =~ $VERSION_RE ]]; then
-            echo "FAIL: KUBERNETES_VERSION='${KUBERNETES_VERSION}' is not a pinned semver (expected vMAJOR.MINOR.PATCH[-pre])"
-            FAIL=1; K8S_OK=0
-          fi
-          if (( TALOS_OK == 1 && K8S_OK == 1 )); then
-            echo "PASS: Versions are pinned (semver)"
-          fi
-
-          # 4. README version truthfulness
-          echo "--- Checking README version truthfulness ---"
-          if ! python3 scripts/render-readme-versions.py --check; then
-            FAIL=1
-          fi
-
-          require_readme_literal() {
-            local literal="$1"
-            local description="$2"
-            if ! grep -Fq -- "${literal}" README.md; then
-              echo "FAIL: README.md missing ${description}: ${literal}"
-              FAIL=1
-            else
-              echo "PASS: README.md contains ${description}"
-            fi
-          }
-
-          require_readme_literal "--version \"\${CILIUM_VERSION}\"" "config.env-sourced Cilium install version"
-          require_readme_literal "--version \"\${LONGHORN_VERSION}\"" "config.env-sourced Longhorn install version"
-
-          # 5. All nodes have patches
-          echo "--- Checking node patch coverage ---"
-          for entry in ${CP_NODES} ${WORKER_NODES}; do
-            hostname="${entry%%:*}"
-            if [[ ! -f "cluster/patches/${hostname}.yaml" ]]; then
-              echo "FAIL: Missing patch file for ${hostname}"
-              FAIL=1
-            else
-              echo "PASS: ${hostname} has patch file"
-            fi
-          done
-
-          # 6. Per-node IP consistency between cluster/config.env and the
-          # patch's machine.network.interfaces[0].addresses entry. apply.sh
-          # targets the config.env IP with `talosctl apply-config --nodes`,
-          # so if the patch declares a different address, the node reboots
-          # onto an IP that is not in the inventory and goes silently
-          # unreachable. talosctl validate cannot catch this: both values
-          # are syntactically valid IPs in isolation.
-          echo "--- Checking per-node IP consistency ---"
-          IP_MISMATCH=()
-          for entry in ${CP_NODES} ${WORKER_NODES}; do
-            hostname="${entry%%:*}"
-            expected_ip="${entry##*:}"
-            patch="cluster/patches/${hostname}.yaml"
-            # Match only bare list items of the form `- <ip>/<cidr>` (the
-            # addresses: list). Excludes `- network: 0.0.0.0/0` (route key)
-            # and `vip.ip: <ip>` (no CIDR), so the VIP is not picked up.
-            patch_ip=$(grep -Eo "^[[:space:]]+-[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+[[:space:]]*\$" "${patch}" \
-              | grep -Eo "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1)
-            if [[ "${patch_ip}" != "${expected_ip}" ]]; then
-              IP_MISMATCH+=("${hostname} (config.env=${expected_ip}, patch=${patch_ip:-<missing>})")
-            fi
-          done
-          if (( ${#IP_MISMATCH[@]} > 0 )); then
-            echo "FAIL: Per-node IPs in cluster/patches/ drift from cluster/config.env:"
-            for m in "${IP_MISMATCH[@]}"; do
-              echo "  ${m}"
-            done
-            FAIL=1
-          else
-            echo "PASS: Per-node IPs match cluster/config.env"
-          fi
-
-          if [ "${FAIL}" -eq 1 ]; then
-            echo ""
-            echo "==> AUDIT FAILED"
-            exit 1
-          fi
-
-          echo ""
-          echo "==> AUDIT PASSED"
+          ./gitleaks dir . --redact --exit-code 1

@@ -1,0 +1,17 @@
+---
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: system_disk
+  maxSize: 25GiB
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: vault
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 32GiB
+  maxSize: 64GiB

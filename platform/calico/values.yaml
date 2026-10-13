@@ -1,0 +1,30 @@
+installation:
+  enabled: true
+  kubeletVolumePluginPath: None
+  kubernetesProvider: ""
+  cni:
+    type: Calico
+  calicoNetwork:
+    bgp: Disabled
+    linuxDataplane: Iptables
+    ipPools:
+      - blockSize: 26
+        cidr: 10.244.0.0/16
+        encapsulation: VXLAN
+        natOutgoing: Enabled
+        nodeSelector: all()
+  controlPlaneReplicas: 2
+  controlPlaneNodeSelector:
+    nwarila.io/pool: management
+  controlPlaneTolerations:
+    - effect: NoSchedule
+      key: nwarila.io/management
+      operator: Exists
+
+# Keep only the networking and NetworkPolicy data plane.
+apiServer:
+  enabled: false
+goldmane:
+  enabled: false
+whisker:
+  enabled: false

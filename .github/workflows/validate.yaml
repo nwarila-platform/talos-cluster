@@ -1,409 +1,86 @@
-# =============================================================================
-# Validate - always runs on PRs so it can become a required check and so doc
-# guards cover README, explanation, compliance, and other documentation changes.
-# =============================================================================
 name: Validate
 
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Check tracked text encoding
-        run: python scripts/check-text-encoding.py
-
-      - name: Test read-only Talos drift checker
+      - name: Install pinned talosctl
         run: |
-          python scripts/test-talos-drift-readonly.py
-          python scripts/render-talos-drift-expected.py --check
+          set -euo pipefail
+          source cluster/config.env
+          curl --proto '=https' --tlsv1.2 -fsSLo talosctl \
+            "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
+          curl --proto '=https' --tlsv1.2 -fsSLo sha256sum.txt \
+            "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/sha256sum.txt"
+          expected="$(awk '$2=="talosctl-linux-amd64" {print $1}' sha256sum.txt)"
+          printf '%s  talosctl\n' "${expected}" | sha256sum -c -
+          chmod 0755 talosctl
+          sudo mv talosctl /usr/local/bin/talosctl
 
       - name: Install lint tools
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y shellcheck yamllint
-
-      - name: ShellCheck
-        run: shellcheck -S warning scripts/*.sh
-
-      - name: YAML Lint
-        run: |
-          yamllint -d '{extends: default, rules: {line-length: {max: 200}, truthy: {check-keys: false}, comments: {min-spaces-from-content: 1}}}' cluster/ addons/
-
-      - name: "Lint: GitHub Actions workflows (actionlint, pinned + checksum-verified)"
-        run: |
-          set -euo pipefail
-          ACTIONLINT_VERSION=$(grep '^ACTIONLINT_VERSION=' cluster/config.env | cut -d'"' -f2)
-          [ -n "${ACTIONLINT_VERSION}" ] || { echo "ACTIONLINT_VERSION missing from cluster/config.env"; exit 1; }
-          ver="${ACTIONLINT_VERSION#v}"
+          source cluster/config.env
+          version="${ACTIONLINT_VERSION#v}"
+          archive="actionlint_${version}_linux_amd64.tar.gz"
           base="https://github.com/rhysd/actionlint/releases/download/${ACTIONLINT_VERSION}"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "actionlint_${ver}_linux_amd64.tar.gz" "${base}/actionlint_${ver}_linux_amd64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL -o "actionlint_${ver}_checksums.txt" "${base}/actionlint_${ver}_checksums.txt"
-          grep "  actionlint_${ver}_linux_amd64.tar.gz$" "actionlint_${ver}_checksums.txt" | sha256sum -c -
-          tar -xzf "actionlint_${ver}_linux_amd64.tar.gz" actionlint
-          ./actionlint -color
+          curl --proto '=https' --tlsv1.2 -fsSLo "${archive}" "${base}/${archive}"
+          curl --proto '=https' --tlsv1.2 -fsSLo actionlint-checksums.txt "${base}/actionlint_${version}_checksums.txt"
+          grep "  ${archive}$" actionlint-checksums.txt | sha256sum -c -
+          tar -xzf "${archive}" actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
 
-  maintenance-iso:
-    name: Maintenance ISO Guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Validate maintenance ISO builder guard
+      - name: Generate and validate Talos configs
         run: |
-          bash -n scripts/build-maintenance-iso.sh
-          bash scripts/build-maintenance-iso.sh --self-test
-
-  validate-configs:
-    name: Validate Configs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install talosctl (pinned to cluster TALOS_VERSION)
-        run: |
-          # Pin to the cluster's Talos version (cluster/config.env) instead of
-          # piping the upstream installer to sh, which always fetches the
-          # latest release. CI must validate against the same talosctl version
-          # the cluster runs, and the asset + checksum must be auditable from
-          # the workflow file alone.
           set -euo pipefail
-          TALOS_VERSION=$(grep '^TALOS_VERSION=' cluster/config.env | cut -d'"' -f2)
-          [ -n "${TALOS_VERSION}" ] || { echo "TALOS_VERSION missing from cluster/config.env"; exit 1; }
-          url="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
-          sums="https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/sha256sum.txt"
-          curl --proto '=https' --tlsv1.2 -fsSL -o talosctl "${url}"
-          curl --proto '=https' --tlsv1.2 -fsSL -o sha256sum.txt "${sums}"
-          expected=$(awk '$2=="talosctl-linux-amd64"{print $1}' sha256sum.txt)
-          actual=$(sha256sum talosctl | awk '{print $1}')
-          [ "${expected}" = "${actual}" ] || { echo "talosctl checksum mismatch: expected=${expected} actual=${actual}"; exit 1; }
-          chmod +x talosctl
-          sudo mv talosctl /usr/local/bin/talosctl
-          talosctl version --client --short
-
-      - name: Generate configs (throwaway secrets)
-        run: |
-          mkdir -p .s3/secrets .s3/configs .s3/generated/controlplane .s3/generated/worker
-          talosctl gen secrets -o .s3/secrets/secrets.yaml
+          export STATE_DIR_OVERRIDE="${RUNNER_TEMP}/talos-state"
           bash scripts/generate.sh
+          bash scripts/validate.sh
 
-      - name: Validate control plane configs
-        run: |
-          for f in .s3/generated/controlplane/*.yaml; do
-            echo "Validating ${f}..."
-            talosctl validate --config "${f}" --mode metal --strict
-          done
-
-      - name: Validate worker configs
-        run: |
-          for f in .s3/generated/worker/*.yaml; do
-            echo "Validating ${f}..."
-            talosctl validate --config "${f}" --mode metal --strict
-          done
-
-  validate-kustomize:
-    name: Validate Flux Kustomize
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install kubectl (pinned to cluster KUBERNETES_VERSION)
+      - name: Render pinned Helm charts
         run: |
           set -euo pipefail
-          KUBERNETES_VERSION=$(grep '^KUBERNETES_VERSION=' cluster/config.env | cut -d'"' -f2)
-          [ -n "${KUBERNETES_VERSION}" ] || { echo "KUBERNETES_VERSION missing from cluster/config.env"; exit 1; }
-          url="https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/linux/amd64/kubectl"
-          curl --proto '=https' --tlsv1.2 -4 --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 -fsSL -o kubectl "${url}"
-          # Digest of the kubectl release pinned by KUBERNETES_VERSION in cluster/config.env.
-          # In-repo BY DESIGN: fetching it from dl.k8s.io — the same origin as the binary — lets a
-          # substituted-but-self-consistent pair pass (proven: _handoff/steps/evidence-same-host-regression/).
-          # Bumping KUBERNETES_VERSION REQUIRES updating this literal in the same PR.
-          KUBECTL_SHA256="ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336"
-          expected="${KUBECTL_SHA256}"
-          actual=$(sha256sum kubectl | awk '{print $1}')
-          [[ "${KUBECTL_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo "kubectl checksum is not a lowercase SHA-256 digest"; exit 1; }
-          [ "${expected}" = "${actual}" ] || {
-            echo "kubectl digest mismatch for ${KUBERNETES_VERSION}: expected=${expected} actual=${actual}"
-            echo "If KUBERNETES_VERSION was just bumped, update KUBECTL_SHA256 in this file to the new release digest."
-            exit 1
-          }
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-          version_output=$(/usr/local/bin/kubectl version --client=true)
-          printf '%s\n' "${version_output}"
-          installed=$(printf '%s\n' "${version_output}" | awk '/^Client Version:/{print $3}')
-          [ "${installed}" = "${KUBERNETES_VERSION}" ] || {
-            echo "kubectl reports ${installed}, but cluster/config.env pins ${KUBERNETES_VERSION}"; exit 1; }
+          source cluster/config.env
+          helm repo add projectcalico https://docs.tigera.io/calico/charts
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo add hashicorp https://helm.releases.hashicorp.com
+          helm repo update
+          helm lint projectcalico/tigera-operator --version "${CALICO_VERSION}" \
+            --values platform/calico/values.yaml --strict
+          helm template calico projectcalico/tigera-operator \
+            --version "${CALICO_VERSION}" --namespace tigera-operator \
+            --api-versions admissionregistration.k8s.io/v1/MutatingAdmissionPolicy \
+            --values platform/calico/values.yaml >/dev/null
+          helm lint argo/argo-cd --version "${ARGO_CD_VERSION}" \
+            --values platform/argocd/values.yaml --strict
+          helm template argocd argo/argo-cd \
+            --version "${ARGO_CD_VERSION}" --namespace argocd \
+            --values platform/argocd/values.yaml >/dev/null
+          helm lint hashicorp/vault --version "${VAULT_CHART_VERSION}" \
+            --values platform/vault/values.yaml --strict
+          helm template vault hashicorp/vault \
+            --version "${VAULT_CHART_VERSION}" --namespace vault \
+            --values platform/vault/values.yaml >/dev/null
 
-      - name: Install YAML parser
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-yaml
-
-      - name: "Guard + CREATE-only Kyverno fixtures: tunnel binding"
-        run: bash docs/kyverno-tests/restrict-tunnel-binding/validate.sh
-
-      - name: "Guard + core Kyverno fixtures: tunnel hostnames and backends"
-        run: bash docs/kyverno-tests/restrict-tunnel-hostnames/validate.sh
-
-      - name: "Guard: per-node Talos patches match config.env + systems"
-        run: python3 scripts/check-node-patch-consistency.py
-
-      - name: "Guard self-test: node-patch consistency guard bites"
-        run: python3 scripts/check-node-patch-consistency.selftest.py
-
-      - name: "Guard: declared SOPS secrets are actually encrypted"
-        run: python3 scripts/check-sops-encrypted.py
-
-      - name: "Guard self-test: SOPS-encrypted guard bites"
-        run: python3 scripts/check-sops-encrypted.selftest.py
-
-      - name: "Guard: internal doc links resolve"
-        run: python3 scripts/check-doc-links.py
-
-      - name: "Guard self-test: doc-link guard bites"
-        run: python3 scripts/check-doc-links.selftest.py
-
-      - name: "Renderer check: DR schedule values are current"
-        run: python3 scripts/render-dr-schedule-values.py --check
-
-      - name: "Renderer self-test: DR schedule value renderer bites"
-        run: python3 scripts/render-dr-schedule-values.selftest.py
-
-      - name: "Renderer check: scripts README line counts are current"
-        run: python3 scripts/render-scripts-readme-counts.py --check
-
-      - name: "Renderer self-test: scripts README line-count renderer bites"
-        run: python3 scripts/render-scripts-readme-counts.selftest.py
-
-      - name: "Guard: first-party image digests are pinned and in sync"
-        run: python3 scripts/check-image-digest-sync.py
-
-      - name: "Guard self-test: image digest guard bites"
-        run: python3 scripts/check-image-digest-sync.selftest.py
-
-      - name: "Guard: Flux CRD served/storage versions match expected map"
-        run: python3 scripts/check-flux-crd-served-versions.py
-
-      - name: "Guard self-test: Flux CRD served-version guard bites"
-        run: python3 scripts/check-flux-crd-served-versions.selftest.py
-
-      - name: "Guard: first-party images are signature-policy-covered"
-        run: python3 scripts/check-image-signature-enforcement.py
-
-      - name: "Guard self-test: image-signature-enforcement guard bites"
-        run: python3 scripts/check-image-signature-enforcement.selftest.py
-
-      - name: "Guard: ARC runner GitHub-egress CNP host sets match"
-        run: python3 scripts/check-runner-cnp-github-parity.py
-
-      - name: "Guard self-test: runner CNP GitHub-egress parity guard bites"
-        run: python3 scripts/check-runner-cnp-github-parity.selftest.py
-
-      - name: "Guard: per-tunnel Cloudflare Tunnel isolation"
-        run: python3 scripts/check-tunnel-isolation.py
-
-      - name: "Guard self-test: tunnel-isolation guard bites"
-        run: python3 scripts/check-tunnel-isolation.selftest.py
-
-      - name: "Guard self-test: tunnel-hostname registration state machine"
-        run: python3 scripts/register-tunnel-hostname.selftest.py
-
-      - name: "Guard self-test: workflow-health stale-exception logic"
-        run: python3 scripts/check-workflow-health.selftest.py
-
-      - name: "Guard: no orphaned Renovate annotations"
-        run: python3 scripts/check-renovate-coverage.py
-
-      - name: "Guard self-test: renovate-coverage guard bites"
-        run: python3 scripts/check-renovate-coverage.selftest.py
-
-      - name: "Guard: Longhorn addon values match Flux HelmRelease"
-        run: python3 scripts/check-longhorn-values-sync.py
-
-      - name: "Guard: Cilium addon values and version match Flux HelmRelease"
-        run: python3 scripts/check-cilium-values-sync.py
-
-      - name: "Guard: kubelet-csr-approver addon values match Flux HelmRelease"
-        run: python3 scripts/check-kubelet-csr-approver-values-sync.py
-
-      - name: "Guard self-test: kubelet-csr-approver values guard bites"
-        run: python3 scripts/check-kubelet-csr-approver-values-sync.selftest.py
-
-      - name: "Guard: node inventory matches config.env"
-        run: python3 scripts/check-node-inventory-sync.py
-
-      - name: "Guard: no template placeholder leak"
-        run: bash scripts/check-no-placeholder-leak.sh
-
-      - name: "Guard: Vault-fold invariants"
-        run: bash scripts/check-vault-fold-invariants.sh
-
-      - name: "Guard: live Vault generate-root stays scratch-only"
-        run: bash scripts/check-live-vault-config-invariants.sh
-
-      - name: "Guard: managed Vault policy HCL cannot escalate privilege"
-        run: python3 scripts/check-vault-policy-no-escalation.py
-
-      - name: "Guard self-test: Vault policy escalation guard bites"
-        run: python3 scripts/check-vault-policy-no-escalation.selftest.py
-
-      - name: "Guard self-test: rendered inventory helper fails closed"
-        run: python3 scripts/rendered-inventory.selftest.py
-
-      - name: "Guard self-test: review-evidence builder fails closed"
-        run: python3 scripts/build-review-evidence.selftest.py
-
-      - name: "Guard: Flux owner desired-build inventory is renderable"
-        run: python3 scripts/rendered-inventory.py --all-paths
-
-      - name: "Guard: vault-config-operator bootstrap identity invariants"
-        run: python3 scripts/check-vault-config-operator-bootstrap-invariants.py
-
-      - name: "Guard self-test: bootstrap-invariant guard bites"
-        run: python3 scripts/check-vault-config-operator-bootstrap-invariants.selftest.py
-
-      - name: "Guard: jwt-github foundation invariants"
-        run: python3 scripts/check-vault-jwt-github-invariants.py
-
-      - name: "Guard self-test: jwt-github foundation guard bites"
-        run: python3 scripts/check-vault-jwt-github-invariants.selftest.py
-
-      - name: "Guard self-test: adoption-parity projections bite"
-        run: python3 scripts/vault-config/verify-adoption-parity.selftest.py
-
-      - name: "Guard: vault-config reference safety (S6b prune precondition)"
-        run: python3 scripts/check-vault-config-reference-safety.py
-
-      - name: "Guard self-test: reference-safety guard bites"
-        run: python3 scripts/check-vault-config-reference-safety.selftest.py
-
-
-      - name: "Guard self-test: stuck-Terminating detector bites (S7 #133)"
-        run: python3 scripts/check-vault-config-terminating.selftest.py
-
-      - name: "Guard self-test: sigstore-pin drift detector bites (CP-1)"
-        run: python3 scripts/check-sigstore-pin-verification.selftest.py
-
-      - name: "Guard: Vault restore-validator boundary"
-        run: bash scripts/check-vault-restore-validator-boundaries.sh
-
-      - name: "Guard self-test: restore-validator boundary regression"
-        run: python3 scripts/check-vault-restore-validator-boundaries.selftest.py
-
-      - name: Check rendered resource namespaces
+      - name: Reject tracked runtime secrets
         run: |
           set -euo pipefail
-          rendered="$(mktemp)"
-          kubectl kustomize clusters/talos-cluster >"${rendered}"
-
-          python3 - "${rendered}" <<'PY'
-          import re
-          import sys
-
-          cluster_scoped_kinds = {
-              "APIService",
-              "CiliumClusterwideNetworkPolicy",
-              "ClusterPolicy",
-              "ClusterRole",
-              "ClusterRoleBinding",
-              "CustomResourceDefinition",
-              "GatewayClass",
-              "MutatingWebhookConfiguration",
-              "Namespace",
-              "PriorityClass",
-              "StorageClass",
-              "ValidatingPolicy",
-              "ValidatingAdmissionPolicy",
-              "ValidatingAdmissionPolicyBinding",
-              "ValidatingWebhookConfiguration",
-          }
-
-          def top_level_field(lines, field):
-              prefix = f"{field}:"
-              for line in lines:
-                  if line.startswith(prefix):
-                      return line.split(":", 1)[1].strip()
-              return ""
-
-          def metadata_field(lines, field):
-              in_metadata = False
-              prefix = f"  {field}:"
-              for line in lines:
-                  if line == "metadata:":
-                      in_metadata = True
-                      continue
-                  if not in_metadata:
-                      continue
-                  if line and not line.startswith(" "):
-                      break
-                  if line.startswith(prefix):
-                      return line.split(":", 1)[1].strip()
-              return ""
-
-          with open(sys.argv[1], encoding="utf-8") as handle:
-              rendered = handle.read()
-
-          missing = []
-          for index, doc in enumerate(re.split(r"(?m)^---\s*$", rendered), start=1):
-              lines = [line.rstrip("\r") for line in doc.splitlines()]
-              kind = top_level_field(lines, "kind")
-              if not kind:
-                  continue
-              namespace = metadata_field(lines, "namespace")
-              if namespace or kind in cluster_scoped_kinds:
-                  continue
-              name = metadata_field(lines, "name") or f"document-{index}"
-              missing.append(f"{kind}/{name}")
-
-          if missing:
-              print("Rendered namespaced resources missing metadata.namespace:")
-              for resource in missing:
-                  print(f"- {resource}")
-              sys.exit(1)
-          PY
-
-  secret-scan:
-    name: Secret Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Check for hardcoded secrets in tracked files
-        run: |
-          echo "==> Scanning for secrets in tracked files..."
-          FAIL=0
-
-          if grep -rn "BEGIN.*PRIVATE KEY" --include="*.yaml" --include="*.yml" cluster/ addons/ scripts/; then
-            echo "FAIL: Private keys found in tracked files!"
-            FAIL=1
-          fi
-
-          if grep -rn "token:\s*[a-zA-Z0-9/+].\{20,\}" --include="*.yaml" --include="*.yml" cluster/ addons/; then
-            echo "FAIL: Possible embedded tokens in cluster configs!"
-            FAIL=1
-          fi
-
-          if [ "${FAIL}" -eq 1 ]; then
+          if git ls-files | grep -E '(^|/)(\.state|\.s3)/|kubeconfig$|talosconfig$|init\.json$|\.(key|pem)$'; then
+            echo "runtime secret material is tracked" >&2
             exit 1
           fi
-
-          echo "==> No secrets detected."
