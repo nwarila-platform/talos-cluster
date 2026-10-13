@@ -60,21 +60,29 @@ jobs:
           helm repo add argo https://argoproj.github.io/argo-helm
           helm repo add hashicorp https://helm.releases.hashicorp.com
           helm repo update
-          helm lint projectcalico/tigera-operator --version "${CALICO_VERSION}" \
+          charts="${RUNNER_TEMP}/charts"
+          mkdir -p "${charts}"
+          helm pull projectcalico/tigera-operator --version "${CALICO_VERSION}" \
+            --untar --untardir "${charts}"
+          helm pull argo/argo-cd --version "${ARGO_CD_VERSION}" \
+            --untar --untardir "${charts}"
+          helm pull hashicorp/vault --version "${VAULT_CHART_VERSION}" \
+            --untar --untardir "${charts}"
+          helm lint "${charts}/tigera-operator" \
             --values platform/calico/values.yaml --strict
-          helm template calico projectcalico/tigera-operator \
-            --version "${CALICO_VERSION}" --namespace tigera-operator \
+          helm template calico "${charts}/tigera-operator" \
+            --namespace tigera-operator \
             --api-versions admissionregistration.k8s.io/v1/MutatingAdmissionPolicy \
             --values platform/calico/values.yaml >/dev/null
-          helm lint argo/argo-cd --version "${ARGO_CD_VERSION}" \
+          helm lint "${charts}/argo-cd" \
             --values platform/argocd/values.yaml --strict
-          helm template argocd argo/argo-cd \
-            --version "${ARGO_CD_VERSION}" --namespace argocd \
+          helm template argocd "${charts}/argo-cd" \
+            --namespace argocd \
             --values platform/argocd/values.yaml >/dev/null
-          helm lint hashicorp/vault --version "${VAULT_CHART_VERSION}" \
+          helm lint "${charts}/vault" \
             --values platform/vault/values.yaml --strict
-          helm template vault hashicorp/vault \
-            --version "${VAULT_CHART_VERSION}" --namespace vault \
+          helm template vault "${charts}/vault" \
+            --namespace vault \
             --values platform/vault/values.yaml >/dev/null
 
       - name: Reject tracked runtime secrets
