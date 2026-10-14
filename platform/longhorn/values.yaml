@@ -21,7 +21,8 @@ defaultSettings:
   defaultDataPath: /var/mnt/longhorn
 
   # Tolerate the management taint on Longhorn system-managed components:
-  # instance-manager, engine-image, CSI plugin and CSI controller sidecars.
+  # instance-manager, engine-image, CSI plugin and CSI controller sidecars,
+  # share-manager, backing-image-manager/data-source and recurring-job pods.
   taintToleration: "nwarila.io/management:NoSchedule"
 
   # 2-way replication remains the small-cluster default for ordinary PVCs:
@@ -45,9 +46,9 @@ defaultSettings:
   # cluster's workloads warrant.
   storageMinimalAvailablePercentage: 10
 
-  # One engine upgrade in flight per node, ever. Lets `helm upgrade`
-  # do a rolling engine rollout without flapping multiple nodes at once.
-  # Chart default is 0 (disabled).
+  # At most one automatic engine upgrade in flight per node (engines on
+  # different nodes may upgrade concurrently) after a Longhorn `helm upgrade`.
+  # Chart default is 0 (automatic engine upgrade disabled).
   concurrentAutomaticEngineUpgradePerNodeLimit: 1
 
   # Auto-attach detached volumes to make them eligible for RecurringJob runs
@@ -67,9 +68,12 @@ defaultBackupStore:
   backupTarget: "nfs://10.69.128.115:/volume1/longhorn-backup?nfsOptions=nfsvers=4.1,actimeo=1"
   backupTargetCredentialSecret: ""
 
-# Tolerate the management NoSchedule taint on the storage-plane components
-# that need to run on all six nodes; longhorn-ui intentionally stays worker-only
-# because it is not a per-node storage component.
+# Tolerate the management NoSchedule taint on the user-deployed Longhorn
+# components: longhornManager covers the longhorn-manager DaemonSet (which must
+# run on all six nodes) and the chart's upgrade/uninstall hook Jobs;
+# longhornDriver covers the single longhorn-driver-deployer pod, which may
+# therefore land on a control plane. longhorn-ui has no toleration and stays
+# on workers.
 longhornManager:
   tolerations:
     - key: nwarila.io/management

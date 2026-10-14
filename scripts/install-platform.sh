@@ -42,6 +42,7 @@ kubectl apply -f "${ROOT_DIR}/platform/longhorn/namespace.yaml"
 helm upgrade --install longhorn longhorn/longhorn \
     --version "${LONGHORN_VERSION}" --namespace longhorn-system \
     --values "${ROOT_DIR}/platform/longhorn/values.yaml" --wait --timeout 15m
+kubectl apply -f "${ROOT_DIR}/platform/longhorn/recurringjob-default-backup.yaml"
 
 helm upgrade --install argocd argo/argo-cd \
     --version "${ARGO_CD_VERSION}" --namespace argocd --create-namespace \

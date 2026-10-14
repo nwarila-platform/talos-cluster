@@ -29,4 +29,20 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           printf '%s  gitleaks.tar.gz\n' "${GITLEAKS_SHA256}" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
-          ./gitleaks dir . --redact --exit-code 1
+      - name: Scan git history
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            [[ -n "${BASE_SHA}" ]] || {
+              echo "ERROR: BASE_SHA is required for pull_request scans" >&2
+              exit 1
+            }
+            ./gitleaks git . --redact --exit-code 1 --log-opts="${BASE_SHA}..HEAD"
+          else
+            ./gitleaks git . --redact --exit-code 1 --log-opts="--all"
+          fi
+      - name: Scan working tree
+        run: ./gitleaks dir . --redact --exit-code 1

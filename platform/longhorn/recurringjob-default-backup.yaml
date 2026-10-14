@@ -1,0 +1,17 @@
+# Restored from the pre-rebuild Longhorn configuration; backs up the default
+# RecurringJob group to the defaultBackupStore target.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: default-daily-backup
+  namespace: longhorn-system
+spec:
+  name: default-daily-backup
+  task: backup
+  cron: "17 8 * * *"
+  retain: 14
+  concurrency: 1
+  groups:
+    - default
+  labels:
+    backup.nwarila.io/stage: dr-stage-1

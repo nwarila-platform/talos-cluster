@@ -5,7 +5,8 @@ machine:
     nwarila.io/management: NoSchedule
 cluster:
   # Replace Talos' default control-plane taint with the explicit management
-  # taint above. Only platform services (Calico, Longhorn, Argo CD, Vault) tolerate it.
+  # taint above. Only platform services (Calico, Longhorn, Argo CD, Vault) and
+  # Talos' kube-proxy DaemonSet (which tolerates every NoSchedule taint) tolerate it.
   allowSchedulingOnControlPlanes: true
   apiServer:
     admissionControl:

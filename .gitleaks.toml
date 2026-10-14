@@ -1,2 +1,13 @@
 [extend]
 useDefault = true
+
+# These IDs identify public Cloudflare resources: `fb6932d9-c6e4-4ccb-8e4c-dee47aa05313`
+# is the `nwp-mtls` tunnel ID, and `9bea7759-a20e-4496-afb5-efb454eeec50` is an
+# Access application ID. They are not credentials and are allowlisted because
+# the history scan covers commits and branches where they appear.
+[[allowlists]]
+description = "Cloudflare tunnel ID and Access application ID"
+regexes = [
+  '''^fb6932d9-c6e4-4ccb-8e4c-dee47aa05313$''',
+  '''^9bea7759-a20e-4496-afb5-efb454eeec50$''',
+]

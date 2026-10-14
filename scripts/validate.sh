@@ -5,26 +5,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${ROOT_DIR}/cluster/config.env"
 
+for command in shellcheck yamllint actionlint kubectl; do
+    command -v "${command}" >/dev/null || {
+        echo "ERROR: ${command} is required (make init)" >&2
+        exit 1
+    }
+done
+
 for script in "${ROOT_DIR}"/scripts/*.sh; do
     bash -n "${script}"
 done
 
-if command -v shellcheck >/dev/null; then
-    shellcheck -x "${ROOT_DIR}"/scripts/*.sh
-fi
+shellcheck -x "${ROOT_DIR}"/scripts/*.sh
 
-if command -v yamllint >/dev/null; then
-    yamllint -d '{extends: default, rules: {line-length: {max: 200}, document-start: disable, truthy: {check-keys: false}}}' \
-        "${ROOT_DIR}/cluster" "${ROOT_DIR}/platform" "${ROOT_DIR}/.github/workflows"
-fi
+yamllint -d '{extends: default, rules: {line-length: {max: 200}, document-start: disable, truthy: {check-keys: false}}}' \
+    "${ROOT_DIR}/cluster" "${ROOT_DIR}/platform" "${ROOT_DIR}/.github/workflows"
 
-if command -v actionlint >/dev/null; then
-    actionlint "${ROOT_DIR}"/.github/workflows/*.yaml
-fi
+actionlint "${ROOT_DIR}"/.github/workflows/*.yaml
 
-if command -v kubectl >/dev/null; then
-    kubectl kustomize "${ROOT_DIR}/platform/vault" >/dev/null
-fi
+kubectl kustomize "${ROOT_DIR}/platform/vault" >/dev/null
 
 STATE_ROOT="${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}"
 shopt -s nullglob

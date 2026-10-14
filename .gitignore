@@ -30,6 +30,7 @@
 !platform/longhorn/
 !platform/longhorn/values.yaml
 !platform/longhorn/namespace.yaml
+!platform/longhorn/recurringjob-default-backup.yaml
 !platform/argocd/
 !platform/argocd/values.yaml
 !platform/vault/

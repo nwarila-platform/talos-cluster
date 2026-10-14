@@ -98,7 +98,7 @@ for entry in ${CP_NODES}; do
 done
 require_cert_match -checkip 127.0.0.1
 
-kubectl create namespace vault --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f "${ROOT_DIR}/platform/vault/namespace.yaml"
 kubectl -n vault create secret generic vault-server-tls \
     --from-file=ca.crt="${TLS_DIR}/ca.crt" \
     --from-file=tls.crt="${TLS_DIR}/tls.crt" \
