@@ -20,9 +20,9 @@ defaultSettings:
   # 50-240 GiB on workers).
   defaultDataPath: /var/mnt/longhorn
 
-  # Tolerate the management taint on Longhorn system-managed components:
-  # instance-manager, engine-image, CSI plugin and CSI controller sidecars,
-  # share-manager, backing-image-manager/data-source and recurring-job pods.
+  # Tolerate the management taint on every Longhorn system-managed component
+  # (instance-manager, engine-image, CSI plugin and sidecars, share-manager,
+  # backing-image, recurring-job, support-bundle and system-restore pods, among others).
   taintToleration: "nwarila.io/management:NoSchedule"
 
   # 2-way replication remains the small-cluster default for ordinary PVCs:

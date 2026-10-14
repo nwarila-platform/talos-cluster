@@ -35,14 +35,75 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          git log --remerge-diff -1 HEAD >/dev/null || {
+            echo "ERROR: git in this runner does not support --remerge-diff" >&2
+            exit 1
+          }
+          is_shallow="$(git rev-parse --is-shallow-repository)"
+          [[ "${is_shallow}" == "false" ]] || {
+            echo "ERROR: history checkout is shallow" >&2
+            exit 1
+          }
+          preflight_git_log() {
+            local git_stderr
+            if ! git_stderr="$(git log -p -U0 "$@" 2>&1 >/dev/null)"; then
+              printf 'ERROR: git history preflight failed\n%s\n' "${git_stderr}" >&2
+              exit 1
+            fi
+            [[ -z "${git_stderr}" ]] || {
+              printf 'ERROR: git history preflight wrote to stderr\n%s\n' "${git_stderr}" >&2
+              exit 1
+            }
+          }
+          reject_octopus_merges() {
+            local octopus_count
+            octopus_count="$(git rev-list --count --min-parents=3 "$@")"
+            (( octopus_count == 0 )) || {
+              echo "ERROR: ${octopus_count} octopus merge commit(s) cannot be remerge-diff scanned" >&2
+              exit 1
+            }
+          }
+          run_gitleaks_git() {
+            local scan_log scan_rc=0
+            scan_log="$(mktemp)"
+            ./gitleaks git . --redact --exit-code 1 --log-opts="$1" >"${scan_log}" 2>&1 || scan_rc=$?
+            cat "${scan_log}"
+            if sed 's/\x1b\[[0-9;]*m//g' "${scan_log}" |
+              grep -E '(^|[[:space:]])ERR[[:space:]]' >/dev/null; then
+              echo "ERROR: gitleaks logged an internal error; failing the scan" >&2
+              exit 1
+            fi
+            return "${scan_rc}"
+          }
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             [[ -n "${BASE_SHA}" ]] || {
               echo "ERROR: BASE_SHA is required for pull_request scans" >&2
               exit 1
             }
-            ./gitleaks git . --redact --exit-code 1 --log-opts="${BASE_SHA}..HEAD"
+            git rev-parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null || {
+              echo "ERROR: BASE_SHA ${BASE_SHA} is not present in the checkout" >&2
+              exit 1
+            }
+            git rev-parse --verify --quiet 'HEAD^2^{commit}' >/dev/null || {
+              echo "ERROR: HEAD is not a pull-request merge commit" >&2
+              exit 1
+            }
+            git merge-base --is-ancestor "${BASE_SHA}" HEAD^1 || {
+              echo "ERROR: BASE_SHA ${BASE_SHA} is not in HEAD's base history" >&2
+              exit 1
+            }
+            commit_count="$(git rev-list --count "${BASE_SHA}..HEAD^2")"
+            (( commit_count >= 1 )) || {
+              echo "ERROR: no commits in ${BASE_SHA}..HEAD^2" >&2
+              exit 1
+            }
+            reject_octopus_merges "${BASE_SHA}..HEAD"
+            preflight_git_log --no-renames --remerge-diff "${BASE_SHA}..HEAD"
+            run_gitleaks_git "--no-renames --remerge-diff ${BASE_SHA}..HEAD"
           else
-            ./gitleaks git . --redact --exit-code 1 --log-opts="--all"
+            reject_octopus_merges --all
+            preflight_git_log --no-renames --remerge-diff --all
+            run_gitleaks_git "--no-renames --remerge-diff --all"
           fi
       - name: Scan working tree
         run: ./gitleaks dir . --redact --exit-code 1
