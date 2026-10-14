@@ -29,3 +29,25 @@ provisioning:
     match: system_disk
   minSize: 32GiB
   maxSize: 64GiB
+encryption:
+  provider: luks2
+  keys:
+    - slot: 0
+      tpm: {}
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: longhorn
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 50GiB
+  # Capped at 140GiB rather than 240GiB so vault plus Longhorn fits the
+  # smallest CP's largest contiguous allocatable range after EPHEMERAL,
+  # measured with `talosctl get discoveredvolumes`, with alignment headroom.
+  maxSize: 140GiB
+encryption:
+  provider: luks2
+  keys:
+    - slot: 0
+      tpm: {}

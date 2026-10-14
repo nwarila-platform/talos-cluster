@@ -38,6 +38,8 @@ talosctl gen config "${CLUSTER_NAME}" "${CLUSTER_ENDPOINT}" \
     --force
 
 install -m 0600 "${TEMP_DIR}/talosconfig" "${STATE_ROOT}/configs/talosconfig"
+cp_ips=(); for entry in ${CP_NODES}; do cp_ips+=("${entry##*:}"); done
+talosctl --talosconfig "${STATE_ROOT}/configs/talosconfig" config endpoint "${cp_ips[@]}"
 
 set_hostname() {
     local config_file="$1"

@@ -72,3 +72,13 @@ portSelector:
 ingress:
   - subnet: 10.69.12.0/24
   - subnet: 10.69.112.0/24
+---
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-longhorn-iscsi
+portSelector:
+  ports: [3260]
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24

@@ -57,12 +57,27 @@ jobs:
           set -euo pipefail
           source cluster/config.env
           helm repo add projectcalico https://docs.tigera.io/calico/charts
+          helm repo add longhorn https://charts.longhorn.io
           helm repo add argo https://argoproj.github.io/argo-helm
           helm repo add hashicorp https://helm.releases.hashicorp.com
           helm repo update
           charts="${RUNNER_TEMP}/charts"
           mkdir -p "${charts}"
+          helm template calico-crds projectcalico/crd.projectcalico.org.v1 \
+            --version "${CALICO_VERSION}" >"${charts}/calico-crds.yaml"
+          crd_count="$(grep -c '^kind: CustomResourceDefinition$' "${charts}/calico-crds.yaml")"
+          [[ "${crd_count}" == "32" ]] || {
+            echo "expected 32 Calico CRDs, rendered ${crd_count}" >&2
+            exit 1
+          }
+          crd_name_count="$(grep -c '^  name: installations.operator.tigera.io$' "${charts}/calico-crds.yaml")"
+          [[ "${crd_name_count}" == "1" ]] || {
+            echo "expected one installations.operator.tigera.io CRD, rendered ${crd_name_count}" >&2
+            exit 1
+          }
           helm pull projectcalico/tigera-operator --version "${CALICO_VERSION}" \
+            --untar --untardir "${charts}"
+          helm pull longhorn/longhorn --version "${LONGHORN_VERSION}" \
             --untar --untardir "${charts}"
           helm pull argo/argo-cd --version "${ARGO_CD_VERSION}" \
             --untar --untardir "${charts}"
@@ -74,6 +89,11 @@ jobs:
             --namespace tigera-operator \
             --api-versions admissionregistration.k8s.io/v1/MutatingAdmissionPolicy \
             --values platform/calico/values.yaml >/dev/null
+          helm lint "${charts}/longhorn" \
+            --values platform/longhorn/values.yaml --strict
+          helm template longhorn "${charts}/longhorn" \
+            --namespace longhorn-system \
+            --values platform/longhorn/values.yaml >/dev/null
           helm lint "${charts}/argo-cd" \
             --values platform/argocd/values.yaml --strict
           helm template argocd "${charts}/argo-cd" \

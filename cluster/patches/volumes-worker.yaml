@@ -20,3 +20,17 @@ encryption:
   keys:
     - slot: 0
       tpm: {}
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: longhorn
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 50GiB
+  maxSize: 240GiB
+encryption:
+  provider: luks2
+  keys:
+    - slot: 0
+      tpm: {}

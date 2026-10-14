@@ -25,14 +25,23 @@ actual_server="$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].c
 }
 
 helm repo add projectcalico https://docs.tigera.io/calico/charts --force-update
+helm repo add longhorn https://charts.longhorn.io --force-update
 helm repo add argo https://argoproj.github.io/argo-helm --force-update
 helm repo add hashicorp https://helm.releases.hashicorp.com --force-update
 helm repo update
 
+helm template calico-crds projectcalico/crd.projectcalico.org.v1 --version "${CALICO_VERSION}" \
+    | kubectl apply --server-side -f -
 helm upgrade --install calico projectcalico/tigera-operator \
     --version "${CALICO_VERSION}" --namespace tigera-operator --create-namespace \
     --values "${ROOT_DIR}/platform/calico/values.yaml" --atomic --timeout 10m
 kubectl wait nodes --all --for=condition=Ready --timeout=10m
+
+kubectl apply -f "${ROOT_DIR}/platform/longhorn/namespace.yaml"
+# Do not use --atomic: Longhorn guards uninstall through a pre-delete hook.
+helm upgrade --install longhorn longhorn/longhorn \
+    --version "${LONGHORN_VERSION}" --namespace longhorn-system \
+    --values "${ROOT_DIR}/platform/longhorn/values.yaml" --wait --timeout 15m
 
 helm upgrade --install argocd argo/argo-cd \
     --version "${ARGO_CD_VERSION}" --namespace argocd --create-namespace \

@@ -34,6 +34,49 @@ if (( ${#configs[@]} == 0 )); then
     exit 0
 fi
 
+command -v python3 >/dev/null || {
+    echo "ERROR: python3 and PyYAML are required to validate generated configs" >&2
+    exit 1
+}
+python3 -I -c 'import yaml' >/dev/null 2>&1 || {
+    echo "ERROR: python3 PyYAML is required to validate generated configs" >&2
+    exit 1
+}
+python3 -I - "${configs[@]}" <<'PY'
+import sys
+
+import yaml
+
+
+def walk(obj, path):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            yield from walk(value, f"{path}.{key}")
+    elif isinstance(obj, list):
+        scalars = [value for value in obj if not isinstance(value, (dict, list))]
+        duplicates = {value for value in scalars if scalars.count(value) > 1}
+        if duplicates:
+            yield path, sorted(map(str, duplicates))
+        for index, value in enumerate(obj):
+            yield from walk(value, f"{path}[{index}]")
+
+
+failed = False
+for filename in sys.argv[1:]:
+    with open(filename, encoding="utf-8") as stream:
+        for document, data in enumerate(yaml.safe_load_all(stream)):
+            for path, duplicates in walk(data, "$"):
+                print(
+                    f"ERROR: {filename}: document {document}: {path}: "
+                    f"duplicate scalar values: {', '.join(duplicates)}",
+                    file=sys.stderr,
+                )
+                failed = True
+
+if failed:
+    sys.exit(1)
+PY
+
 for config in "${configs[@]}"; do
     talosctl validate --config "${config}" --mode metal --strict
 done

@@ -33,22 +33,23 @@ for ordinal in 0 1 2; do
         "pod/vault-${ordinal}" --timeout=5m
 done
 
+EMPTY_JSON='{}'
 status_json=""
 for _ in $(seq 1 60); do
     status_json="$(kubectl -n vault exec vault-0 -- env \
         VAULT_ADDR=https://127.0.0.1:8200 \
         VAULT_CACERT=/vault/userconfig/tls/ca.crt \
         vault status -format=json 2>/dev/null || true)"
-    if jq -e 'has("initialized")' <<<"${status_json:-{}}" >/dev/null 2>&1; then
+    if jq -e 'has("initialized")' <<<"${status_json:-${EMPTY_JSON}}" >/dev/null 2>&1; then
         break
     fi
     sleep 5
 done
-jq -e 'has("initialized")' <<<"${status_json:-{}}" >/dev/null || {
+jq -e 'has("initialized")' <<<"${status_json:-${EMPTY_JSON}}" >/dev/null || {
     echo "ERROR: vault-0 API did not become available" >&2
     exit 1
 }
-initialized="$(jq -r '.initialized // false' <<<"${status_json:-{}}")"
+initialized="$(jq -r '.initialized // false' <<<"${status_json:-${EMPTY_JSON}}")"
 
 if [[ "${initialized}" == "false" ]]; then
     [[ ! -e "${INIT_FILE}" ]] || { echo "ERROR: stale ${INIT_FILE}; inspect before continuing" >&2; exit 1; }
@@ -74,7 +75,7 @@ unseal_pod() {
         printf '%s\n' "${key}" | kubectl -n vault exec -i "vault-${ordinal}" -- env \
             VAULT_ADDR=https://127.0.0.1:8200 \
             VAULT_CACERT=/vault/userconfig/tls/ca.crt \
-            vault operator unseal >/dev/null
+            vault write -format=json sys/unseal key=- >/dev/null
     done
 }
 
@@ -89,7 +90,7 @@ for ordinal in 1 2; do
             VAULT_ADDR=https://127.0.0.1:8200 \
             VAULT_CACERT=/vault/userconfig/tls/ca.crt \
             vault status -format=json 2>/dev/null || true)"
-        if [[ "$(jq -r '.initialized // false' <<<"${follower_status:-{}}")" == "true" ]]; then
+        if [[ "$(jq -r '.initialized // false' <<<"${follower_status:-${EMPTY_JSON}}")" == "true" ]]; then
             joined=true
             break
         fi

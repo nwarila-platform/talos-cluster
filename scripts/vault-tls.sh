@@ -16,6 +16,14 @@ done
 
 STATE_ROOT="${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}"
 TLS_DIR="${STATE_ROOT}/vault/tls"
+require_cert_match() {  # require_cert_match -checkhost|-checkip <value>
+    local result
+    result="$(openssl x509 "$1" "$2" -noout -in "${TLS_DIR}/tls.crt" 2>&1 || true)"
+    [[ "${result}" == *" does match certificate"* ]] || {
+        echo "ERROR: Vault server certificate does not cover $2: ${result}" >&2
+        exit 1
+    }
+}
 KUBECONFIG="${STATE_ROOT}/configs/kubeconfig"
 export KUBECONFIG
 [[ -f "${KUBECONFIG}" ]] || { echo "ERROR: kubeconfig not found: ${KUBECONFIG}" >&2; exit 1; }
@@ -26,10 +34,11 @@ actual_server="$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].c
 }
 umask 077
 mkdir -p "${TLS_DIR}"
-vault_sans="DNS:vault,DNS:vault.vault,DNS:vault.vault.svc,DNS:vault.vault.svc.cluster.local,DNS:vault-internal,DNS:*.vault-internal,DNS:*.vault-internal.vault.svc,DNS:*.vault-internal.vault.svc.cluster.local"
+vault_sans="DNS:vault,DNS:vault.vault,DNS:vault.vault.svc,DNS:vault.vault.svc.cluster.local,DNS:vault-internal,DNS:*.vault-internal,DNS:*.vault-internal.vault.svc,DNS:*.vault-internal.vault.svc.cluster.local,DNS:localhost"
 for entry in ${CP_NODES}; do
     vault_sans+=",IP:${entry##*:}"
 done
+vault_sans+=",IP:127.0.0.1"
 
 if [[ -e "${TLS_DIR}/ca.key" || -e "${TLS_DIR}/ca.crt" ]]; then
     [[ -f "${TLS_DIR}/ca.key" && -f "${TLS_DIR}/ca.crt" ]] || {
@@ -47,6 +56,13 @@ if [[ -e "${TLS_DIR}/tls.key" || -e "${TLS_DIR}/tls.crt" ]]; then
         echo "ERROR: partial Vault server TLS state in ${TLS_DIR}; inspect before replacing it" >&2
         exit 1
     }
+    localhost_check="$(openssl x509 -checkhost localhost -noout -in "${TLS_DIR}/tls.crt" 2>/dev/null || true)"
+    loopback_check="$(openssl x509 -checkip 127.0.0.1 -noout -in "${TLS_DIR}/tls.crt" 2>/dev/null || true)"
+    if [[ "${localhost_check}" != *" does match certificate"* \
+        || "${loopback_check}" != *" does match certificate"* ]]; then
+        echo "ERROR: existing Vault server certificate lacks loopback SANs; move ${TLS_DIR}/tls.{crt,key,csr} aside to re-issue" >&2
+        exit 1
+    fi
 else
     openssl req -newkey rsa:3072 -sha256 -nodes \
         -subj "/CN=vault.vault.svc.cluster.local" \
@@ -73,12 +89,14 @@ openssl x509 -checkend 86400 -noout -in "${TLS_DIR}/tls.crt" >/dev/null
 for hostname in vault vault.vault vault.vault.svc vault.vault.svc.cluster.local \
     vault-0.vault-internal.vault.svc.cluster.local \
     vault-1.vault-internal.vault.svc.cluster.local \
-    vault-2.vault-internal.vault.svc.cluster.local; do
-    openssl x509 -checkhost "${hostname}" -noout -in "${TLS_DIR}/tls.crt" >/dev/null
+    vault-2.vault-internal.vault.svc.cluster.local \
+    localhost; do
+    require_cert_match -checkhost "${hostname}"
 done
 for entry in ${CP_NODES}; do
-    openssl x509 -checkip "${entry##*:}" -noout -in "${TLS_DIR}/tls.crt" >/dev/null
+    require_cert_match -checkip "${entry##*:}"
 done
+require_cert_match -checkip 127.0.0.1
 
 kubectl create namespace vault --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n vault create secret generic vault-server-tls \

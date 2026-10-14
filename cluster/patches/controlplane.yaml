@@ -21,8 +21,8 @@ cluster:
             warn: restricted
             warn-version: latest
           exemptions:
+            # Talos supplies kube-system, and strategic merge appends this list.
             namespaces:
-              - kube-system
               - tigera-operator
               - calico-system
             runtimeClasses: []

@@ -27,6 +27,9 @@
 !platform/
 !platform/calico/
 !platform/calico/values.yaml
+!platform/longhorn/
+!platform/longhorn/values.yaml
+!platform/longhorn/namespace.yaml
 !platform/argocd/
 !platform/argocd/values.yaml
 !platform/vault/

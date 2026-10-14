@@ -8,9 +8,12 @@ help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 init: ## Check local tools required for a rebuild
-	@for command in talosctl kubectl helm openssl jq shellcheck; do \
+	@for command in talosctl kubectl helm openssl jq shellcheck python3; do \
 		command -v "$$command" >/dev/null || { echo "missing: $$command"; exit 1; }; \
 	done
+	@python3 -I -c "import yaml" >/dev/null 2>&1 || { \
+		echo "missing: python3 PyYAML (needed by make validate)"; exit 1; \
+	}
 	@source cluster/config.env; \
 	actual="$$(talosctl version --client --short | awk '/Talos v/ {print $$2; exit}')"; \
 	[[ "$$actual" == "$${TALOS_VERSION}" ]] || { \
@@ -32,7 +35,7 @@ apply-insecure: validate ## Initial apply; requires CONFIRM_REBUILD=TDNHQ-TALCL0
 bootstrap: ## Bootstrap etcd once; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/bootstrap.sh
 
-platform: ## Install pinned Calico, Argo CD, and Vault charts
+platform: ## Install pinned Calico, Longhorn, Argo CD, and Vault charts
 	@bash scripts/install-platform.sh
 
 vault-init: ## Initialize and unseal the new Vault raft cluster

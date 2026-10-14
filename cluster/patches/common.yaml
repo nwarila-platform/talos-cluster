@@ -9,6 +9,15 @@ machine:
   install:
     wipe: true
   kubelet:
+    # Matches platform/longhorn/values.yaml defaultDataPath and the longhorn UserVolumeConfig.
+    extraMounts:
+      - destination: /var/mnt/longhorn
+        type: bind
+        source: /var/mnt/longhorn
+        options:
+          - bind
+          - rshared
+          - rw
     nodeIP:
       validSubnets:
         - 10.69.112.0/24
