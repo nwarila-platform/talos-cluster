@@ -65,12 +65,12 @@ jobs:
           mkdir -p "${charts}"
           helm template calico-crds projectcalico/crd.projectcalico.org.v1 \
             --version "${CALICO_VERSION}" >"${charts}/calico-crds.yaml"
-          crd_count="$(grep -c '^kind: CustomResourceDefinition$' "${charts}/calico-crds.yaml")"
+          crd_count="$(grep -c '^kind: CustomResourceDefinition$' "${charts}/calico-crds.yaml" || true)"
           [[ "${crd_count}" == "32" ]] || {
             echo "expected 32 Calico CRDs, rendered ${crd_count}" >&2
             exit 1
           }
-          crd_name_count="$(grep -c '^  name: installations.operator.tigera.io$' "${charts}/calico-crds.yaml")"
+          crd_name_count="$(grep -c '^  name: installations.operator.tigera.io$' "${charts}/calico-crds.yaml" || true)"
           [[ "${crd_name_count}" == "1" ]] || {
             echo "expected one installations.operator.tigera.io CRD, rendered ${crd_name_count}" >&2
             exit 1

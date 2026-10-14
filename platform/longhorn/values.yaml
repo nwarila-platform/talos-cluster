@@ -13,20 +13,23 @@ defaultSettings:
   # Mount path of the Talos UserVolumeConfig `longhorn` (auto-mounted by
   # Talos at /var/mnt/<volume-name>). This is the one setting that hard-
   # couples Helm-side Longhorn to Talos-side storage; changing it without
-  # also changing the UserVolumeConfig name in cluster/patches/volumes.yaml
-  # leaves Longhorn writing to the system disk's overlay instead of the
-  # dedicated 50-240 GiB volume.
+  # also changing the UserVolumeConfig name in
+  # cluster/patches/volumes-{controlplane,worker}.yaml and the kubelet bind
+  # mount in cluster/patches/common.yaml leaves Longhorn writing to EPHEMERAL
+  # instead of the dedicated encrypted volume (50-140 GiB on control planes,
+  # 50-240 GiB on workers).
   defaultDataPath: /var/mnt/longhorn
 
-  # Tolerate the management taint on Longhorn-managed per-node workloads.
+  # Tolerate the management taint on Longhorn system-managed components:
+  # instance-manager, engine-image, CSI plugin and CSI controller sidecars.
   taintToleration: "nwarila.io/management:NoSchedule"
 
   # 2-way replication remains the small-cluster default for ordinary PVCs:
   # it tolerates one node loss without applying 3x storage cost to every
-  # workload. Bootstrap-critical PVCs that must survive worker reprovisioning
-  # opt into dedicated StorageClasses, such as longhorn-vault. Chart default
-  # is 3. The defaultClassReplicaCount below pins the same number for the
-  # default StorageClass.
+  # workload. Chart default is 3. The defaultClassReplicaCount below pins the
+  # same number for the default StorageClass. Vault does not use Longhorn; it
+  # uses the vault-local StorageClass on the u-vault volume
+  # (platform/vault/storage.yaml).
   defaultReplicaCount: 2
 
   # Force-delete pods stranded on a downed node so the StatefulSet/
@@ -37,8 +40,9 @@ defaultSettings:
 
   # Permit replica placement when a node has ≥10% free space (chart
   # default 25%). The Talos UserVolumeConfig caps the longhorn volume at
-  # 240 GiB; 25% free of that is 60 GiB held in reserve, which is more
-  # conservative than this cluster's workloads warrant.
+  # 140 GiB on control planes and 240 GiB on workers; 25% of those caps is
+  # 35 GiB and 60 GiB held in reserve, which is more conservative than this
+  # cluster's workloads warrant.
   storageMinimalAvailablePercentage: 10
 
   # One engine upgrade in flight per node, ever. Lets `helm upgrade`
@@ -54,12 +58,12 @@ defaultBackupStore:
   # DR Stage 1 backup target: a dedicated Btrfs NFS share on the Synology
   # RS3621rpxs (TCNHQ-BKUP01, 10.69.128.115) on its own storage VLAN. NFS is
   # credential-free (AUTH_SYS); access is controlled by a per-node-IP export on
-  # the NAS plus the dr-backup egress CiliumNetworkPolicy. nfsvers is pinned to
-  # 4.1 (DSM's max; Longhorn treats 4.1 as first-class) for a deterministic mount
-  # instead of a 4.2->4.1 probe; actimeo=1 is Longhorn's default and avoids v4.1
-  # backup-list cache staleness. NAS-side daily immutable snapshots (retain 30)
-  # add tamper/ransomware protection the NFS client cannot reach. Replaces the
-  # retired interim WSL NFS box. See ADR-0021 and docs/runbooks/dr-stage1-backup.md.
+  # the NAS. No in-cluster egress policy restricts this traffic on this branch.
+  # nfsvers is pinned to 4.1 (DSM's max; Longhorn treats 4.1 as first-class) for
+  # a deterministic mount instead of a 4.2->4.1 probe; actimeo=1 is Longhorn's
+  # default and avoids v4.1 backup-list cache staleness. NAS-side daily
+  # immutable snapshots (retain 30) add tamper/ransomware protection the NFS
+  # client cannot reach.
   backupTarget: "nfs://10.69.128.115:/volume1/longhorn-backup?nfsOptions=nfsvers=4.1,actimeo=1"
   backupTargetCredentialSecret: ""
 
