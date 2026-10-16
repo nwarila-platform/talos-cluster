@@ -109,7 +109,7 @@ root filesystem, no capabilities and the Restricted Pod Security profile.
 
 The Secret is what makes this possible, so it is also what to protect. It lives in etcd, which
 Talos encrypts at rest (`secretboxEncryptionSecret`) on a TPM-sealed LUKS2 volume. A live RBAC
-inventory on 2026-10-16 (recorded in the change record) found no namespace-level Secret grant in
+inventory on 2026-10-16 found no namespace-level Secret grant in
 `vault` (the Vault service account's own Role covers pods only) but several cluster-wide identities
 that can read Secrets everywhere: cluster administrators, the Argo CD controller and server, the
 Longhorn service account, the Calico operator and the kube controllers — observed state, not
@@ -118,12 +118,15 @@ create or exec into a pod there, or control a node or the control plane can stil
 shares; the Secrets lockdown piece reduces that exposure but cannot make the unsealer the only
 possible reader. An etcd backup that contains the Secret must never travel next to a Vault raft
 snapshot. `vault-init` may be rerun on a running, initialized cluster with its matching
-`init.json`: it validates the shares, reads the existing Secret fail-closed (a failed read stops
-the run; it never decides "absent" from an error), leaves a matching Secret untouched, refuses one
-holding different shares, and creates a missing one with `kubectl create` (which refuses to
-overwrite). That is how the Secret is created on a cluster initialized before the unsealer
-existed — prove it by sealing one follower (`vault operator seal` inside its pod) and watching the
-next Job open it.
+`init.json`: it requires each share to be one line of base64 that decodes to the 33 bytes a share
+of this five-share Shamir initialization has (44 characters, no padding, so a decodable value is
+canonical), reads the existing Secret fail-closed (a failed read stops the run; it never decides "absent"
+from an error), leaves a matching Secret untouched, refuses one holding different shares, and
+creates a missing one with `kubectl create` (which refuses to overwrite). That is how the Secret
+is created on a cluster initialized before the unsealer existed — prove it by deleting one
+follower pod (it restarts sealed; a standby cannot be sealed in place, Vault answers "cannot seal
+when in standby mode") and watching the next Job open it. Create the Secret before the CronJob
+exists: a Job that finds Vault initialized and no shares exits 1 by design.
 
 ## How a job reaches Vault
 

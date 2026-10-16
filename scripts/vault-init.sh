@@ -105,8 +105,11 @@ for ordinal in 0 1 2; do
 done
 
 # Threshold keys for the in-cluster unsealer (platform/vault/unsealer.yaml): a
-# pod that restarts sealed is unsealed without a human. Shares are validated as
-# base64 before they leave the file. The existing Secret is read fail-closed
+# pod that restarts sealed is unsealed without a human. Each share is copied
+# exactly as stored and must be one line of base64 that decodes (the decoder's
+# own status) to the 33 bytes a share of this five-share Shamir initialization
+# has; 33 bytes are 44 characters without padding, so a decodable 33-byte value
+# is canonical by construction. The existing Secret is read fail-closed
 # (only a successful read decides; an absent Secret is an empty successful
 # answer), a Secret holding different shares is never touched, and a missing
 # Secret is created with `kubectl create`, which refuses to overwrite one that
@@ -118,12 +121,27 @@ trap 'rm -rf "${work_dir:?}"' EXIT
 key_dir="${work_dir}/keys"
 mkdir -m 0700 "${key_dir}"
 for index in 0 1 2; do
-    jq -er --argjson i "${index}" \
-        '.unseal_keys_b64[$i] | select(type == "string" and test("^[A-Za-z0-9+/]{40,}={0,2}$"))' \
-        "${INIT_FILE}" 2>/dev/null | tr -d '\n' > "${key_dir}/key${index}" || {
-        echo "ERROR: unseal_keys_b64[${index}] in ${INIT_FILE} is not a base64 unseal share" >&2
+    # -j writes the string byte for byte: nothing is added and nothing is stripped.
+    jq -ej --argjson i "${index}" '.unseal_keys_b64[$i] | select(type == "string")' "${INIT_FILE}" \
+        > "${key_dir}/key${index}" 2>/dev/null || {
+        echo "ERROR: unseal_keys_b64[${index}] in ${INIT_FILE} is missing or not a string" >&2
         exit 1
     }
+    # One line (no newline byte anywhere) of the base64 alphabet with optional padding.
+    if ! { [[ "$(wc -l < "${key_dir}/key${index}")" == "0" ]] && grep -qxE '[A-Za-z0-9+/]{40,}={0,2}' "${key_dir}/key${index}"; }; then
+        echo "ERROR: unseal_keys_b64[${index}] in ${INIT_FILE} is not a single base64 line" >&2
+        exit 1
+    fi
+    # It must decode (the decoder's own status, not a byte count) and be 33 bytes.
+    if ! base64 -d "${key_dir}/key${index}" > "${work_dir}/decoded" 2>/dev/null; then
+        echo "ERROR: unseal_keys_b64[${index}] in ${INIT_FILE} does not decode as base64" >&2
+        exit 1
+    fi
+    [[ "$(wc -c < "${work_dir}/decoded")" == "33" ]] || {
+        echo "ERROR: unseal_keys_b64[${index}] in ${INIT_FILE} does not decode to a 33-byte unseal share" >&2
+        exit 1
+    }
+    rm -f "${work_dir}/decoded"
 done
 if ! existing="$(kubectl -n vault get secret vault-unseal --ignore-not-found -o json 2> "${work_dir}/get.err")"; then
     echo "ERROR: could not read secret vault/vault-unseal (not deciding presence): $(tr '\n' ' ' < "${work_dir}/get.err")" >&2

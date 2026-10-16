@@ -3,7 +3,7 @@
 # exported function that models config-view, waits, in-pod status/unseal and
 # the vault-unseal Secret, so the fresh path, the rerun path, a mismatching
 # existing Secret, a failed Secret read, a malformed Secret, malformed shares
-# and secret hygiene are all decidable without a cluster.
+# (regex, strict decode, length) and secret hygiene are all decidable without a cluster.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${ROOT_DIR}/cluster/config.env"
 export CLUSTER_ENDPOINT
 
-for command in jq sha256sum; do
+for command in jq sha256sum base64; do
     command -v "${command}" >/dev/null || { echo "ERROR: ${command} is required" >&2; exit 1; }
 done
 
@@ -19,9 +19,9 @@ TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT:?}"' EXIT
 chmod 0700 "${TEST_ROOT}"
 
-# Five fake 32-byte shares, base64 like Vault's unseal_keys_b64.
+# Five fake 33-byte shares, base64 like Vault's unseal_keys_b64 (a Vault 2.0 Shamir share is 33 bytes).
 SHARES=()
-for i in 1 2 3 4 5; do SHARES+=("$(printf 'selftest-share-%d-%s' "$i" "0123456789abcdef0123456789" | head -c 32 | base64 -w0)"); done
+for i in 1 2 3 4 5; do SHARES+=("$(printf 'selftest-share-%d-%s' "$i" "0123456789abcdef0123456789x" | head -c 33 | base64 -w0)"); done
 make_init_json() {  # make_init_json FILE [share-override-index value]
     jq -n --arg a "${SHARES[0]}" --arg b "${SHARES[1]}" --arg c "${SHARES[2]}" --arg d "${SHARES[3]}" --arg e "${SHARES[4]}" \
         '{unseal_keys_b64: [$a,$b,$c,$d,$e], unseal_keys_hex: [], unseal_shares: 5, unseal_threshold: 3, root_token: "hvs.selftest-root"}' > "$1"
@@ -120,7 +120,49 @@ end_case
 begin_case malformed-share-refused true false
 make_init_json "${STATE}/vault/init.json"
 jq '.unseal_keys_b64[1] = "short"' "${STATE}/vault/init.json" > "${STATE}/vault/init.tmp" && mv "${STATE}/vault/init.tmp" "${STATE}/vault/init.json"
-run 1; forbid_writes; forbid_calls '^secret-file '; expect_output "is not a base64 unseal share"
+run 1; forbid_writes; forbid_calls '^secret-file '; expect_output "is not a single base64 line"
+end_case
+
+begin_case share-wrong-length-refused true false
+make_init_json "${STATE}/vault/init.json"
+# ALL three consumed shares are 32 bytes: each passes the alphabet-and-length regex and decodes
+# canonically, so only the 33-byte requirement can refuse them (a 32 mutation reaches the write).
+for i in 0 1 2; do
+    jq --argjson i "${i}" --arg s "$(printf 'thirty-two-byte-share-%d-01234567' "${i}" | head -c 32 | base64 -w0)" '.unseal_keys_b64[$i] = $s' "${STATE}/vault/init.json" > "${STATE}/vault/init.tmp" && mv "${STATE}/vault/init.tmp" "${STATE}/vault/init.json"
+done
+run 1; forbid_writes; forbid_calls '^secret-file '; expect_output "does not decode to a 33-byte unseal share"
+end_case
+
+begin_case share-not-base64-refused true false
+make_init_json "${STATE}/vault/init.json"
+# 41 characters of the alphabet: passes the regex, cannot be decoded (not a multiple of four).
+jq --arg s "$(printf 'A%.0s' $(seq 1 41))" '.unseal_keys_b64[0] = $s' "${STATE}/vault/init.json" > "${STATE}/vault/init.tmp" && mv "${STATE}/vault/init.tmp" "${STATE}/vault/init.json"
+run 1; forbid_writes; forbid_calls '^secret-file '; expect_output "does not decode as base64"
+end_case
+
+begin_case share-noncanonical-padding-refused true false
+make_init_json "${STATE}/vault/init.json"
+# A valid 44-character share plus one superfluous "=": passes the regex; GNU base64 -d reports an
+# error (with or without -i) while still printing 33 bytes — only the decoder's own status refuses it.
+jq --arg s "${SHARES[0]}=" '.unseal_keys_b64[0] = $s' "${STATE}/vault/init.json" > "${STATE}/vault/init.tmp" && mv "${STATE}/vault/init.tmp" "${STATE}/vault/init.json"
+run 1; forbid_writes; forbid_calls '^secret-file '; expect_output "unseal_keys_b64[0]"
+end_case
+
+begin_case share-non-string-refused true false
+make_init_json "${STATE}/vault/init.json"
+# A 44-digit JSON number: jq would emit it as 44 alphabet characters that decode to 33 bytes, so only
+# the type selector can refuse it (a mutation dropping `select(type == "string")` must fail here).
+jq --argjson n 12345678901234567890123456789012345678901234 '.unseal_keys_b64[0] = $n' "${STATE}/vault/init.json" > "${STATE}/vault/init.tmp" && mv "${STATE}/vault/init.tmp" "${STATE}/vault/init.json"
+run 1; forbid_writes; forbid_calls '^secret-file '; expect_output "is missing or not a string"
+end_case
+
+begin_case share-trailing-newline-refused true false
+make_init_json "${STATE}/vault/init.json"
+# The JSON string carries a trailing newline: a $-anchored regex would pass it and a newline strip
+# would hide it; the share must be a single line exactly as stored.
+jq --arg s "${SHARES[0]}"'
+' '.unseal_keys_b64[0] = $s' "${STATE}/vault/init.json" > "${STATE}/vault/init.tmp" && mv "${STATE}/vault/init.tmp" "${STATE}/vault/init.json"
+run 1; forbid_writes; forbid_calls '^secret-file '; expect_output "is not a single base64 line"
 end_case
 
 begin_case initialized-without-init-file-refused true false
