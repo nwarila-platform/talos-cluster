@@ -4,3 +4,9 @@ resources:
   - namespace.yaml
   - service.yaml
   - storage.yaml
+  - unsealer.yaml
+configMapGenerator:
+  - name: vault-unsealer
+    namespace: vault
+    files:
+      - unsealer.sh

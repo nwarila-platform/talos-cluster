@@ -104,4 +104,49 @@ for ordinal in 0 1 2; do
     kubectl -n vault wait --for=condition=Ready "pod/vault-${ordinal}" --timeout=5m
 done
 
+# Threshold keys for the in-cluster unsealer (platform/vault/unsealer.yaml): a
+# pod that restarts sealed is unsealed without a human. Shares are validated as
+# base64 before they leave the file. The existing Secret is read fail-closed
+# (only a successful read decides; an absent Secret is an empty successful
+# answer), a Secret holding different shares is never touched, and a missing
+# Secret is created with `kubectl create`, which refuses to overwrite one that
+# appeared in between.
+# The shares live in their own directory (nothing else may land next to them:
+# the Secret is built from every file in it); scratch output goes beside it.
+work_dir="$(mktemp -d)"
+trap 'rm -rf "${work_dir:?}"' EXIT
+key_dir="${work_dir}/keys"
+mkdir -m 0700 "${key_dir}"
+for index in 0 1 2; do
+    jq -er --argjson i "${index}" \
+        '.unseal_keys_b64[$i] | select(type == "string" and test("^[A-Za-z0-9+/]{40,}={0,2}$"))' \
+        "${INIT_FILE}" 2>/dev/null | tr -d '\n' > "${key_dir}/key${index}" || {
+        echo "ERROR: unseal_keys_b64[${index}] in ${INIT_FILE} is not a base64 unseal share" >&2
+        exit 1
+    }
+done
+if ! existing="$(kubectl -n vault get secret vault-unseal --ignore-not-found -o json 2> "${work_dir}/get.err")"; then
+    echo "ERROR: could not read secret vault/vault-unseal (not deciding presence): $(tr '\n' ' ' < "${work_dir}/get.err")" >&2
+    exit 1
+fi
+if [[ -n "${existing}" ]]; then
+    jq -e '.kind == "Secret" and (.data | type) == "object"' <<<"${existing}" >/dev/null 2>&1 || {
+        echo "ERROR: secret vault/vault-unseal has an unexpected shape; inspect it before continuing" >&2
+        exit 1
+    }
+    for index in 0 1 2; do
+        expected="$(base64 -w0 < "${key_dir}/key${index}")"
+        actual="$(jq -r --arg k "key${index}" '.data[$k] // ""' <<<"${existing}")"
+        [[ "${actual}" == "${expected}" ]] || {
+            echo "ERROR: secret vault/vault-unseal holds key${index} that does not match the shares in" \
+                "${INIT_FILE}; refusing to overwrite it (delete the secret deliberately if it is stale)" >&2
+            exit 1
+        }
+    done
+    echo "Secret vault/vault-unseal already holds shares 0-2 from ${INIT_FILE}; left unchanged."
+else
+    kubectl -n vault create secret generic vault-unseal --from-file="${key_dir}"
+    echo "Unseal keys 0-2 stored in secret vault/vault-unseal for the in-cluster unsealer."
+fi
+
 echo "Vault initialized and unsealed. Immediately escrow ${INIT_FILE} outside this repository."

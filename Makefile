@@ -2,7 +2,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help init generate validate apply apply-insecure bootstrap platform \
-	vault-init gitlab-vault-plan gitlab-vault vault-configure vault-seed-aws health kubeconfig
+	vault-init gitlab-vault-plan gitlab-vault vault-configure vault-seed-aws selftest health kubeconfig
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -25,6 +25,10 @@ generate: ## Generate six machine configs and local Talos credentials
 
 validate: ## Validate scripts, manifests, Terraform, and generated configs when present
 	@bash scripts/validate.sh
+
+selftest: ## Run the self-tests: vault-init against a stubbed kubectl, the unsealer against local Vault servers
+	@bash scripts/tests/selftest-vault-init.sh
+	@bash scripts/tests/selftest-vault-unsealer.sh
 
 apply: validate ## Apply configs; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/apply.sh $(NODES)

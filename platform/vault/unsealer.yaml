@@ -1,0 +1,96 @@
+# In-cluster unsealer: a CronJob that runs platform/vault/unsealer.sh every
+# minute with the threshold keys from the vault-unseal Secret (created by
+# scripts/vault-init.sh). A Vault pod that restarts sealed is normally unsealed
+# on the next eligible run, without a human; a late or deadline-bound Job can
+# make the Forbid policy skip one schedule. The Secret is mounted optional so
+# the CronJob is harmless before vault-init has run. Restricted Pod Security
+# compliant.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-unsealer
+  namespace: vault
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-unsealer
+  namespace: vault
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 50
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Below the one-minute schedule, so a hung pod ends before the next
+      # schedule is due; a Job still running when the minute comes makes
+      # Forbid skip that one run, never more.
+      activeDeadlineSeconds: 55
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          serviceAccountName: vault-unsealer
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          nodeSelector:
+            nwarila.io/pool: management
+          tolerations:
+            - effect: NoSchedule
+              key: nwarila.io/management
+              operator: Exists
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: unsealer
+              image: hashicorp/vault:2.0.4
+              command: ["/bin/sh", "/vault/unsealer/unsealer.sh"]
+              env:
+                - name: VAULT_CLIENT_TIMEOUT
+                  value: "3s"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              # A single `vault status` of the 2.0.4 CLI peaks near 146 MiB RSS.
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+              volumeMounts:
+                - name: unseal-keys
+                  mountPath: /vault/unseal
+                  readOnly: true
+                - name: vault-ca
+                  mountPath: /vault/tls
+                  readOnly: true
+                - name: script
+                  mountPath: /vault/unsealer
+                  readOnly: true
+          volumes:
+            - name: unseal-keys
+              secret:
+                secretName: vault-unseal
+                optional: true
+                defaultMode: 0400
+            - name: vault-ca
+              secret:
+                secretName: vault-server-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            - name: script
+              configMap:
+                name: vault-unsealer
+                defaultMode: 0555

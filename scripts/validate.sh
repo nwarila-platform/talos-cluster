@@ -12,11 +12,13 @@ for command in shellcheck yamllint actionlint kubectl python3 terraform; do
     }
 done
 
-for script in "${ROOT_DIR}"/scripts/*.sh; do
+for script in "${ROOT_DIR}"/scripts/*.sh "${ROOT_DIR}"/scripts/tests/*.sh; do
     bash -n "${script}"
 done
 
-shellcheck -x "${ROOT_DIR}"/scripts/*.sh
+shellcheck -x "${ROOT_DIR}"/scripts/*.sh "${ROOT_DIR}"/scripts/tests/*.sh
+# The unsealer runs under the Vault image's BusyBox sh, so it is checked as POSIX sh.
+shellcheck -s sh "${ROOT_DIR}/platform/vault/unsealer.sh"
 
 python3 -I - "${ROOT_DIR}"/scripts/tests/*.py <<'PY'
 import ast

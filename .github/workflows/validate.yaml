@@ -56,6 +56,14 @@ jobs:
           grep "  ${archive}$" actionlint-checksums.txt | sha256sum -c -
           tar -xzf "${archive}" actionlint
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
+          vault_version="${VAULT_CLI_VERSION#v}"
+          vault_archive="vault_${vault_version}_linux_amd64.zip"
+          vault_base="https://releases.hashicorp.com/vault/${vault_version}"
+          curl --proto '=https' --tlsv1.2 -fsSLo "${vault_archive}" "${vault_base}/${vault_archive}"
+          curl --proto '=https' --tlsv1.2 -fsSLo vault-checksums.txt "${vault_base}/vault_${vault_version}_SHA256SUMS"
+          grep "  ${vault_archive}$" vault-checksums.txt | sha256sum -c -
+          unzip -o -q "${vault_archive}" vault
+          sudo install -m 0755 vault /usr/local/bin/vault
 
       - name: Generate and validate Talos configs, manifests and Terraform
         run: |
@@ -63,6 +71,9 @@ jobs:
           export STATE_DIR_OVERRIDE="${RUNNER_TEMP}/talos-state"
           bash scripts/generate.sh
           bash scripts/validate.sh
+
+      - name: Self-test the scripts
+        run: make selftest
 
       - name: Render pinned Helm charts
         run: |

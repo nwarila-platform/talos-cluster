@@ -45,6 +45,8 @@
 !platform/vault/namespace.yaml
 !platform/vault/service.yaml
 !platform/vault/storage.yaml
+!platform/vault/unsealer.sh
+!platform/vault/unsealer.yaml
 !platform/vault/values.yaml
 
 !scripts/
@@ -61,6 +63,8 @@
 !scripts/vault-tls.sh
 !scripts/tests/
 !scripts/tests/check-runner-render.py
+!scripts/tests/selftest-vault-init.sh
+!scripts/tests/selftest-vault-unsealer.sh
 
 !terraform/
 !terraform/gitlab-vault/

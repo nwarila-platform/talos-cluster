@@ -17,14 +17,16 @@ is the reconcile.
 | `apply-insecure` | first apply to freshly installed nodes (`apply` afterwards) | `CONFIRM_REBUILD` |
 | `bootstrap` | bootstraps etcd once and writes the kubeconfig | `CONFIRM_REBUILD` |
 | `platform` | installs Calico, Longhorn, Argo CD and Vault from the pinned charts | `CONFIRM_REBUILD` |
-| `vault-init` | initializes and unseals Vault; writes `.state/vault/init.json` | `CONFIRM_REBUILD` |
+| `vault-init` | initializes and unseals Vault; writes `.state/vault/init.json`; stores shares 0–2 in the `vault-unseal` Secret for the in-cluster unsealer | `CONFIRM_REBUILD` |
 | `gitlab-vault-plan` | discards any earlier accepted plan, writes a candidate plan and prints it for review, proves that every object it would create is absent remotely (directly, or because the same plan creates its container; every lookup fails closed), and only then publishes it as `.state/terraform/gitlab-vault.tfplan` (0600) | `GITLAB_TOKEN`, `VAULT_TOKEN`, `AWS_PROFILE=mgmt-admin` |
 | `gitlab-vault` | applies exactly that saved plan, then proves convergence (an empty second plan), that the runner's token does not expire, and that the runner is online (bounded wait) | the same three, plus `CONFIRM_REBUILD` |
 | `vault-seed-aws` | seeds one project's static AWS credential | `VAULT_TOKEN`, `GITLAB_PROJECT_ID`, `AWS_*` |
 | `health` | checks Talos, nodes, pods and the expected Helm releases | — |
 
-Utilities: `kubeconfig` refreshes `.state/configs/kubeconfig`; `vault-configure` is the pre-Terraform
-way to create one project's Vault role by hand and is superseded by `gitlab-vault`.
+Utilities: `kubeconfig` refreshes `.state/configs/kubeconfig`; `selftest` runs the script self-tests
+(`vault-init` against a stubbed `kubectl`, the unsealer against throwaway local Vault servers; CI runs
+it too); `vault-configure` is the pre-Terraform way to create one project's Vault role by hand and is
+superseded by `gitlab-vault`.
 
 ## Inputs
 
@@ -89,6 +91,39 @@ token (twice: the runner resource and the Helm `set_sensitive` value), every gro
 runner registration token, the GitLab and Vault CA certificates, and every CA certificate, CSR and
 chain. The CA private keys never enter state (`type = "internal"`). S3 versioning retains old values
 after a rotation; never publish a saved plan or raw state, and never run with `TF_LOG` set.
+
+## How Vault stays unsealed
+
+`platform/vault/unsealer.yaml` (applied by `platform` with the rest of `platform/vault`) runs
+`platform/vault/unsealer.sh` every minute from the `hashicorp/vault` image: one initial
+`vault status` classifies each pod (`vault-0/1/2`, 3-second client timeout); for a sealed pod the
+three threshold shares from the `vault-unseal` Secret are submitted on stdin — never in argv —
+with the status rechecked after each share and once at the end. A pod restart, a node reboot or a
+Talos upgrade therefore heals on the next eligible run, normally within a minute while the
+scheduler and the API server are available; a late or deadline-bound Job can make the CronJob skip
+one schedule, and a cold start of all three pods can take two runs. The Job exits non-zero, so `health` turns red, when a pod stays sealed, is
+unreachable or returns an unreadable status, and when the Secret is missing while Vault is
+initialized; it exits zero only when every reachable pod is unsealed or explicitly uninitialized.
+The Job runs on the management pool next to Vault, with no service-account token, a read-only
+root filesystem, no capabilities and the Restricted Pod Security profile.
+
+The Secret is what makes this possible, so it is also what to protect. It lives in etcd, which
+Talos encrypts at rest (`secretboxEncryptionSecret`) on a TPM-sealed LUKS2 volume. A live RBAC
+inventory on 2026-10-16 (recorded in the change record) found no namespace-level Secret grant in
+`vault` (the Vault service account's own Role covers pods only) but several cluster-wide identities
+that can read Secrets everywhere: cluster administrators, the Argo CD controller and server, the
+Longhorn service account, the Calico operator and the kube controllers — observed state, not
+something these manifests enforce. Whoever can read Secrets in `vault`,
+create or exec into a pod there, or control a node or the control plane can still recover the
+shares; the Secrets lockdown piece reduces that exposure but cannot make the unsealer the only
+possible reader. An etcd backup that contains the Secret must never travel next to a Vault raft
+snapshot. `vault-init` may be rerun on a running, initialized cluster with its matching
+`init.json`: it validates the shares, reads the existing Secret fail-closed (a failed read stops
+the run; it never decides "absent" from an error), leaves a matching Secret untouched, refuses one
+holding different shares, and creates a missing one with `kubectl create` (which refuses to
+overwrite). That is how the Secret is created on a cluster initialized before the unsealer
+existed — prove it by sealing one follower (`vault operator seal` inside its pod) and watching the
+next Job open it.
 
 ## How a job reaches Vault
 
@@ -208,7 +243,8 @@ symlink in a single rename, so an in-service bundle is never half-replaced:
   `terraform apply` should run from a GitLab pipeline using a Vault role of its own.
 - The GitLab server certificate is self-signed and trusted by file (trust on first use) until the
   Cloudflare tunnel fronts GitLab.
+- The `vault-unseal` Secret is readable by every identity with Secret access in `vault` (and by
+  anyone who can run or exec a pod there); the Secrets lockdown piece reduces, not removes, that.
 - `.state/` is workstation-local; a pipeline-driven rebuild needs it in durable storage (S3).
 - `scripts/configure-vault-gitlab.sh` duplicates what `gitlab-vault` does and should be deleted.
 - Certificate issuance is a documented recipe, not yet a tested script.
-- Longhorn is expected by `platform` and `health` but is not yet installed on the live cluster.
