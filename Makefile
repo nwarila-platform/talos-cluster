@@ -2,13 +2,13 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help init generate validate apply apply-insecure bootstrap platform \
-	vault-init vault-configure vault-seed-aws health kubeconfig
+	vault-init gitlab-vault-plan gitlab-vault vault-configure vault-seed-aws health kubeconfig
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 init: ## Check local tools required for a rebuild
-	@for command in talosctl kubectl helm openssl jq shellcheck yamllint actionlint python3; do \
+	@for command in talosctl kubectl helm openssl jq terraform vault shellcheck yamllint actionlint python3; do \
 		command -v "$$command" >/dev/null || { echo "missing: $$command"; exit 1; }; \
 	done
 	@python3 -I -c "import yaml" >/dev/null 2>&1 || { \
@@ -23,7 +23,7 @@ init: ## Check local tools required for a rebuild
 generate: ## Generate six machine configs and local Talos credentials
 	@bash scripts/generate.sh
 
-validate: ## Validate scripts, manifests, and generated configs when present
+validate: ## Validate scripts, manifests, Terraform, and generated configs when present
 	@bash scripts/validate.sh
 
 apply: validate ## Apply configs; requires CONFIRM_REBUILD=TDNHQ-TALCL01
@@ -41,7 +41,13 @@ platform: ## Install pinned Calico, Longhorn, Argo CD, and Vault charts
 vault-init: ## Initialize and unseal the new Vault raft cluster
 	@bash scripts/vault-init.sh
 
-vault-configure: ## Configure project-scoped GitLab JWT auth in Vault
+gitlab-vault-plan: ## Preflight, then save a reviewed plan for GitLab, Vault and the runner; needs GITLAB_TOKEN, VAULT_TOKEN, AWS_PROFILE
+	@bash scripts/gitlab-vault.sh plan
+
+gitlab-vault: ## Apply the saved plan, then prove convergence and an online runner; needs the same three plus CONFIRM_REBUILD=TDNHQ-TALCL01
+	@bash scripts/gitlab-vault.sh apply
+
+vault-configure: ## (superseded by gitlab-vault) Configure one project's GitLab JWT auth in Vault by hand
 	@bash scripts/configure-vault-gitlab.sh
 
 vault-seed-aws: ## Seed a dedicated static AWS PoC credential from environment

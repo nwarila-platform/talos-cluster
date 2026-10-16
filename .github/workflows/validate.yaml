@@ -17,6 +17,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read pinned versions
+        id: pins
+        run: |
+          set -euo pipefail
+          source cluster/config.env
+          echo "terraform=${TERRAFORM_VERSION#v}" >> "${GITHUB_OUTPUT}"
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with:
+          terraform_version: ${{ steps.pins.outputs.terraform }}
+          terraform_wrapper: false
+
       - name: Install pinned talosctl
         run: |
           set -euo pipefail
@@ -45,7 +57,7 @@ jobs:
           tar -xzf "${archive}" actionlint
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
 
-      - name: Generate and validate Talos configs
+      - name: Generate and validate Talos configs, manifests and Terraform
         run: |
           set -euo pipefail
           export STATE_DIR_OVERRIDE="${RUNNER_TEMP}/talos-state"
@@ -60,6 +72,7 @@ jobs:
           helm repo add longhorn https://charts.longhorn.io
           helm repo add argo https://argoproj.github.io/argo-helm
           helm repo add hashicorp https://helm.releases.hashicorp.com
+          helm repo add gitlab https://charts.gitlab.io
           helm repo update
           charts="${RUNNER_TEMP}/charts"
           mkdir -p "${charts}"
@@ -83,6 +96,10 @@ jobs:
             --untar --untardir "${charts}"
           helm pull hashicorp/vault --version "${VAULT_CHART_VERSION}" \
             --untar --untardir "${charts}"
+          # The runner chart version is pinned in terraform/gitlab-vault/runner.tf.
+          runner_version="$(grep -E '^\s*version\s*=' terraform/gitlab-vault/runner.tf | sed -E 's/.*"([^"]+)".*/\1/')"
+          helm pull gitlab/gitlab-runner --version "${runner_version}" \
+            --untar --untardir "${charts}"
           helm lint "${charts}/tigera-operator" \
             --values platform/calico/values.yaml --strict
           helm template calico "${charts}/tigera-operator" \
@@ -104,11 +121,23 @@ jobs:
           helm template vault "${charts}/vault" \
             --namespace vault \
             --values platform/vault/values.yaml >/dev/null
+          # The runner token is required by the chart; the placeholder never reaches a cluster.
+          helm lint "${charts}/gitlab-runner" \
+            --values platform/gitlab-runner/values.yaml --strict \
+            --set gitlabUrl=https://gitlab.example.invalid/ --set runnerToken=glrt-placeholder
+          helm template gitlab-runner "${charts}/gitlab-runner" \
+            --namespace gitlab-runner \
+            --values platform/gitlab-runner/values.yaml \
+            --set gitlabUrl=https://gitlab.example.invalid/ --set runnerToken=glrt-placeholder \
+            >"${charts}/gitlab-runner-rendered.yaml"
+          python3 -I scripts/tests/check-runner-render.py \
+            "${charts}/gitlab-runner-rendered.yaml" "${charts}/gitlab-runner"
 
       - name: Reject tracked runtime secrets
         run: |
           set -euo pipefail
-          if git ls-files | grep -E '(^|/)(\.state|\.s3)/|kubeconfig$|talosconfig$|init\.json$|\.(key|pem)$'; then
+          tracked="$(git ls-files)"
+          if grep -E '(^|/)(\.state|\.s3)/|kubeconfig$|talosconfig$|init\.json$|\.tfstate|\.tfplan$|\.(key|pem)$' <<<"${tracked}"; then
             echo "runtime secret material is tracked" >&2
             exit 1
           fi

@@ -5,6 +5,7 @@
 !.gitignore
 !LICENSE
 !Makefile
+!README.md
 
 !.github/
 !.github/CODEOWNERS
@@ -24,9 +25,15 @@
 !cluster/patches/volumes-controlplane.yaml
 !cluster/patches/volumes-worker.yaml
 
+!examples/
+!examples/vault-gitlab-poc/
+!examples/vault-gitlab-poc/.gitlab-ci.yml
+
 !platform/
 !platform/calico/
 !platform/calico/values.yaml
+!platform/gitlab-runner/
+!platform/gitlab-runner/values.yaml
 !platform/longhorn/
 !platform/longhorn/values.yaml
 !platform/longhorn/namespace.yaml
@@ -45,9 +52,25 @@
 !scripts/bootstrap.sh
 !scripts/configure-vault-gitlab.sh
 !scripts/generate.sh
+!scripts/gitlab-vault.sh
 !scripts/health.sh
 !scripts/install-platform.sh
 !scripts/seed-aws-poc.sh
 !scripts/validate.sh
 !scripts/vault-init.sh
 !scripts/vault-tls.sh
+!scripts/tests/
+!scripts/tests/check-runner-render.py
+
+!terraform/
+!terraform/gitlab-vault/
+!terraform/gitlab-vault/.terraform.lock.hcl
+!terraform/gitlab-vault/backend.tf
+!terraform/gitlab-vault/outputs.tf
+!terraform/gitlab-vault/pki.tf
+!terraform/gitlab-vault/projects.tf
+!terraform/gitlab-vault/providers.tf
+!terraform/gitlab-vault/runner.tf
+!terraform/gitlab-vault/variables.tf
+!terraform/gitlab-vault/vault-auth.tf
+!terraform/gitlab-vault/versions.tf

@@ -1,0 +1,52 @@
+# =============================================================================
+# GitLab Runner Helm values
+#
+# Chart: gitlab/gitlab-runner, pinned and installed by helm_release.gitlab_runner
+# in terraform/gitlab-vault/runner.tf. gitlabUrl and runnerToken are NOT set
+# here: the Terraform release passes them (the token straight from
+# gitlab_user_runner.cluster), so neither ever enters this file.
+# =============================================================================
+
+concurrent: 4
+checkInterval: 10
+
+# Secret in the release namespace holding <gitlab-host>.crt; populates
+# /home/gitlab-runner/.gitlab-runner/certs/ so the runner (and job git clones)
+# trust the self-signed GitLab certificate. Created by
+# kubernetes_secret_v1.gitlab_ca in terraform/gitlab-vault/runner.tf.
+certsSecretName: gitlab-ca
+
+rbac:
+  create: true
+  # Namespace-scoped. The chart default (rules: []) renders "*"/"*" on the core
+  # group; this is the executor's documented minimum plus pods list/watch for
+  # the informer-based pod watcher.
+  rules:
+    - resources: ["events"]
+      verbs: ["list", "watch"]
+    - resources: ["pods"]
+      verbs: ["create", "delete", "get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["pods/attach", "pods/exec"]
+      verbs: ["get", "create", "patch", "delete"]
+    - apiGroups: [""]
+      resources: ["pods/log"]
+      verbs: ["get", "list"]
+    - resources: ["secrets"]
+      verbs: ["create", "delete", "get", "update"]
+    - resources: ["serviceaccounts"]
+      verbs: ["get"]
+    - resources: ["services"]
+      verbs: ["create", "get"]
+
+serviceAccount:
+  create: true
+  name: gitlab-runner
+
+runners:
+  config: |
+    [[runners]]
+      [runners.kubernetes]
+        namespace = "{{ default .Release.Namespace .Values.runners.jobNamespace }}"
+        image = "docker.io/library/alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"
+        privileged = false

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${ROOT_DIR}/cluster/config.env"
 
-for command in shellcheck yamllint actionlint kubectl; do
+for command in shellcheck yamllint actionlint kubectl python3 terraform; do
     command -v "${command}" >/dev/null || {
         echo "ERROR: ${command} is required (make init)" >&2
         exit 1
@@ -18,12 +18,30 @@ done
 
 shellcheck -x "${ROOT_DIR}"/scripts/*.sh
 
+python3 -I - "${ROOT_DIR}"/scripts/tests/*.py <<'PY'
+import ast
+import sys
+
+for filename in sys.argv[1:]:
+    with open(filename, encoding="utf-8") as stream:
+        ast.parse(stream.read(), filename)
+PY
+
 yamllint -d '{extends: default, rules: {line-length: {max: 200}, document-start: disable, truthy: {check-keys: false}}}' \
-    "${ROOT_DIR}/cluster" "${ROOT_DIR}/platform" "${ROOT_DIR}/.github/workflows"
+    "${ROOT_DIR}/cluster" "${ROOT_DIR}/platform" "${ROOT_DIR}/examples" "${ROOT_DIR}/.github/workflows"
 
 actionlint "${ROOT_DIR}"/.github/workflows/*.yaml
 
 kubectl kustomize "${ROOT_DIR}/platform/vault" >/dev/null
+
+# Terraform: formatting and a provider-schema validation. Providers are
+# installed into a cache directory under HOME because /tmp may be noexec.
+terraform -chdir="${ROOT_DIR}/terraform/gitlab-vault" fmt -check -recursive
+tf_data="${XDG_CACHE_HOME:-${HOME}/.cache}/talos-cluster-validate/terraform"
+mkdir -p "${tf_data}"
+TF_DATA_DIR="${tf_data}" terraform -chdir="${ROOT_DIR}/terraform/gitlab-vault" init \
+    -backend=false -input=false -lockfile=readonly >/dev/null
+TF_DATA_DIR="${tf_data}" terraform -chdir="${ROOT_DIR}/terraform/gitlab-vault" validate
 
 STATE_ROOT="${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}"
 shopt -s nullglob
@@ -33,10 +51,6 @@ if (( ${#configs[@]} == 0 )); then
     exit 0
 fi
 
-command -v python3 >/dev/null || {
-    echo "ERROR: python3 and PyYAML are required to validate generated configs" >&2
-    exit 1
-}
 python3 -I -c 'import yaml' >/dev/null 2>&1 || {
     echo "ERROR: python3 PyYAML is required to validate generated configs" >&2
     exit 1
