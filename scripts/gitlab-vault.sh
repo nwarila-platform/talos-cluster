@@ -14,9 +14,15 @@
 #           A plan that REPLACES an object (delete+create) is refused: this
 #           guard proves absence for pure creates only.
 # One run at a time: plan and apply hold a lock in the plan directory.
-#   apply   applies exactly that saved plan (CONFIRM_REBUILD required), then
-#           proves convergence (an empty second plan) and that the runner's token
-#           does not expire and the runner is online.
+#   apply   repeats the same absence proof against the saved plan (so nothing
+#           that appeared during review is overwritten), applies exactly that
+#           plan (CONFIRM_REBUILD required), then proves convergence (an empty
+#           second plan) and that the runner's token does not expire and the
+#           runner is online.
+# Credentials travel only in the environment and through a pipe into curl's
+# configuration: this script never writes a token to a file or an argument.
+# API responses land in a per-run scratch directory under the plan directory,
+# which the next run removes (a kill can leave one behind).
 # Every terraform command runs under a constructed environment: only the named
 # credentials and a few safe variables are passed, so ambient AWS keys, TF_VAR_*,
 # TF_CLI_ARGS*, Vault overrides and provider logging cannot change what is applied.
@@ -43,6 +49,7 @@ command -v flock >/dev/null || { echo "ERROR: flock is required" >&2; exit 1; }
 exec 9> "${PLAN_DIR}/.lock"
 flock -n 9 || { echo "ERROR: another gitlab-vault plan or apply holds ${PLAN_DIR}/.lock" >&2; exit 1; }
 CANDIDATE=""  # this run's candidate plan, created just before terraform plan; never applyable
+rm -rf "${PLAN_DIR}"/run.*  # scratch a killed run left behind (API responses only)
 if [[ "${1:-}" == plan ]]; then
     # A plan attempt voids any earlier accepted plan, and any candidate a killed
     # run left behind, before anything else can fail.
@@ -97,26 +104,26 @@ decide() {
 enc() { jq -rn --arg s "$1" '$s | @uri'; }
 
 # gl PATH: authenticated GitLab API GET; prints the HTTP status, body in ${BODY}.
-# vg PATH: the same against the Vault HTTP API.
-AUTH_FILE="$(mktemp)"
-VAULT_AUTH_FILE="$(mktemp)"
-BODY="$(mktemp)"
-ERR="$(mktemp)"
+# vg PATH: the same against the Vault HTTP API. The token header reaches curl
+# through its stdin configuration (-K -), never a file or an argument.
+RUN_DIR="$(mktemp -d "${PLAN_DIR}/run.XXXXXX")"
+BODY="${RUN_DIR}/body"
+ERR="${RUN_DIR}/err"
 cleanup() {
-    rm -f "${AUTH_FILE:?}" "${VAULT_AUTH_FILE:?}" "${BODY:?}" "${ERR:?}"
+    rm -rf "${RUN_DIR:?}"
     [[ -n "${CANDIDATE}" ]] && rm -f "${CANDIDATE}"
     return 0
 }
 trap cleanup EXIT
-printf 'header = "PRIVATE-TOKEN: %s"\n' "${GITLAB_TOKEN}" > "${AUTH_FILE}"
-printf 'header = "X-Vault-Token: %s"\n' "${VAULT_TOKEN}" > "${VAULT_AUTH_FILE}"
 gl() {
-    clean curl --disable -sS --connect-timeout 10 --max-time 30 --cacert "${GITLAB_CA}" -K "${AUTH_FILE}" \
-        -o "${BODY}" -w '%{http_code}' "${GITLAB_URL_TF}/api/v4$1" 2>/dev/null || printf '000'
+    printf 'header = "PRIVATE-TOKEN: %s"\n' "${GITLAB_TOKEN}" \
+        | clean curl --disable -sS --connect-timeout 10 --max-time 30 --cacert "${GITLAB_CA}" -K - \
+            -o "${BODY}" -w '%{http_code}' "${GITLAB_URL_TF}/api/v4$1" 2>/dev/null || printf '000'
 }
 vg() {
-    clean curl --disable -sS --connect-timeout 10 --max-time 30 --cacert "${VAULT_CA}" -K "${VAULT_AUTH_FILE}" \
-        -o "${BODY}" -w '%{http_code}' "${VAULT_ADDR_TF}/v1$1" 2>/dev/null || printf '000'
+    printf 'header = "X-Vault-Token: %s"\n' "${VAULT_TOKEN}" \
+        | clean curl --disable -sS --connect-timeout 10 --max-time 30 --cacert "${VAULT_CA}" -K - \
+            -o "${BODY}" -w '%{http_code}' "${VAULT_ADDR_TF}/v1$1" 2>/dev/null || printf '000'
 }
 # gl_absent PATH: true only on a positive 404; any other answer is fatal.
 gl_absent() {
@@ -367,8 +374,13 @@ case "${1:-}" in
             echo "ERROR: set CONFIRM_REBUILD=TDNHQ-TALCL01 to apply the saved plan" >&2; exit 1; }
         [[ -f "${PLAN_FILE}" ]] || { echo "ERROR: no saved plan; run make gitlab-vault-plan first" >&2; exit 1; }
         tf init -input=false -lockfile=readonly >/dev/null
+        # The plan's absence proof is repeated now, against the same saved bytes
+        # and under the same lock, so an object that appeared during review
+        # stops the apply instead of being overwritten.
+        preflight_access
+        preflight_creates "${PLAN_FILE}"
         # Terraform refuses a plan saved against an older state. On failure the
-        # plan is kept for diagnosis; delete it yourself before re-planning.
+        # plan is kept for diagnosis; a new plan voids it.
         tf apply -input=false "${PLAN_FILE}"
         rm -f "${PLAN_FILE}"
 

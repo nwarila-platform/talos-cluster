@@ -14,6 +14,6 @@ output "project_urls" {
 }
 
 output "gitlab_url" {
-  description = "GitLab URL the root was applied against (used by the post-apply check)."
+  description = "GitLab URL the root was applied against."
   value       = var.gitlab_url
 }

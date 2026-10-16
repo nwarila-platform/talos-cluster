@@ -31,7 +31,7 @@ way to create one project's Vault role by hand and is superseded by `gitlab-vaul
 | Variable | Used by | Value |
 |---|---|---|
 | `CONFIRM_REBUILD` | `apply*`, `bootstrap`, `platform`, `vault-init`, `gitlab-vault` (not `vault-seed-aws`, which writes one KV secret) | the literal `TDNHQ-TALCL01` |
-| `GITLAB_TOKEN` | `gitlab-vault-plan`, `gitlab-vault` | the `platform-terraform` administrator bot's personal access token (`api`, `create_runner`; 7-day; rotate with `POST /api/v4/personal_access_tokens/self/rotate`) — environment only; the providers' file fallbacks are disabled |
+| `GITLAB_TOKEN` | `gitlab-vault-plan`, `gitlab-vault` | the `platform-terraform` administrator bot's personal access token (`api`, `create_runner`; 7-day; rotate with `POST /api/v4/personal_access_tokens/self/rotate`) — environment only: this root never writes it to a file (curl receives it through a pipe) and the providers' file fallbacks are pre-empted by the constructed environment |
 | `VAULT_TOKEN` | `gitlab-vault*`, `vault-seed-aws` | an administrative Vault token (the bootstrap root token from `.state/vault/init.json` today) |
 | `AWS_PROFILE` | `gitlab-vault*` | must be `mgmt-admin`; the S3 backend additionally refuses any account other than 793496711039. `scripts/gitlab-vault.sh` runs every terraform command under a constructed environment, so ambient `AWS_*` keys, `TF_VAR_*`, `TF_CLI_ARGS*`, Vault overrides and `TF_LOG*` cannot change what is planned or applied |
 | `GITLAB_PROJECT_ID` | `vault-seed-aws` | from `terraform -chdir=terraform/gitlab-vault output project_ids` |
@@ -41,6 +41,10 @@ way to create one project's Vault role by hand and is superseded by `gitlab-vaul
 Addresses and pins live in `cluster/config.env` (Talos, Kubernetes, charts, Terraform) and in
 `terraform/gitlab-vault/variables.tf` (GitLab URL, Vault addresses, the project list), with
 validation on every URL.
+
+`HOME` and `PATH` do pass through to every command: the AWS SSO cache, Terraform's CLI
+configuration and provider overrides under the home directory, and the binaries on `PATH` are
+trusted as the operator's own. Run only from the trusted workstation.
 
 ## What Terraform owns and what it refuses to destroy
 
@@ -122,7 +126,12 @@ killed run before deciding what to apply: before the old plan was voided, that o
 its own checks); between voiding and publication, nothing applyable and at most one non-applyable
 candidate (sensitive, 0600; the next run removes it); after publication, the new, checked plan.
 Plan and apply hold a lock in the plan directory, so a second run is refused rather than allowed
-to replace a plan another run is checking or applying. A plan that would *replace* an object
+to replace a plan another run is checking or applying. `gitlab-vault` repeats the whole check
+against the saved plan immediately before `terraform apply`, so an object that appeared during
+the review interval stops the apply instead of being overwritten; for the per-project policy,
+`allow_overwrite = false` makes the provider refuse as a second barrier (Terraform prints that
+attribute's deprecation warning on every plan — expected). A killed run can also leave its
+scratch directory `run.*` (API responses only, never a token); the next run removes it. A plan that would *replace* an object
 (Terraform's delete-and-create) is refused outright: this guard proves absence for pure creates,
 and a replacement means the object exists — review and apply such a change deliberately with
 Terraform itself. A create passes when

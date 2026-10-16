@@ -86,10 +86,21 @@ locals {
 resource "vault_policy" "project_aws_read" {
   for_each = local.vault_projects
 
-  name   = "${local.vault_name[each.key]}-aws-read"
-  policy = <<-EOT
+  name = "${local.vault_name[each.key]}-aws-read"
+  # Deprecated attribute, kept on purpose: with it the provider refuses to
+  # create over a policy that appeared after the plan (measured) instead of
+  # silently replacing it. Terraform prints the deprecation warning on every
+  # plan; drop the attribute once the pinned provider refuses by default.
+  allow_overwrite = false
+  policy          = <<-EOT
     path "kv/data/ci/production/project-${gitlab_project.this[each.key].id}/aws" {
       capabilities = ["read"]
+    }
+    # The role withholds the default policy, which is what normally lets a
+    # token revoke itself (measured: permission denied without this path).
+    # The job revokes its token as soon as it has read the secret.
+    path "auth/token/revoke-self" {
+      capabilities = ["update"]
     }
   EOT
 }

@@ -8,7 +8,7 @@ help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 init: ## Check local tools required for a rebuild
-	@for command in talosctl kubectl helm openssl jq terraform vault shellcheck yamllint actionlint python3; do \
+	@for command in talosctl kubectl helm openssl jq terraform vault curl flock shellcheck yamllint actionlint python3; do \
 		command -v "$$command" >/dev/null || { echo "missing: $$command"; exit 1; }; \
 	done
 	@python3 -I -c "import yaml" >/dev/null 2>&1 || { \
