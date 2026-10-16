@@ -1,0 +1,35 @@
+# Proof that a GitLab job can act in AWS with nothing but its ID token. The
+# role gitlab_<group>_<project> is created per project by aws_iam_role.project
+# in terraform/gitlab-vault/aws.tf and trusts ID tokens from this project's
+# main branch only; AWS_ACCOUNT_ID and AWS_REGION are instance-level CI
+# variables set by the same root. The aud below must equal var.aws_oidc_audience.
+# The token reaches the AWS CLI through a file named by
+# AWS_WEB_IDENTITY_TOKEN_FILE, so it appears in no argument and no log; the CLI
+# assumes the role itself. The job writes one SSM parameter under the only path
+# the role may touch and reads it back. The Kubernetes executor ignores the
+# image entrypoint by default (FF_KUBERNETES_HONOR_ENTRYPOINT=false).
+stages: [verify]
+
+assume-aws-role:
+  stage: verify
+  image: public.ecr.aws/aws-cli/aws-cli:2.38.1@sha256:733d5be1015825e4038c6016f3fa9954868ddee1f611b73be795a9cc2e706bfd
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  script:
+    - umask 077
+    - printf '%s' "${AWS_OIDC_TOKEN}" > "${CI_PROJECT_DIR}/.oidc-token"
+    - export AWS_WEB_IDENTITY_TOKEN_FILE="${CI_PROJECT_DIR}/.oidc-token"
+    - export AWS_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/gitlab_$(printf '%s' "${CI_PROJECT_PATH}" | tr '/' '_')"
+    - export AWS_ROLE_SESSION_NAME="gitlab-${CI_PIPELINE_ID}"
+    # The token's sub claim, decoded from the token's payload segment (base64url, re-padded): the
+    # only claim-level fact the trust policy binds, printed as evidence; the token itself never is.
+    - payload="$(printf '%s' "${AWS_OIDC_TOKEN}" | cut -d. -f2)"
+    - pad="$(printf '%*s' $(( (4 - ${#payload} % 4) % 4 )) '' | tr ' ' '=')"
+    - printf '%s%s' "${payload}" "${pad}" | tr '_-' '/+' | base64 -d | tr ',' '\n' | grep -oE '"sub":"[^"]*"' | sed -E 's/"sub":"([^"]*)"/sub=\1/'
+    - aws sts get-caller-identity --query Arn --output text
+    - value="pipeline ${CI_PIPELINE_ID} at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    - aws ssm put-parameter --name "/gitlab/poc/${CI_PROJECT_PATH}/last-run" --type String --overwrite --value "${value}" --query Version --output text
+    - aws ssm get-parameter --name "/gitlab/poc/${CI_PROJECT_PATH}/last-run" --query Parameter.Value --output text
+  after_script:
+    - rm -f "${CI_PROJECT_DIR}/.oidc-token"

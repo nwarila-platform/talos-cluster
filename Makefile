@@ -1,14 +1,20 @@
 SHELL := /bin/bash
+# Every recipe runs in bash's privileged mode: BASH_ENV and ENV are not sourced, SHELLOPTS/BASHOPTS
+# (an inherited xtrace), CDPATH and GLOBIGNORE in the environment are ignored and exported shell
+# functions are not imported — so no inherited shell state can print or redirect a credential
+# before a driver's own `set +x`. The drivers are started by absolute path, in the same mode.
+.SHELLFLAGS := -p -c
 .DEFAULT_GOAL := help
 
 .PHONY: help init generate validate apply apply-insecure bootstrap platform \
-	vault-init gitlab-vault-plan gitlab-vault vault-configure vault-seed-aws selftest health kubeconfig
+	vault-init cloudflare-plan cloudflare cloudflare-verify gitlab-vault-plan gitlab-vault vault-configure \
+	vault-seed-aws selftest health kubeconfig
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 init: ## Check local tools required for a rebuild
-	@for command in talosctl kubectl helm openssl jq terraform vault curl flock shellcheck yamllint actionlint python3; do \
+	@for command in talosctl kubectl helm openssl jq terraform vault aws curl flock shellcheck yamllint actionlint python3; do \
 		command -v "$$command" >/dev/null || { echo "missing: $$command"; exit 1; }; \
 	done
 	@python3 -I -c "import yaml" >/dev/null 2>&1 || { \
@@ -45,11 +51,20 @@ platform: ## Install pinned Calico, Longhorn, Argo CD, and Vault charts
 vault-init: ## Initialize and unseal the new Vault raft cluster
 	@bash scripts/vault-init.sh
 
-gitlab-vault-plan: ## Preflight, then save a reviewed plan for GitLab, Vault and the runner; needs GITLAB_TOKEN, VAULT_TOKEN, AWS_PROFILE
-	@bash scripts/gitlab-vault.sh plan
+cloudflare-plan: ## Preflight, then save a reviewed plan for the GitLab edge (tunnel, DNS); needs CLOUDFLARE_API_TOKEN, AWS_PROFILE
+	@/bin/bash -p scripts/cloudflare.sh plan
 
-gitlab-vault: ## Apply the saved plan, then prove convergence and an online runner; needs the same three plus CONFIRM_REBUILD=TDNHQ-TALCL01
-	@bash scripts/gitlab-vault.sh apply
+cloudflare: ## Apply the saved edge plan and write the connector's token file for the host; needs the same plus CONFIRM_REBUILD=TDNHQ-TALCL01
+	@/bin/bash -p scripts/cloudflare.sh apply
+
+cloudflare-verify: ## Prove the public path: tunnel healthy, discovery document and JWKS served through Cloudflare
+	@/bin/bash -p scripts/cloudflare.sh verify
+
+gitlab-vault-plan: ## Preflight, then save a reviewed plan for GitLab, Vault, AWS and the runner; needs GITLAB_TOKEN, VAULT_TOKEN, AWS_PROFILE
+	@/bin/bash -p scripts/gitlab-vault.sh plan
+
+gitlab-vault: ## Apply the saved plan, then prove convergence, non-expiring runner tokens and an online runner; needs the same three plus CONFIRM_REBUILD=TDNHQ-TALCL01
+	@/bin/bash -p scripts/gitlab-vault.sh apply
 
 vault-configure: ## (superseded by gitlab-vault) Configure one project's GitLab JWT auth in Vault by hand
 	@bash scripts/configure-vault-gitlab.sh

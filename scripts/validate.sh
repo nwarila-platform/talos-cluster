@@ -36,14 +36,17 @@ actionlint "${ROOT_DIR}"/.github/workflows/*.yaml
 
 kubectl kustomize "${ROOT_DIR}/platform/vault" >/dev/null
 
-# Terraform: formatting and a provider-schema validation. Providers are
-# installed into a cache directory under HOME because /tmp may be noexec.
-terraform -chdir="${ROOT_DIR}/terraform/gitlab-vault" fmt -check -recursive
-tf_data="${XDG_CACHE_HOME:-${HOME}/.cache}/talos-cluster-validate/terraform"
-mkdir -p "${tf_data}"
-TF_DATA_DIR="${tf_data}" terraform -chdir="${ROOT_DIR}/terraform/gitlab-vault" init \
-    -backend=false -input=false -lockfile=readonly >/dev/null
-TF_DATA_DIR="${tf_data}" terraform -chdir="${ROOT_DIR}/terraform/gitlab-vault" validate
+# Terraform: formatting and a provider-schema validation of every root.
+# Providers are installed into a cache directory under HOME because /tmp may
+# be noexec; each root keeps its own data directory.
+for root in gitlab-vault cloudflare; do
+    terraform -chdir="${ROOT_DIR}/terraform/${root}" fmt -check -recursive
+    tf_data="${XDG_CACHE_HOME:-${HOME}/.cache}/talos-cluster-validate/terraform-${root}"
+    mkdir -p "${tf_data}"
+    TF_DATA_DIR="${tf_data}" terraform -chdir="${ROOT_DIR}/terraform/${root}" init \
+        -backend=false -input=false -lockfile=readonly >/dev/null
+    TF_DATA_DIR="${tf_data}" terraform -chdir="${ROOT_DIR}/terraform/${root}" validate
+done
 
 STATE_ROOT="${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}"
 shopt -s nullglob

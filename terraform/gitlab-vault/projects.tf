@@ -32,6 +32,10 @@ resource "gitlab_project" "this" {
   initialize_with_readme = true
   default_branch         = "main"
   archived               = each.value.archived
+  # Projects that assume an IAM role carry ref_protected in their ID-token
+  # subject (GitLab 18.7+; measured on 19.4: the project setting exists and
+  # defaults to project_path, ref_type, ref), so the trust policy can pin it.
+  ci_id_token_sub_claim_components = each.value.aws_access ? ["project_path", "ref_type", "ref", "ref_protected"] : ["project_path", "ref_type", "ref"]
 
   # Destroying a project archives it; permanent deletion (the provider's
   # mutually exclusive permanently_delete_on_destroy) stays at its default, off.

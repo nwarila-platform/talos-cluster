@@ -20,3 +20,10 @@ provider "helm" {
     config_path = var.kubeconfig
   }
 }
+
+# AWS: credentials come from the environment (AWS_PROFILE=mgmt-admin via SSO
+# today), like the state backend; the account is pinned here as well.
+provider "aws" {
+  region              = var.aws_region
+  allowed_account_ids = ["793496711039"]
+}

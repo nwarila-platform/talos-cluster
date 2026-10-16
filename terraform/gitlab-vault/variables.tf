@@ -62,15 +62,21 @@ variable "kubeconfig" {
 }
 
 variable "projects" {
-  description = "Projects managed here, keyed by <group>/<project>. Each gets a GitLab project with a protected main branch; while vault_access is true it also gets a Vault JWT role bound to that project id. ci_file (optional) is committed once to main as .gitlab-ci.yml. Offboarding = vault_access false (first apply), then archived true (second apply); entries are never simply removed."
+  description = "Projects managed here, keyed by <group>/<project>. Each gets a GitLab project with a protected main branch; while vault_access is true it also gets a Vault JWT role bound to that project id, and while aws_access is true an IAM role gitlab_<group>_<project> that only its main-branch ID tokens can assume. ci_file (optional) is committed once to main as .gitlab-ci.yml. Offboarding = vault_access and aws_access false (first apply), then archived true (second apply); entries are never simply removed."
   type = map(object({
     ci_file      = optional(string)
     vault_access = optional(bool, true)
+    aws_access   = optional(bool, false)
     archived     = optional(bool, false)
   }))
   default = {
     "poc/vault-gitlab-poc" = {
       ci_file = "../../examples/vault-gitlab-poc/.gitlab-ci.yml"
+    }
+    "poc/aws-oidc-poc" = {
+      ci_file      = "../../examples/aws-oidc-poc/.gitlab-ci.yml"
+      vault_access = false
+      aws_access   = true
     }
   }
 
@@ -81,5 +87,31 @@ variable "projects" {
   validation {
     condition     = length(distinct([for key in keys(var.projects) : replace(key, "/", "-")])) == length(var.projects)
     error_message = "Project keys must stay distinct after replacing / with - (that form names the Vault policy and role)."
+  }
+  validation {
+    condition     = alltrue([for key in keys(var.projects) : length(key) <= 56])
+    error_message = "Project keys must be at most 56 characters so the IAM role name gitlab_<group>_<project> stays within 64."
+  }
+}
+
+variable "aws_region" {
+  description = "Region of the SSM parameters the proof role may write; also the provider's region."
+  type        = string
+  default     = "us-east-1"
+
+  validation {
+    condition     = can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.aws_region))
+    error_message = "aws_region must look like us-east-1."
+  }
+}
+
+variable "aws_oidc_audience" {
+  description = "Audience jobs request in their AWS ID token and the only client id the IAM identity provider accepts."
+  type        = string
+  default     = "sts.amazonaws.com"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9.:/-]+$", var.aws_oidc_audience))
+    error_message = "aws_oidc_audience must be a plain identifier such as sts.amazonaws.com."
   }
 }

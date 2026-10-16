@@ -26,12 +26,16 @@
 !cluster/patches/volumes-worker.yaml
 
 !examples/
+!examples/aws-oidc-poc/
+!examples/aws-oidc-poc/.gitlab-ci.yml
 !examples/vault-gitlab-poc/
 !examples/vault-gitlab-poc/.gitlab-ci.yml
 
 !platform/
 !platform/calico/
 !platform/calico/values.yaml
+!platform/gitlab-host/
+!platform/gitlab-host/cloudflared-gitlab.service
 !platform/gitlab-runner/
 !platform/gitlab-runner/values.yaml
 !platform/longhorn/
@@ -52,6 +56,7 @@
 !scripts/
 !scripts/apply.sh
 !scripts/bootstrap.sh
+!scripts/cloudflare.sh
 !scripts/configure-vault-gitlab.sh
 !scripts/generate.sh
 !scripts/gitlab-vault.sh
@@ -67,8 +72,17 @@
 !scripts/tests/selftest-vault-unsealer.sh
 
 !terraform/
+!terraform/cloudflare/
+!terraform/cloudflare/.terraform.lock.hcl
+!terraform/cloudflare/backend.tf
+!terraform/cloudflare/main.tf
+!terraform/cloudflare/outputs.tf
+!terraform/cloudflare/providers.tf
+!terraform/cloudflare/variables.tf
+!terraform/cloudflare/versions.tf
 !terraform/gitlab-vault/
 !terraform/gitlab-vault/.terraform.lock.hcl
+!terraform/gitlab-vault/aws.tf
 !terraform/gitlab-vault/backend.tf
 !terraform/gitlab-vault/outputs.tf
 !terraform/gitlab-vault/pki.tf

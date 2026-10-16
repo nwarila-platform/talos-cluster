@@ -3,9 +3,10 @@
 The Talos cluster behind GitLab. A fresh set of six machines becomes a working cluster, with Vault,
 a private CA and a GitLab runner, by running the targets below in order. The imperative bootstrap
 (Talos machine configs, etcd, the four platform charts, Vault init) is `make` + bash; everything
-after it — the GitLab runner, Vault auth and PKI, and every onboarded project — is one Terraform
-root, `terraform/gitlab-vault/`. A reviewed `terraform plan` followed by applying exactly that plan
-is the reconcile.
+after it is Terraform: the GitLab edge (a Cloudflare tunnel and DNS) in `terraform/cloudflare/`,
+and the GitLab runner, Vault auth and PKI, AWS identity federation and every onboarded project in
+`terraform/gitlab-vault/`. A reviewed `terraform plan` followed by applying exactly that plan is
+the reconcile.
 
 ## Rebuild order
 
@@ -18,8 +19,11 @@ is the reconcile.
 | `bootstrap` | bootstraps etcd once and writes the kubeconfig | `CONFIRM_REBUILD` |
 | `platform` | installs Calico, Longhorn, Argo CD and Vault from the pinned charts | `CONFIRM_REBUILD` |
 | `vault-init` | initializes and unseals Vault; writes `.state/vault/init.json`; stores shares 0–2 in the `vault-unseal` Secret for the in-cluster unsealer | `CONFIRM_REBUILD` |
+| `cloudflare-plan` | writes a reviewed plan for the GitLab edge after proving every planned object targets the probed account, zone and names, the tunnel configuration references the planned tunnel, and the tunnel and the DNS record are absent | `CLOUDFLARE_API_TOKEN`, `AWS_PROFILE` |
+| `cloudflare` | applies exactly that plan, proves convergence, writes the connector's token file to `.state/cloudflare/`; then install the connector on the GitLab host (below) | the same plus `CONFIRM_REBUILD` |
+| `cloudflare-verify` | proves the public path: tunnel healthy, OpenID discovery document and JWKS served through Cloudflare | `CLOUDFLARE_API_TOKEN`, `AWS_PROFILE` |
 | `gitlab-vault-plan` | discards any earlier accepted plan, writes a candidate plan and prints it for review, proves that every object it would create is absent remotely (directly, or because the same plan creates its container; every lookup fails closed), and only then publishes it as `.state/terraform/gitlab-vault.tfplan` (0600) | `GITLAB_TOKEN`, `VAULT_TOKEN`, `AWS_PROFILE=mgmt-admin` |
-| `gitlab-vault` | applies exactly that saved plan, then proves convergence (an empty second plan), that the runner's token does not expire, and that the runner is online (bounded wait) | the same three, plus `CONFIRM_REBUILD` |
+| `gitlab-vault` | applies exactly that saved plan (after re-proving absence and that instance runner tokens do not expire), then proves convergence (an empty second plan), the runner-token setting again, and that the runner is online (bounded wait) | the same three, plus `CONFIRM_REBUILD` |
 | `vault-seed-aws` | seeds one project's static AWS credential | `VAULT_TOKEN`, `GITLAB_PROJECT_ID`, `AWS_*` |
 | `health` | checks Talos, nodes, pods and the expected Helm releases | — |
 
@@ -33,9 +37,10 @@ superseded by `gitlab-vault`.
 | Variable | Used by | Value |
 |---|---|---|
 | `CONFIRM_REBUILD` | `apply*`, `bootstrap`, `platform`, `vault-init`, `gitlab-vault` (not `vault-seed-aws`, which writes one KV secret) | the literal `TDNHQ-TALCL01` |
+| `CLOUDFLARE_API_TOKEN` | `cloudflare*` | an API token with Cloudflare Tunnel: Edit on the account, DNS: Edit and Zone: Read on the zone |
 | `GITLAB_TOKEN` | `gitlab-vault-plan`, `gitlab-vault` | the `platform-terraform` administrator bot's personal access token (`api`, `create_runner`; 7-day; rotate with `POST /api/v4/personal_access_tokens/self/rotate`) — environment only: this root never writes it to a file (curl receives it through a pipe) and the providers' file fallbacks are pre-empted by the constructed environment |
 | `VAULT_TOKEN` | `gitlab-vault*`, `vault-seed-aws` | an administrative Vault token (the bootstrap root token from `.state/vault/init.json` today) |
-| `AWS_PROFILE` | `gitlab-vault*` | must be `mgmt-admin`; the S3 backend additionally refuses any account other than 793496711039. `scripts/gitlab-vault.sh` runs every terraform command under a constructed environment, so ambient `AWS_*` keys, `TF_VAR_*`, `TF_CLI_ARGS*`, Vault overrides and `TF_LOG*` cannot change what is planned or applied |
+| `AWS_PROFILE` | `cloudflare*`, `gitlab-vault*` | must be `mgmt-admin`; the S3 backend and the AWS provider additionally refuse any account other than 793496711039. `scripts/gitlab-vault.sh` runs every terraform command under a constructed environment, so ambient `AWS_*` keys, `TF_VAR_*`, `TF_CLI_ARGS*`, Vault overrides and `TF_LOG*` cannot change what is planned or applied |
 | `GITLAB_PROJECT_ID` | `vault-seed-aws` | from `terraform -chdir=terraform/gitlab-vault output project_ids` |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | `vault-seed-aws` | the dedicated PoC credential |
 | `NODES` | `apply`, `apply-insecure` | optional subset of node names |
@@ -44,9 +49,24 @@ Addresses and pins live in `cluster/config.env` (Talos, Kubernetes, charts, Terr
 `terraform/gitlab-vault/variables.tf` (GitLab URL, Vault addresses, the project list), with
 validation on every URL.
 
-`HOME` and `PATH` do pass through to every command: the AWS SSO cache, Terraform's CLI
-configuration and provider overrides under the home directory, and the binaries on `PATH` are
-trusted as the operator's own. Run only from the trusted workstation.
+The trust boundary is the operator's workstation and shell. What passes through to every
+command is `HOME` and `PATH`: the AWS SSO cache, Terraform's CLI configuration under the home
+directory (`~/.terraformrc`, `~/.terraform.d/`, including any `dev_overrides` or
+`filesystem_mirror` paths it names, wherever they point), `TF_PLUGIN_CACHE_DIR` when set, and the
+binaries found on `PATH` are trusted as the operator's own, as are `make` command-line overrides
+(`SHELL=`, `.SHELLFLAGS=`, `MAKEFLAGS`). Each root's `.terraform/` data directory and its
+`.terraform.lock.hcl` (tracked, read-only during a run) are the only inputs outside the reviewed
+source files. Run only through `make`: every recipe runs in bash's privileged mode (`-p`), which
+does not source `BASH_ENV`/`ENV`, ignores an inherited `SHELLOPTS`/`BASHOPTS` (a leaked xtrace),
+`CDPATH` and `GLOBIGNORE`, and does not import exported shell functions, and the drivers are
+started by absolute path in the same mode — so no inherited shell state can print or redirect a
+credential before a driver's own `set +x`. Before a driver touches any state, looks up any command
+or reads any credential, it proves that its Terraform root is the committed, reviewed tree:
+`git status` (ignored files included — the repository's `.gitignore` denies by default, so a
+stray `override.tf` or `*.tfvars` would otherwise be invisible) must show nothing but the
+`.terraform/` data directory, the tracked set must equal the reviewed file list, and every reviewed
+file must be a regular file. Only then do the plan-level checks below run; they are a second
+layer, not the proof that the configuration is the reviewed one.
 
 ## What Terraform owns and what it refuses to destroy
 
@@ -83,10 +103,13 @@ offboarding a project are each a reviewed change:
 | `vault/init.json` | `vault-init` | yes — unseal keys and root token |
 | `gitlab/ca.crt` | you, once: the GitLab server certificate (PEM) | no (public certificate) |
 | `gitlab/admin-token`, `gitlab/root-password` | the one-time bootstrap on the GitLab host | yes |
+| `cloudflare/gitlab-tunnel.env` | `cloudflare` | yes — the connector token (also in the Cloudflare state) |
+| (paths handed to Terraform) | the drivers | `kubeconfig`, `gitlab/ca.crt`, `vault/tls/ca.crt` are passed to Terraform as absolute `TF_VAR_*` values, so the files the preflight validated are the files the providers use, also under `STATE_DIR_OVERRIDE` |
+| `terraform/cloudflare.tfplan` | `cloudflare-plan` | yes — deleted after a successful apply |
 | `terraform/gitlab-vault.tfplan` | `gitlab-vault-plan` | yes — a plan embeds sensitive values; deleted after a successful apply, kept after a failed one for diagnosis (delete it yourself before re-planning) |
 
 Terraform state lives in `s3://793496711039-terraform/nwarila-platform/talos-cluster/gitlab-vault.tfstate`
-(versioned, SSE-S3, S3 lock file). Treat the bucket as a secret store: the state holds the runner
+and `…/cloudflare.tfstate` (versioned, SSE-S3, S3 lock file). Treat the bucket as a secret store: the state holds the runner
 token (twice: the runner resource and the Helm `set_sensitive` value), every group's and project's
 runner registration token, the GitLab and Vault CA certificates, and every CA certificate, CSR and
 chain. The CA private keys never enter state (`type = "internal"`). S3 versioning retains old values
@@ -127,6 +150,56 @@ is created on a cluster initialized before the unsealer existed — prove it by 
 follower pod (it restarts sealed; a standby cannot be sealed in place, Vault answers "cannot seal
 when in standby mode") and watching the next Job open it. Create the Secret before the CronJob
 exists: a Job that finds Vault initialized and no shares exits 1 by design.
+## Runner token
+
+GitLab 19.4 reports no per-runner expiry through the API; `runner_token_expiration_interval`
+governs instance runners at registration, and a runner registered while the setting was set keeps
+that expiry whatever the setting says later. The driver proves the setting is `null` before
+planning, before applying and after applying, which protects every future registration. For the
+live runner (`talos-cluster`, id 1, registered by the first `gitlab-vault` apply at 2026-10-16
+04:15Z) the recorded facts are only that the setting was `null` at 04:20Z and at 12:06Z — not at
+the registration itself — so its token's expiry is **unproven until read from the instance**:
+`sudo gitlab-rails runner 'p Ci::Runner.find(1).token_expires_at'` on the GitLab host must print
+`nil`; anything else means replace the runner (Replacing the runner) while the setting is observed
+`null`. That read is a live-only gate of the edge rollout.
+
+## GitLab edge
+
+GitLab is reachable on the LAN at its own address (the site resolver answers the name with it) and
+on the Internet through a dedicated Cloudflare tunnel, `tcnhq-ubt01-gitlab`, whose connector runs
+as its own service on the GitLab host next to the host's other tunnel. `terraform/cloudflare/`
+owns the tunnel, its single ingress rule (the GitLab hostname to `https://localhost:443`, origin
+certificate verified against GitLab's own certificate, nothing else routed) and the proxied CNAME.
+The public path exists so AWS IAM can read `/.well-known/openid-configuration` and
+`/oauth/discovery/keys`; it also exposes the GitLab sign-in page to the Internet behind nothing but
+GitLab's own authentication (Known shortcuts). After `make cloudflare`, copy three files to the
+host and install the connector there as an administrator:
+
+```
+install -o root -g cloudflared -m 0640 gitlab-tunnel.env /etc/cloudflared/gitlab.env      # from .state/cloudflare/
+install -o root -g cloudflared -m 0644 ca.crt /etc/cloudflared/gitlab-ca.crt              # from .state/gitlab/
+install -o root -g root -m 0644 cloudflared-gitlab.service /etc/systemd/system/           # from platform/gitlab-host/
+systemctl daemon-reload && systemctl enable --now cloudflared-gitlab.service
+```
+
+`make cloudflare-verify` then proves the tunnel is healthy and that the discovery document names
+`https://gitlab.trinitytechnicalservices.com` as issuer on the public path, resolved over
+DNS-over-HTTPS so the site resolver's LAN answer cannot mask a broken edge.
+
+## How a job reaches AWS
+
+`gitlab-vault` registers GitLab as an OpenID Connect identity provider in account 793496711039
+(audience `sts.amazonaws.com`; IAM fetches and keeps the issuer's CA thumbprint itself) and, for
+each project with `aws_access = true`, sets the project's ID-token subject to carry `ref_protected`
+and creates the IAM role `gitlab_<group>_<project>` whose trust policy accepts only ID tokens with
+`sub = project_path:<group>/<project>:ref_type:branch:ref:main:ref_protected:true` — the same
+protected `main` the Vault role relies on — and attaches the proof permission: write and
+read SSM parameters under `/gitlab/poc/<group>/<project>/` and nothing else. Two instance-level CI
+variables, `AWS_ACCOUNT_ID` and `AWS_REGION`, let a job build its role ARN from `CI_PROJECT_PATH`.
+The job hands the token to the AWS CLI through `AWS_WEB_IDENTITY_TOKEN_FILE`, so it never appears
+in an argument; [examples/aws-oidc-poc/.gitlab-ci.yml](examples/aws-oidc-poc/.gitlab-ci.yml) is
+the complete example. The preflight refuses to plan the identity provider until the public path
+serves the discovery document, because IAM reads it at creation.
 
 ## How a job reaches Vault
 
@@ -183,6 +256,8 @@ a short-lived child token for the run.
 
 | Planned create | Proven absent by | If present |
 |---|---|---|
+| IAM identity provider for the GitLab issuer | the public discovery document and JWKS must be served (DNS-over-HTTPS resolution), then `aws iam get-open-id-connect-provider` must answer NoSuchEntity | `terraform import aws_iam_openid_connect_provider.gitlab arn:aws:iam::793496711039:oidc-provider/<host>` |
+| IAM role `gitlab_<group>_<project>` and its inline policy | `aws iam get-role` NoSuchEntity; the policy by containment in a planned role, else `aws iam get-role-policy` | `terraform import 'aws_iam_role.project["<key>"]' <name>` |
 | Vault mounts `kv`, `pki-root`, `pki-int-linux` | `sys/mounts` | `terraform import vault_mount.kv kv` (same for `pki_root`, `pki_int`), then the rows below for their contents |
 | Vault auth `gitlab` | `sys/auth` | `terraform import vault_jwt_auth_backend.gitlab gitlab` |
 | PKI root issuer and key `temp-root`, issuing key and issuer `linux-issuing`, role `tcn-server` | containment in a planned mount, else the mount's issuer and key listings and `roles/` | issuer: `terraform import vault_pki_secret_backend_issuer.int pki-int-linux/issuer/<issuer_id>`; role: `terraform import vault_pki_secret_backend_role.tcn_server pki-int-linux/roles/tcn-server`; a generated root certificate or key cannot be imported — remove it or use another mount path |
@@ -244,8 +319,13 @@ symlink in a single rename, so an in-service bundle is never half-replaced:
 - The root CA private key lives inside Vault; the offline root ceremony replaces it.
 - `VAULT_TOKEN` is the bootstrap root token; a scoped admin token should replace it, and
   `terraform apply` should run from a GitLab pipeline using a Vault role of its own.
-- The GitLab server certificate is self-signed and trusted by file (trust on first use) until the
-  Cloudflare tunnel fronts GitLab.
+- The GitLab server certificate is self-signed and trusted by file (trust on first use) on the LAN
+  and by the tunnel connector; Cloudflare issues the public certificate.
+- The public GitLab hostname reaches the sign-in page with GitLab's own authentication only; a
+  Cloudflare Access policy in front of everything but the OpenID discovery paths is the next edge
+  change, and GitLab's `real_ip` trust for Cloudflare's ranges is not yet set on the host.
+- The connector service on the GitLab host is installed by hand from `platform/gitlab-host/`; the
+  host is not yet under configuration management.
 - The `vault-unseal` Secret is readable by every identity with Secret access in `vault` (and by
   anyone who can run or exec a pod there); the Secrets lockdown piece reduces, not removes, that.
 - `.state/` is workstation-local; a pipeline-driven rebuild needs it in durable storage (S3).

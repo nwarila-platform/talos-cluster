@@ -17,7 +17,7 @@
 #   apply   repeats the same absence proof against the saved plan (so nothing
 #           that appeared during review is overwritten), applies exactly that
 #           plan (CONFIRM_REBUILD required), then proves convergence (an empty
-#           second plan) and that the runner's token does not expire and the
+#           second plan), that instance runner tokens do not expire and the
 #           runner is online.
 # Credentials travel only in the environment and through a pipe into curl's
 # configuration: this script never writes a token to a file or an argument.
@@ -28,13 +28,43 @@
 # TF_CLI_ARGS*, Vault overrides and provider logging cannot change what is applied.
 # jq filters below take their values through --arg, so $name inside single quotes is a jq variable.
 # shellcheck disable=SC2016
+set +x  # inherited xtrace would print tokens; nothing below may re-enable it
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${ROOT_DIR}/cluster/config.env"
 
-STATE_ROOT="${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}"
+# The root's bytes must be the committed, reviewed bytes, decided FIRST — before any state cleanup,
+# command lookup or credential is touched. git answers all of it: nothing modified, type-changed or
+# deleted among the tracked files; nothing untracked, and nothing ignored either (the repository's
+# .gitignore denies by default, so a stray override.tf, *.tfvars or extra .tf would be invisible to a
+# plain status) except Terraform's own data directory; and the tracked set equal to the reviewed
+# list. Names are compared NUL-delimited, so a name with a newline cannot stand for two.
+root_is_reviewed() {  # root_is_reviewed DIR NAME...   (DIR relative to the repository root)
+    local dir="$1" entry name found expected status; shift
+    expected="$(printf '%s\n' "$@" | sort)"
+    status="$(git -C "${ROOT_DIR}" -c core.quotePath=false status --porcelain=v1 -z --ignored=matching --untracked-files=all -- "${dir}" | tr '\0' '\n')" \
+        || { echo "ERROR: git could not report the state of ${dir}" >&2; exit 1; }
+    while IFS= read -r entry; do
+        [[ -z "${entry}" ]] && continue
+        [[ "${entry}" == "!! ${dir}/.terraform/" ]] && continue
+        echo "ERROR: ${dir} is not the committed, reviewed tree: ${entry} (commit, remove or inspect it before planning)" >&2
+        exit 1
+    done <<<"${status}"
+    found="$(git -C "${ROOT_DIR}" -c core.quotePath=false ls-files -z -- "${dir}" | tr '\0' '\n' | sed "s|^${dir}/||" | sort)"
+    [[ "${found}" == "${expected}" ]] || {
+        echo "ERROR: ${dir} must track exactly these reviewed files: $* (tracked: $(printf '%s' "${found}" | tr '\n' ' '))" >&2
+        exit 1
+    }
+    for name in "$@"; do
+        [[ -f "${ROOT_DIR}/${dir}/${name}" && ! -L "${ROOT_DIR}/${dir}/${name}" ]] \
+            || { echo "ERROR: ${dir}/${name} is not a regular file" >&2; exit 1; }
+    done
+}
+root_is_reviewed terraform/gitlab-vault .terraform.lock.hcl aws.tf backend.tf outputs.tf pki.tf projects.tf providers.tf runner.tf variables.tf vault-auth.tf versions.tf
+
+STATE_ROOT="$(readlink -f "${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}")"  # absolute: Terraform receives these paths
 TF_DIR="${ROOT_DIR}/terraform/gitlab-vault"
 PLAN_DIR="${STATE_ROOT}/terraform"
 PLAN_FILE="${PLAN_DIR}/gitlab-vault.tfplan"
@@ -56,7 +86,7 @@ if [[ "${1:-}" == plan ]]; then
     rm -f "${PLAN_FILE}" "${PLAN_DIR}"/gitlab-vault.tfplan.candidate.*
 fi
 
-for command in terraform curl jq kubectl helm; do
+for command in terraform curl jq kubectl helm aws; do
     command -v "${command}" >/dev/null || { echo "ERROR: ${command} is required" >&2; exit 1; }
 done
 : "${GITLAB_TOKEN:?set GITLAB_TOKEN (administrator personal access token, scopes api and create_runner)}"
@@ -73,6 +103,7 @@ tf_default() {  # tf_default VARIABLE
 GITLAB_URL_TF="$(tf_default gitlab_url)"
 VAULT_ADDR_TF="$(tf_default vault_addr)"
 [[ -n "${GITLAB_URL_TF}" && -n "${VAULT_ADDR_TF}" ]] || { echo "ERROR: could not read variable defaults" >&2; exit 1; }
+AWS_ACCOUNT=""
 
 # tf: terraform under an allow-list environment.
 tf() {
@@ -81,12 +112,15 @@ tf() {
         AWS_PROFILE="${AWS_PROFILE}" GITLAB_TOKEN="${GITLAB_TOKEN}" VAULT_TOKEN="${VAULT_TOKEN}" \
         ${TF_PLUGIN_CACHE_DIR:+TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR}"} \
         TF_IN_AUTOMATION=1 \
+        TF_VAR_kubeconfig="${KUBECONFIG_FILE}" TF_VAR_gitlab_ca_file="${GITLAB_CA}" TF_VAR_vault_ca_file="${VAULT_CA}" \
         terraform -chdir="${TF_DIR}" "$@"
 }
 
 # Every discovery command runs under a constructed environment too, so proxies
 # and ambient credentials cannot change what the preflight sees.
 clean() { env -i HOME="${HOME}" PATH="${PATH}" LANG=C.UTF-8 "$@"; }
+# aws_cli: the AWS CLI with only the profile (its SSO cache lives under HOME).
+aws_cli() { env -i HOME="${HOME}" PATH="${PATH}" LANG=C.UTF-8 AWS_PROFILE="${AWS_PROFILE}" aws "$@"; }
 
 # Decisions are made only on literal answers. decide LABEL [JQ-ARGS...] FILTER
 # reads JSON on stdin and returns 0 when FILTER yields exactly `true`, 1 on
@@ -208,6 +242,10 @@ preflight_access() {
     if ! { [[ "$(gl /user)" == "200" ]] && decide "GitLab /user" '.is_admin == true' < "${BODY}"; }; then
         echo "ERROR: GITLAB_TOKEN is not a working administrator token" >&2; exit 1
     fi
+    # Instance runner tokens must not expire (GitLab 19.4 reports no per-runner
+    # expiry; the instance setting governs newly registered instance runners),
+    # proven before planning and again before applying, not only after.
+    runner_tokens_do_not_expire
     # Vault answers both listings with the mounts under .data as "<path>/" keys.
     local inventory='(.data | type) == "object" and all(.data | keys[]; endswith("/")) and all(.data[]; type == "object")'
     [[ "$(vg /sys/mounts)" == "200" ]] || { echo "ERROR: VAULT_TOKEN cannot read sys/mounts at ${VAULT_ADDR_TF}" >&2; exit 1; }
@@ -216,6 +254,49 @@ preflight_access() {
     [[ "$(vg /sys/auth)" == "200" ]] || { echo "ERROR: VAULT_TOKEN cannot read sys/auth" >&2; exit 1; }
     decide "sys/auth (shape)" "${inventory}" < "${BODY}" || { echo "ERROR: sys/auth has an unexpected shape" >&2; exit 1; }
     AUTHS="$(jq -c '.data' "${BODY}")"
+    # The IAM objects below are decided against this account only.
+    AWS_ACCOUNT="$(aws_cli sts get-caller-identity --query Account --output text 2>/dev/null || true)"
+    [[ "${AWS_ACCOUNT}" == "793496711039" ]] || { echo "ERROR: AWS_PROFILE does not resolve to account 793496711039 (got '${AWS_ACCOUNT:-none}')" >&2; exit 1; }
+}
+
+runner_tokens_do_not_expire() {
+    local status
+    status="$(gl /application/settings)"
+    [[ "${status}" == "200" ]] || { echo "ERROR: GET /application/settings -> HTTP ${status}" >&2; exit 1; }
+    jq -e 'type == "object" and has("runner_token_expiration_interval") and .runner_token_expiration_interval == null' "${BODY}" >/dev/null 2>&1 || {
+        echo "ERROR: instance runner tokens expire (runner_token_expiration_interval is set or unreadable); clear it in the GitLab admin settings and replace any runner registered while it was set (the setting binds a runner at registration; see README: Runner token)" >&2
+        exit 1
+    }
+}
+
+# aws_absent SUBCOMMAND ARGS...: true only when IAM answers NoSuchEntity; a
+# success means present; any other failure is fatal.
+aws_absent() {
+    local err
+    if aws_cli iam "$@" > /dev/null 2> "${ERR}"; then return 1; fi
+    err="$(cat "${ERR}")"
+    [[ "${err}" == *NoSuchEntity* ]] && return 0
+    echo "ERROR: aws iam $1 failed: ${err}" >&2; exit 1
+}
+
+# issuer_public HOST: the OpenID discovery document and JWKS must be served on
+# the public path (resolved over DNS-over-HTTPS, not the site resolver), which
+# is the path IAM takes when it creates the identity provider.
+issuer_public() {
+    local edge
+    clean curl --disable -sS --connect-timeout 10 --max-time 30 -H 'accept: application/dns-json' \
+        -o "${BODY}" "https://cloudflare-dns.com/dns-query?name=$(enc "$1")&type=A" < /dev/null || { echo "ERROR: DNS-over-HTTPS lookup of $1 failed" >&2; exit 1; }
+    decide "public answer for $1" '.Status == 0 and (.Answer | type) == "array" and any(.Answer[]; .type == 1 and (.data | type) == "string")' < "${BODY}" \
+        || { echo "ERROR: $1 has no public address; apply terraform/cloudflare and install the connector first (make cloudflare, make cloudflare-verify)" >&2; exit 1; }
+    edge="$(jq -r '[.Answer[] | select(.type == 1) | .data][0]' "${BODY}")"
+    [[ "${edge}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ && "${edge}" != 10.* ]] || { echo "ERROR: the public answer for $1 is not a public IPv4 address (${edge})" >&2; exit 1; }
+    clean curl --disable -sS --connect-timeout 10 --max-time 30 --resolve "$1:443:${edge}" \
+        -o "${BODY}" "https://$1/.well-known/openid-configuration" < /dev/null || { echo "ERROR: discovery document for $1 unreachable on the public path" >&2; exit 1; }
+    decide "public discovery document" --arg i "https://$1" '.issuer == $i and .jwks_uri == ($i + "/oauth/discovery/keys")' < "${BODY}" \
+        || { echo "ERROR: the public discovery document does not name https://$1 as issuer" >&2; exit 1; }
+    clean curl --disable -sS --connect-timeout 10 --max-time 30 --resolve "$1:443:${edge}" \
+        -o "${BODY}" "https://$1/oauth/discovery/keys" < /dev/null || { echo "ERROR: JWKS for $1 unreachable on the public path" >&2; exit 1; }
+    decide "public JWKS" '(.keys | type) == "array" and (.keys | length) > 0' < "${BODY}" || { echo "ERROR: public JWKS is empty or malformed" >&2; exit 1; }
 }
 
 # preflight_creates PLAN: every object the plan would CREATE must be proven
@@ -242,7 +323,7 @@ preflight_creates() {
             | if (.change.after | type) != "object" then error("create without attributes: " + .address) else . end
             | { address, type, index,
                 after: (.change.after | { path, name, key, description, backend, issuer_name, key_name,
-                                          role_name, file_path, branch, project, namespace, metadata }) } ]')" \
+                                          role_name, file_path, branch, project, namespace, metadata, url, role }) } ]')" \
         || { echo "ERROR: could not read the planned creates from the candidate plan" >&2; exit 1; }
     n="$(jq 'length' <<<"${creates}")"
     f() { jq -r --argjson i "${i}" ".[\$i]$1 // \"\"" <<<"${creates}"; }
@@ -345,6 +426,19 @@ preflight_creates() {
                 else
                     helm_absent "${name}" "${ns}" || conflict "Helm release ${ns}/${name} (import: ${address} ${ns}/${name})"
                 fi ;;
+            aws_iam_openid_connect_provider)
+                name="$(need .after.url)"
+                [[ "${name}" == "${GITLAB_URL_TF}" ]] || { echo "ERROR: ${address}: identity provider url ${name} is not ${GITLAB_URL_TF}" >&2; exit 1; }
+                issuer_public "${name#https://}"
+                aws_absent get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${AWS_ACCOUNT}:oidc-provider/${name#https://}" \
+                    || conflict "IAM identity provider ${name#https://} (import: ${address} arn:aws:iam::${AWS_ACCOUNT}:oidc-provider/${name#https://})" ;;
+            aws_iam_role)
+                name="$(need .after.name)"
+                aws_absent get-role --role-name "${name}" || conflict "IAM role ${name} (import: ${address} ${name})" ;;
+            aws_iam_role_policy)
+                name="$(need .after.name)"; key="$(need .after.role)"
+                planned aws_iam_role '.after.name == $v' "${key}" && continue
+                aws_absent get-role-policy --role-name "${key}" --policy-name "${name}" || conflict "IAM role policy ${key}/${name} (import: ${address} ${key}:${name})" ;;
             *)
                 echo "ERROR: the preflight has no rule for resource type ${type} (${address}); add one to scripts/gitlab-vault.sh before planning this change" >&2; exit 1 ;;
         esac
@@ -392,13 +486,8 @@ case "${1:-}" in
 
         runner_id="$(tf output -raw runner_id)"
         [[ "${runner_id}" =~ ^[0-9]+$ ]] || { echo "ERROR: runner_id output is not numeric" >&2; exit 1; }
-        status="$(gl "/runners/${runner_id}")"
-        [[ "${status}" == "200" ]] || { echo "ERROR: GET /runners/${runner_id} -> HTTP ${status}" >&2; exit 1; }
-        jq -e 'type == "object" and has("token_expires_at") and .token_expires_at == null' "${BODY}" >/dev/null 2>&1 || {
-            echo "ERROR: runner ${runner_id} has an expiring token (or an unexpected response); disable runner token expiration in GitLab and replace the runner" >&2
-            exit 1
-        }
-        echo "Runner ${runner_id}: token does not expire."
+        runner_tokens_do_not_expire
+        echo "Instance runner tokens do not expire (runner_token_expiration_interval is null)."
         deadline=$(( SECONDS + 180 ))
         while :; do
             status="$(gl "/runners/${runner_id}")"
@@ -408,7 +497,7 @@ case "${1:-}" in
             sleep 10
         done
         echo "Runner ${runner_id} is online."
-        echo "GitLab, Vault and the runner are reconciled. Seed a credential with: GITLAB_PROJECT_ID=<id> make vault-seed-aws"
+        echo "GitLab, Vault, AWS and the runner are reconciled. Seed a Vault credential with: GITLAB_PROJECT_ID=<id> make vault-seed-aws"
         ;;
     *)
         echo "usage: $0 plan|apply" >&2

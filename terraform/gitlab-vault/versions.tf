@@ -4,7 +4,7 @@ terraform {
   required_providers {
     gitlab = {
       source  = "gitlabhq/gitlab"
-      version = "19.4.1"
+      version = "19.5.0"
     }
     vault = {
       source  = "hashicorp/vault"
@@ -17,6 +17,10 @@ terraform {
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = "3.3.0"
+    }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.69.1"
     }
   }
 }
