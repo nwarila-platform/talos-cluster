@@ -156,5 +156,8 @@ resource "kubernetes_config_map_v1" "keycloak_root_ca" {
 
   data = {
     "ca.crt" = vault_pki_secret_backend_root_cert.root.certificate
+    # Keycloak's client-certificate truststore (platform/keycloak/keycloak.yaml): the root and the
+    # issuing CA, so a browser that sends only its own certificate (no chain) is still verified.
+    "client-ca.crt" = "${vault_pki_secret_backend_root_cert.root.certificate}\n${vault_pki_secret_backend_root_sign_intermediate.int.certificate}\n"
   }
 }
