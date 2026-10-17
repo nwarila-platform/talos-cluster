@@ -8,7 +8,7 @@ SHELL := /bin/bash
 
 .PHONY: help init generate validate apply apply-insecure upgrade bootstrap platform \
 	vault-init cloudflare-plan cloudflare cloudflare-verify gitlab-vault-plan gitlab-vault vault-configure \
-	vault-seed-aws keycloak dc-ldaps selftest health kubeconfig
+	vault-seed-aws keycloak dc-ldaps user-cert selftest health kubeconfig
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -72,8 +72,12 @@ gitlab-vault-plan: ## Preflight, then save a reviewed plan for GitLab, Vault, AW
 gitlab-vault: ## Apply the saved plan, then prove convergence, non-expiring runner tokens and an online runner; needs the same three plus CONFIRM_REBUILD=TDNHQ-TALCL01
 	@/bin/bash -p scripts/gitlab-vault.sh apply
 
-keycloak: ## Create the realm Secret from .state/keycloak, wait for Keycloak, import the tcn realm (AD federation, GitLab client); requires CONFIRM_REBUILD=TDNHQ-TALCL01
+keycloak: ## Create the realm Secret from .state/keycloak, wait for Keycloak, import the tcn realm (AD federation, GitLab client), turn on certificate sign-in; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/keycloak.sh
+	@/bin/bash -p scripts/keycloak-x509.sh
+
+user-cert: ## Issue a person's browser certificate for Keycloak's certificate sign-in (NAME=<AD account name>) into .state/users/
+	@USER_NAME="$(NAME)" bash scripts/user-cert.sh
 
 dc-ldaps: ## Issue (or renew, within 90 days) both domain controllers' LDAPS certificates from the Vault PKI and prove an LDAPS bind
 	@/bin/bash -p scripts/dc-ldaps.sh

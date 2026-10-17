@@ -95,10 +95,12 @@
 !scripts/health.sh
 !scripts/install-platform.sh
 !scripts/keycloak.sh
+!scripts/keycloak-x509.sh
 !scripts/seed-aws-poc.sh
 !scripts/validate.sh
 !scripts/vault-init.sh
 !scripts/upgrade.sh
+!scripts/user-cert.sh
 !scripts/vault-tls.sh
 !scripts/tests/
 !scripts/tests/check-crs.py

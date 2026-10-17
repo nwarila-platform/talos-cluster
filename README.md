@@ -26,7 +26,8 @@ identity federation and every onboarded project in `terraform/gitlab-vault/`. A 
 | `cloudflare-verify` | proves the edge: tunnels healthy; GitLab's OpenID discovery document and JWKS and the `tcn` realm's discovery document served through Cloudflare with the expected issuers; GitLab's sign-in page and Keycloak's admin console not forwarded (404); the realm served on the LAN at the VIP too (run after `keycloak`) | `CLOUDFLARE_API_TOKEN`, `AWS_PROFILE` |
 | `gitlab-vault-plan` | discards any earlier accepted plan, writes a candidate plan and prints it for review, proves that every object it would create is absent remotely (directly, or because the same plan creates its container; every lookup fails closed), and only then publishes it as `.state/terraform/gitlab-vault.tfplan` (0600) | `GITLAB_TOKEN`, `VAULT_TOKEN`, `AWS_PROFILE=mgmt-admin` |
 | `gitlab-vault` | applies exactly that saved plan (after re-proving absence and that instance runner tokens do not expire), then proves convergence (an empty second plan), the runner-token setting again, and that the runner is online (bounded wait) | the same three, plus `CONFIRM_REBUILD` |
-| `keycloak` | creates the realm Secret from `.state/keycloak/` (fail-closed), waits for Keycloak to be ready, imports the `tcn` realm once (Active Directory federation, the `gitlab` client, a realm administrator) and prints the owner steps | `CONFIRM_REBUILD`; `.state/keycloak/svc-keycloak.password` |
+| `keycloak` | creates the realm Secret from `.state/keycloak/` (fail-closed), waits for Keycloak to be ready, imports the `tcn` realm once (Active Directory federation, the `gitlab` client, a realm administrator), turns on certificate sign-in and prints the owner steps | `CONFIRM_REBUILD`; `.state/keycloak/svc-keycloak.password` |
+| `user-cert` | issues a person's browser certificate for Keycloak's certificate sign-in (`NAME=<AD account name>`) into `.state/users/` | `NAME` |
 | `dc-ldaps` | gives both domain controllers an LDAPS certificate from the Vault PKI (key generated on the DC, 90 days, PKI root and issuing CA trusted there) and proves an LDAPS bind as `svc-keycloak`; run again to renew | SSH as Administrator to both DCs; `.state/keycloak/svc-keycloak.password` |
 | `vault-seed-aws` | seeds one project's static AWS credential | `VAULT_TOKEN`, `GITLAB_PROJECT_ID`, `AWS_*` |
 | `health` | checks Talos, nodes, pods, the six expected Helm releases and every Keycloak operand (operators available, issuer and certificate Ready, database healthy with both instances, Keycloak Ready, realm imported without errors, connector rolled out); green only after the whole order has run | — |
@@ -291,6 +292,27 @@ step until the resolver is under Terraform), and GitLab's OmniAuth block from
 ConfigMap) in `/etc/gitlab/trusted-certs/` (GitLab talks to Keycloak over HTTPS on the LAN path). Users who
 sign in through Keycloak are created in GitLab blocked until an administrator approves them; an
 existing GitLab user with the same username is linked automatically.
+
+### Certificate sign-in
+
+On the LAN, people sign in with a certificate instead of a password. Keycloak asks every TLS client
+for a certificate (`https-client-auth=request`), accepts a connection without one, and verifies one
+only against the Vault PKI's root and issuing CA (`client-ca.crt` in the `root-ca` ConfigMap), never
+the system truststore. `make keycloak` (`scripts/keycloak-x509.sh`) makes the realm's browser flow
+`browser-x509`: Keycloak's built-in browser flow with the certificate step right after the cookie
+check, taking the username from the certificate CN's part before `@tcn.trinitytechnicalservices.com`
+and requiring client authentication in it; a browser without a certificate gets the password form.
+Through Cloudflare no certificate reaches Keycloak (TLS ends at the edge), so off the LAN it is
+always the password form.
+
+`make user-cert NAME=<AD account name>` issues a person's certificate (role `tcn-user`: CN and UPN
+`<name>@tcn.trinitytechnicalservices.com`, one year) into `.state/users/`: `<name>.p12` with its
+password in `<name>.p12.pass`, and `tcn-root-ca.crt`. In the browser's machine: import
+`tcn-root-ca.crt` as a trusted root (Windows: Trusted Root Certification Authorities, local
+machine), import `<name>.p12` into the personal store (Windows: double-click it; Firefox: Settings →
+Certificates → Your Certificates → Import), and make sure the name resolves to the cluster VIP (the
+site resolver's host override). Signing in to GitLab with Keycloak then offers the certificate, and
+Keycloak shows "continue as <name>". Disabling the AD account stops a certificate from signing in.
 
 ## How a job reaches AWS
 

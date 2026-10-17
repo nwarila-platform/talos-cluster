@@ -44,6 +44,16 @@ spec:
   additionalOptions:
     - name: proxy-trusted-addresses
       value: 10.244.0.0/16
+    # Certificate sign-in: ask every TLS client for a certificate, sign in without one too, and
+    # verify one only against the Vault PKI (root and issuing CA, the root-ca ConfigMap's
+    # client-ca.crt; not the system truststore with every public CA). Works where TLS ends at
+    # Keycloak, i.e. on the LAN; through Cloudflare no certificate arrives.
+    - name: https-client-auth
+      value: request
+    - name: https-trust-store-file
+      value: /opt/keycloak/conf/truststores/configmap-root-ca/client-ca.crt
+    - name: https-trust-store-type
+      value: pem
   resources:
     requests:
       cpu: 500m
