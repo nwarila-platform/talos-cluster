@@ -1,6 +1,6 @@
 # The GitLab edge: one dedicated, remotely configured tunnel whose connector
-# runs as its own service on the GitLab host (platform/gitlab-host/), one
-# ingress rule for the GitLab hostname, and the proxied DNS record that sends
+# runs in the cluster (platform/cloudflared/), one ingress rule for the GitLab
+# hostname to GitLab's LAN address, and the proxied DNS record that sends
 # the public name to the tunnel. LAN clients are unaffected: the site resolver
 # answers the same name with GitLab's LAN address. Public reachability exists
 # so AWS IAM can read GitLab's OpenID discovery document and JWKS
@@ -14,8 +14,7 @@ data "cloudflare_zone" "this" {
 resource "cloudflare_zero_trust_tunnel_cloudflared" "gitlab" {
   account_id = var.cloudflare_account_id
   name       = var.gitlab_tunnel_name
-  # Ingress rules live in Cloudflare (below), not in a file on the host; the
-  # connector only needs its token.
+  # Ingress rules live in Cloudflare (below); the connector only needs its token.
   config_src = "cloudflare"
 
   lifecycle {
@@ -32,8 +31,9 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "gitlab" {
     ingress = [
       {
         hostname = var.gitlab_host
-        # cloudflared runs on the GitLab host; the origin is GitLab's own nginx.
-        service = "https://localhost:443"
+        # The in-cluster connector reaches GitLab's nginx by its LAN address (not
+        # by name, so the public CNAME can never route the tunnel to itself).
+        service = "https://${var.gitlab_origin_address}:443"
         origin_request = {
           # The origin presents a self-signed certificate for the GitLab name:
           # verify it against that exact certificate instead of skipping
@@ -67,11 +67,26 @@ resource "cloudflare_dns_record" "gitlab" {
   }
 }
 
-# The connector token for the host. It is sensitive, lands in state (the
-# bucket is already treated as a secret store) and is written by
-# scripts/cloudflare.sh to .state/cloudflare/gitlab-tunnel.env for the
-# operator to install on the host.
+# The connector token. It is sensitive and lands in state (the bucket is
+# already treated as a secret store).
 data "cloudflare_zero_trust_tunnel_cloudflared_token" "gitlab" {
   account_id = var.cloudflare_account_id
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.gitlab.id
+}
+
+# The in-cluster connector reads its token and GitLab's certificate (the
+# ca_pool above) from this Secret. The namespace is created by make platform
+# (platform/cloudflared), before this root runs.
+resource "kubernetes_secret_v1" "cloudflared_gitlab" {
+  metadata {
+    name      = "cloudflared-gitlab"
+    namespace = "cloudflared"
+  }
+
+  data = {
+    token    = data.cloudflare_zero_trust_tunnel_cloudflared_token.gitlab.token
+    "ca.crt" = file(var.gitlab_ca_file)
+  }
+
+  type = "Opaque"
 }

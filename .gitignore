@@ -35,11 +35,14 @@
 !platform/calico/
 !platform/calico/values.yaml
 !platform/gitlab-host/
-!platform/gitlab-host/cloudflared-gitlab.service
 !platform/gitlab-host/gitlab.rb.keycloak
 !platform/cert-manager/
 !platform/cert-manager/values.yaml
 !platform/cert-manager/issuer.yaml
+!platform/cloudflared/
+!platform/cloudflared/kustomization.yaml
+!platform/cloudflared/namespace.yaml
+!platform/cloudflared/gitlab.yaml
 !platform/cnpg/
 !platform/cnpg/values.yaml
 !platform/keycloak-operator/

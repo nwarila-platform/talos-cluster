@@ -114,7 +114,6 @@ offboarding a project are each a reviewed change:
 | `vault/init.json` | `vault-init` | yes — unseal keys and root token |
 | `gitlab/ca.crt` | you, once: the GitLab server certificate (PEM) | no (public certificate) |
 | `gitlab/admin-token`, `gitlab/root-password` | the one-time bootstrap on the GitLab host | yes |
-| `cloudflare/gitlab-tunnel.env` | `cloudflare` | yes — the connector token (also in the Cloudflare state; the Keycloak connector's token goes straight into the `cloudflared-keycloak` Secret and the same state) |
 | `keycloak/admin.password`, `keycloak/gitlab-client.secret` | `keycloak` (generated once) | yes — the `tcn` realm administrator's initial password and the `gitlab` client secret |
 | `keycloak/svc-keycloak.password` | the directory tooling (input) | yes — the Active Directory bind password |
 | (paths handed to Terraform) | the drivers | `kubeconfig`, `gitlab/ca.crt`, `vault/tls/ca.crt` are passed to Terraform as absolute `TF_VAR_*` values, so the files the preflight validated are the files the providers use, also under `STATE_DIR_OVERRIDE` |
@@ -180,20 +179,15 @@ the registration itself — so its token's expiry is **unproven until read from 
 
 GitLab is reachable on the LAN at its own address (the site resolver answers the name with it) and
 on the Internet through a dedicated Cloudflare tunnel, `tcnhq-ubt01-gitlab`, whose connector runs
-as its own service on the GitLab host next to the host's other tunnel. `terraform/cloudflare/`
-owns the tunnel, its single ingress rule (the GitLab hostname to `https://localhost:443`, origin
-certificate verified against GitLab's own certificate, nothing else routed) and the proxied CNAME.
+in the cluster (`platform/cloudflared/`, Deployment `cloudflared-gitlab`). `terraform/cloudflare/`
+owns the tunnel, its single ingress rule (the GitLab hostname to GitLab's LAN address
+`https://10.69.12.11:443`, origin certificate verified against GitLab's own certificate, nothing
+else routed), the proxied CNAME, and the `cloudflared/cloudflared-gitlab` Secret holding the
+connector's token and that certificate.
 The public path exists so AWS IAM can read `/.well-known/openid-configuration` and
 `/oauth/discovery/keys`; it also exposes the GitLab sign-in page to the Internet behind nothing but
-GitLab's own authentication (Known shortcuts). After `make cloudflare`, copy three files to the
-host and install the connector there as an administrator:
-
-```
-install -o root -g cloudflared -m 0640 gitlab-tunnel.env /etc/cloudflared/gitlab.env      # from .state/cloudflare/
-install -o root -g cloudflared -m 0644 ca.crt /etc/cloudflared/gitlab-ca.crt              # from .state/gitlab/
-install -o root -g root -m 0644 cloudflared-gitlab.service /etc/systemd/system/           # from platform/gitlab-host/
-systemctl daemon-reload && systemctl enable --now cloudflared-gitlab.service
-```
+GitLab's own authentication (Known shortcuts). `make platform` creates the connector (it waits for
+its Secret); `make cloudflare` writes the Secret and waits for the connector to come up.
 
 `make cloudflare-verify` then proves the tunnel is healthy and that the discovery document names
 `https://gitlab.trinitytechnicalservices.com` as issuer on the public path, resolved over
@@ -437,8 +431,6 @@ symlink in a single rename, so an in-service bundle is never half-replaced:
 - The public GitLab hostname reaches the sign-in page with GitLab's own authentication only; a
   Cloudflare Access policy in front of everything but the OpenID discovery paths is the next edge
   change, and GitLab's `real_ip` trust for Cloudflare's ranges is not yet set on the host.
-- The connector service on the GitLab host is installed by hand from `platform/gitlab-host/`; the
-  host is not yet under configuration management.
 - The `vault-unseal` Secret is readable by every identity with Secret access in `vault` (and by
   anyone who can run or exec a pod there); the Secrets lockdown piece reduces, not removes, that.
   cert-manager adds cluster-wide Secret readers and writers of its own (its controller, cainjector

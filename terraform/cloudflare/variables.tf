@@ -47,7 +47,7 @@ variable "gitlab_tunnel_name" {
 }
 
 variable "gitlab_origin_ca_path" {
-  description = "Path, on the GitLab host, of the PEM certificate the connector trusts for the origin (GitLab's self-signed server certificate today)."
+  description = "Path, inside the connector pod, of the PEM certificate it trusts for the origin (GitLab's self-signed server certificate, mounted from the cloudflared-gitlab Secret)."
   type        = string
   default     = "/etc/cloudflared/gitlab-ca.crt"
 
@@ -94,4 +94,16 @@ variable "kubeconfig" {
   description = "kubeconfig of the cluster that runs the Keycloak connector (written by make bootstrap)."
   type        = string
   default     = "../../.state/configs/kubeconfig"
+}
+
+variable "gitlab_origin_address" {
+  description = "GitLab's LAN address: the in-cluster connector's origin (verified against gitlab_origin_ca_path by gitlab_host)."
+  type        = string
+  default     = "10.69.12.11"
+}
+
+variable "gitlab_ca_file" {
+  description = "GitLab's self-signed certificate (written by the GitLab bootstrap); stored in the connector Secret as ca.crt."
+  type        = string
+  default     = "../../.state/gitlab/ca.crt"
 }

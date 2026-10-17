@@ -1,0 +1,86 @@
+# GitLab's Internet entry point: Cloudflare's connector for the remotely managed GitLab tunnel
+# (terraform/cloudflare/main.tf). The tunnel sends the public GitLab name to GitLab's LAN address and
+# verifies GitLab's certificate against the copy in the cloudflared-gitlab Secret, which
+# terraform/cloudflare writes together with the token. Until the Secret exists the pods wait in
+# ContainerCreating. Two replicas are for availability only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-gitlab
+  namespace: cloudflared
+  labels:
+    app.kubernetes.io/name: cloudflared-gitlab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared-gitlab
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared-gitlab
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.10.1@sha256:a15a3b50b8dabd57ac2090e9484c0247dba9dfa1f0df4d298d4317f9d69eb2d5
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --loglevel
+            - info
+            - --output
+            - json
+            - --metrics
+            - 0.0.0.0:2000
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-gitlab
+                  key: token
+          ports:
+            - name: metrics
+              containerPort: 2000
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: gitlab-ca
+              mountPath: /etc/cloudflared/gitlab-ca.crt
+              subPath: ca.crt
+              readOnly: true
+      volumes:
+        - name: gitlab-ca
+          secret:
+            secretName: cloudflared-gitlab
+            items:
+              - key: ca.crt
+                path: ca.crt

@@ -6,9 +6,8 @@
 #           as .state/terraform/cloudflare.tfplan (0600).
 #   apply   repeats that proof against the saved plan, applies exactly that
 #           plan (CONFIRM_REBUILD required), proves convergence (an empty second
-#           plan), writes the connector's environment file to
-#           .state/cloudflare/gitlab-tunnel.env (0600) and prints the host
-#           steps the operator performs.
+#           plan) and waits for both in-cluster connectors (cloudflared/
+#           cloudflared-gitlab, keycloak/cloudflared) to roll out.
 #   verify  proves both public paths work end to end: each hostname resolves
 #           through DNS-over-HTTPS to Cloudflare, each tunnel is healthy, and
 #           GitLab's OpenID discovery document and JWKS (what AWS IAM needs) and
@@ -59,8 +58,6 @@ STATE_ROOT="$(readlink -f "${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}")"  #
 TF_DIR="${ROOT_DIR}/terraform/cloudflare"
 PLAN_DIR="${STATE_ROOT}/terraform"
 PLAN_FILE="${PLAN_DIR}/cloudflare.tfplan"
-ENV_DIR="${STATE_ROOT}/cloudflare"
-ENV_FILE="${ENV_DIR}/gitlab-tunnel.env"
 API="https://api.cloudflare.com/client/v4"
 DOH="https://cloudflare-dns.com/dns-query"
 umask 077
@@ -249,7 +246,7 @@ preflight_creates() {
                     || conflicts+=("DNS record ${name} (import: ${address} ${ZONE_ID}/<record id>)") ;;
             kubernetes_secret_v1)
                 name="$(known 'metadata[0].name')"; ns="$(known 'metadata[0].namespace')"
-                [[ "${ns}" == "keycloak" && "${name}" == "cloudflared-keycloak" ]] || { echo "ERROR: ${address}: the only Secret this root may create is keycloak/cloudflared-keycloak (planned ${ns}/${name})" >&2; exit 1; }
+                [[ "${ns}/${name}" == "keycloak/cloudflared-keycloak" || "${ns}/${name}" == "cloudflared/cloudflared-gitlab" ]] || { echo "ERROR: ${address}: the only Secrets this root may create are keycloak/cloudflared-keycloak and cloudflared/cloudflared-gitlab (planned ${ns}/${name})" >&2; exit 1; }
                 k8s_absent secret "${name}" "${ns}" || conflicts+=("Kubernetes Secret ${ns}/${name} (import: ${address} ${ns}/${name})") ;;
             *)
                 echo "ERROR: the preflight has no rule for resource type ${type} (${address}); add one to scripts/cloudflare.sh before planning this change" >&2; exit 1 ;;
@@ -294,31 +291,15 @@ case "${1:-}" in
             exit 1
         fi
         echo "Converged: a second plan proposes no changes."
-        install -d -m 0700 "${ENV_DIR}"
-        # The raw output is one assignment of a base64 token (measured alphabet), with or
-        # without a final newline; anything else — CR/LF inside, quotes, extra lines, size —
-        # is refused and nothing is written. The file is published with exactly one newline.
-        tunnel_env="$(tf output -raw gitlab_tunnel_env)"
-        [[ "${tunnel_env}" == *$'\n'* || "${tunnel_env}" == *$'\r'* ]] && { echo "ERROR: the tunnel token output spans more than one line" >&2; exit 1; }
-        [[ "${#tunnel_env}" -lt 4096 && "${tunnel_env}" =~ ^TUNNEL_TOKEN=[A-Za-z0-9+/]{20,}={0,2}$ ]] \
-            || { echo "ERROR: the tunnel token output is not exactly one TUNNEL_TOKEN=<base64> assignment" >&2; exit 1; }
-        printf '%s\n' "${tunnel_env}" > "${ENV_FILE}.tmp"
-        unset tunnel_env
-        chmod 0600 "${ENV_FILE}.tmp"
-        mv -T "${ENV_FILE}.tmp" "${ENV_FILE}"
-        echo "Connector environment written to ${ENV_FILE} (0600). Tunnel status: $(tunnel_status "${TUNNEL_TF}")."
+        # Both connectors run in the cluster from the Secrets this apply wrote; they must come up.
+        kc -n cloudflared rollout status deployment/cloudflared-gitlab --timeout=180s \
+            || { echo "ERROR: the in-cluster GitLab connector did not become available (is platform/cloudflared applied?)" >&2; exit 1; }
+        echo "GitLab connector rolled out. Tunnel status: $(tunnel_status "${TUNNEL_TF}")."
         # The Keycloak connector runs in the cluster from the Secret this apply wrote; it must come up.
         kc -n keycloak rollout status deployment/cloudflared --timeout=180s \
             || { echo "ERROR: the in-cluster Keycloak connector did not become available (is platform/keycloak applied?)" >&2; exit 1; }
         echo "Keycloak connector rolled out. Tunnel status: $(tunnel_status "${KC_TUNNEL_TF}")."
-        cat <<EOF
-Install the connector on the GitLab host (as an administrator there):
-  install -o root -g cloudflared -m 0640 gitlab-tunnel.env /etc/cloudflared/gitlab.env
-  install -o root -g cloudflared -m 0644 ca.crt /etc/cloudflared/gitlab-ca.crt
-  install -o root -g root -m 0644 cloudflared-gitlab.service /etc/systemd/system/cloudflared-gitlab.service
-  systemctl daemon-reload && systemctl enable --now cloudflared-gitlab.service
-Then prove the public paths: make cloudflare-verify (after make keycloak for the Keycloak realm)
-EOF
+        echo "Then prove the public paths: make cloudflare-verify (after make keycloak for the Keycloak realm)"
         ;;
     verify)
         preflight_access
@@ -336,7 +317,7 @@ EOF
             printf '%s' "${e}"
         }
         status="$(tunnel_status "${TUNNEL_TF}")"
-        [[ "${status}" == "healthy" ]] || { echo "ERROR: tunnel ${TUNNEL_TF} is '${status}', not healthy (is cloudflared-gitlab.service running on the host?)" >&2; exit 1; }
+        [[ "${status}" == "healthy" ]] || { echo "ERROR: tunnel ${TUNNEL_TF} is '${status}', not healthy (is the cloudflared-gitlab Deployment in cloudflared running?)" >&2; exit 1; }
         edge="$(public_edge "${HOST_TF}")"
         clean curl --disable -sS --connect-timeout 10 --max-time 30 --resolve "${HOST_TF}:443:${edge}" \
             -o "${BODY}" "https://${HOST_TF}/.well-known/openid-configuration" < /dev/null || { echo "ERROR: discovery document unreachable through Cloudflare (${edge})" >&2; exit 1; }

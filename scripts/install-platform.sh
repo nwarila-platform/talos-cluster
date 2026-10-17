@@ -74,6 +74,8 @@ kubectl apply -f "${ROOT_DIR}/platform/cert-manager/issuer.yaml"
 # workload: database, certificate, server, LAN Service, tunnel connector. Keycloak waits for its
 # certificate (gitlab-vault) and the connector for its token Secret (cloudflare); the realm is
 # imported by make keycloak.
+# The GitLab tunnel connector (its token Secret comes from terraform/cloudflare; until then it waits).
+kubectl apply -k "${ROOT_DIR}/platform/cloudflared"
 kubectl apply -f "${ROOT_DIR}/platform/keycloak/namespace.yaml"
 helm upgrade --install cnpg "${CNPG_CHART}" \
     --namespace keycloak \
