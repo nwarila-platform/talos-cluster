@@ -29,7 +29,7 @@ resource "gitlab_project" "this" {
   path                   = split("/", each.key)[1]
   namespace_id           = gitlab_group.this[split("/", each.key)[0]].id
   visibility_level       = "private"
-  initialize_with_readme = each.value.import_url == null
+  initialize_with_readme = each.value.import_url == null ? true : null
   import_url             = each.value.import_url
   default_branch         = "main"
   # An imported repository keeps its own history: merge requests fast-forward
