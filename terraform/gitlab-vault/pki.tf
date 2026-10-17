@@ -112,6 +112,39 @@ resource "vault_pki_secret_backend_role" "tcn_server" {
   no_store                    = false
 }
 
+# Client certificates for people (make user-cert), shaped like AD smartcard certificates: the CN is
+# the person's UPN (<sAMAccountName>@tcn.trinitytechnicalservices.com, an email-form name), repeated
+# as the UPN otherName SAN; client authentication and email protection only (tcn-server certificates
+# carry no clientAuth, so no server or DC certificate can sign anyone in); RSA 3072; one year.
+# Keycloak's certificate login takes the username from the CN's part before the @. Revocation in
+# practice: disable the AD account, and the login refuses the user. Adopted (imported) as it already
+# existed in Vault.
+resource "vault_pki_secret_backend_role" "tcn_user" {
+  backend                     = vault_mount.pki_int.path
+  name                        = "tcn-user"
+  issuer_ref                  = vault_pki_secret_backend_issuer.int.issuer_name
+  allowed_domains             = ["tcn.trinitytechnicalservices.com"]
+  allow_bare_domains          = true
+  allow_subdomains            = false
+  allow_any_name              = true
+  allow_wildcard_certificates = false
+  enforce_hostnames           = false
+  cn_validations              = ["email", "hostname"]
+  allowed_other_sans          = ["1.3.6.1.4.1.311.20.2.3;UTF8:*@tcn.trinitytechnicalservices.com"]
+  allow_ip_sans               = false
+  server_flag                 = false
+  client_flag                 = true
+  email_protection_flag       = true
+  ext_key_usage               = ["ClientAuth"]
+  key_usage                   = ["DigitalSignature", "KeyEncipherment"]
+  key_type                    = "rsa"
+  key_bits                    = 3072
+  ttl                         = 31536000 # one year
+  max_ttl                     = 31536000
+  require_cn                  = true
+  no_store                    = false
+}
+
 # Keycloak's certificate chains to this root (leaf <- Linux issuing CA <- root).
 # The Keycloak tunnel connector verifies its origin against it, so the root is
 # published where the connector mounts it.
