@@ -6,6 +6,13 @@ locals {
   project_groups = toset([for key in keys(var.projects) : split("/", key)[0]])
 }
 
+# Instance setting: allow "Repository by URL" imports, which a project with an
+# import_url needs (GitLab ships with every import source off). Terraform
+# manages only the attribute set here; the rest of the settings stay as they are.
+resource "gitlab_application_settings" "this" {
+  import_sources = ["git"]
+}
+
 resource "gitlab_group" "this" {
   for_each = local.project_groups
 
@@ -45,6 +52,8 @@ resource "gitlab_project" "this" {
   # Destroying a project archives it; permanent deletion (the provider's
   # mutually exclusive permanently_delete_on_destroy) stays at its default, off.
   archive_on_destroy = true
+
+  depends_on = [gitlab_application_settings.this]
 
   lifecycle {
     prevent_destroy = true

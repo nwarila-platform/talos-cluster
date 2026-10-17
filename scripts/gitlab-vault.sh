@@ -349,6 +349,10 @@ preflight_creates() {
             gitlab_instance_variable)
                 name="$(need .after.key)"
                 gl_absent "/admin/ci/variables/${name}" || conflict "GitLab instance variable ${name} (import: ${address} ${name})" ;;
+            gitlab_application_settings)
+                # A singleton that always exists: "create" adopts it and writes only the
+                # attributes the configuration sets, so there is nothing to collide with.
+                ;;
             gitlab_group)
                 name="$(need .after.path)"
                 gl_absent "/groups/$(enc "${name}")" || conflict "GitLab group ${name} (import: ${address} <id>)" ;;
