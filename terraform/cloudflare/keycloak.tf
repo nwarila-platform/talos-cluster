@@ -4,7 +4,8 @@
 # root by Keycloak's public name, and the proxied DNS record. The connector's
 # token goes straight into the Secret the Deployment reads. LAN clients never
 # use this path: the site resolver answers the same name with the cluster VIP.
-# Off the LAN, mtls.tf requires a client certificate.
+# It forwards the tcn realm and the static resources its sign-in pages load,
+# nothing else: the admin console and the master realm stay on the LAN.
 resource "cloudflare_zero_trust_tunnel_cloudflared" "keycloak" {
   account_id = var.cloudflare_account_id
   name       = var.keycloak_tunnel_name
@@ -24,6 +25,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "keycloak" {
     ingress = [
       {
         hostname = var.keycloak_host
+        path     = "^/(realms/tcn|resources)/"
         service  = "https://keycloak-service.keycloak.svc.cluster.local:8443"
         origin_request = {
           origin_server_name = var.keycloak_host

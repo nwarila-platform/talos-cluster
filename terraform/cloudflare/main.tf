@@ -2,9 +2,9 @@
 # runs in the cluster (platform/cloudflared/), one ingress rule for the GitLab
 # hostname to GitLab's LAN address, and the proxied DNS record that sends
 # the public name to the tunnel. LAN clients are unaffected: the site resolver
-# answers the same name with GitLab's LAN address. Off the LAN, mtls.tf requires
-# a client certificate for everything except GitLab's OpenID discovery document
-# and JWKS, which AWS IAM reads to verify CI ID tokens (terraform/gitlab-vault/aws.tf).
+# answers the same name with GitLab's LAN address. The tunnel exists so AWS IAM
+# can read GitLab's OpenID discovery document and JWKS to verify CI ID tokens
+# (terraform/gitlab-vault/aws.tf); it forwards those two paths and nothing else.
 data "cloudflare_zone" "this" {
   filter = {
     name = var.zone
@@ -31,6 +31,9 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "gitlab" {
     ingress = [
       {
         hostname = var.gitlab_host
+        # Only the two documents AWS reads; every other GitLab path falls through
+        # to the 404 below, so the sign-in page and the API stay off the Internet.
+        path = "^/(\\.well-known/openid-configuration|oauth/discovery/keys)$"
         # The in-cluster connector reaches GitLab's nginx by its LAN address (not
         # by name, so the public CNAME can never route the tunnel to itself).
         service = "https://${var.gitlab_origin_address}:443"
