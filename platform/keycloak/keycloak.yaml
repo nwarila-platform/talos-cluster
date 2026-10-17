@@ -35,6 +35,12 @@ spec:
     tlsSecret: keycloak-tls
   proxy:
     headers: xforwarded
+  # Trust the Vault PKI root (the root-ca ConfigMap, terraform/gitlab-vault/pki.tf) for outgoing TLS:
+  # the domain controllers' LDAPS certificates are issued by the same PKI.
+  truststores:
+    tcn-root:
+      configMap:
+        name: root-ca
   additionalOptions:
     - name: proxy-trusted-addresses
       value: 10.244.0.0/16
