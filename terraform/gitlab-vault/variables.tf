@@ -125,3 +125,12 @@ variable "aws_oidc_audience" {
     error_message = "aws_oidc_audience must be a plain identifier such as sts.amazonaws.com."
   }
 }
+
+variable "group_maintainers" {
+  description = "GitLab usernames given direct Maintainer membership of a group or subgroup (a key of the form <group> or <group>/<subgroup> from var.projects)."
+  type        = map(list(string))
+  default = {
+    "platform"            = ["nrwarila"]
+    "products/windows-ca" = ["nrwarila"]
+  }
+}

@@ -307,7 +307,7 @@ issuer_public() {
 # with its import id; any answer that cannot be decided, and any resource type
 # without a rule here, aborts. The caller publishes the plan only on success.
 preflight_creates() {
-    local creates n i type address index backend name key branch ns pid conflicts=()
+    local creates n i type address index backend name key branch ns pid gid uid conflicts=()
     creates="$(tf show -json "$1" | jq -c '
         .resource_changes
         | if type != "array" then error("resource_changes is not an array") else . end
@@ -323,7 +323,7 @@ preflight_creates() {
             | if (.change.after | type) != "object" then error("create without attributes: " + .address) else . end
             | { address, type, index,
                 after: (.change.after | { path, name, key, description, backend, issuer_name, key_name,
-                                          role_name, file_path, branch, project, namespace, metadata, url, role }) } ]')" \
+                                          role_name, file_path, branch, project, namespace, metadata, url, role, group_id, user_id }) } ]')" \
         || { echo "ERROR: could not read the planned creates from the candidate plan" >&2; exit 1; }
     n="$(jq 'length' <<<"${creates}")"
     f() { jq -r --argjson i "${i}" ".[\$i]$1 // \"\"" <<<"${creates}"; }
@@ -356,6 +356,10 @@ preflight_creates() {
             gitlab_group)
                 name="$(need .after.path)"
                 gl_absent "/groups/$(enc "${name}")" || conflict "GitLab group ${name} (import: ${address} <id>)" ;;
+            gitlab_group_membership)
+                gid="$(f .after.group_id)"; uid="$(f .after.user_id)"
+                [[ "${gid}" =~ ^[0-9]+$ && "${uid}" =~ ^[0-9]+$ ]] || { echo "ERROR: ${address}: group or user id is not known in the plan (cannot decide presence)" >&2; exit 1; }
+                gl_absent "/groups/${gid}/members/${uid}" || conflict "Membership of user ${uid} in group ${gid} (import: ${address} ${gid}:${uid})" ;;
             gitlab_project)
                 index="$(need .index)"; need .after.path >/dev/null
                 gl_absent "/projects/$(enc "${index}")" || conflict "GitLab project ${index} (import: ${address} <id>)" ;;

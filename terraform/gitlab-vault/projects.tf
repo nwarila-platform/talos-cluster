@@ -176,3 +176,22 @@ resource "gitlab_repository_file" "ci" {
     prevent_destroy = true
   }
 }
+
+# People: direct Maintainer membership of a group or subgroup (push branches,
+# merge into the protected main). Users sign in through Keycloak first, which
+# creates them in GitLab; an administrator approves them.
+data "gitlab_user" "maintainer" {
+  for_each = toset(flatten(values(var.group_maintainers)))
+
+  username = each.value
+}
+
+resource "gitlab_group_membership" "maintainer" {
+  for_each = { for pair in flatten([for group, users in var.group_maintainers : [for user in users : { group = group, user = user }]]) : "${pair.group}:${pair.user}" => pair }
+
+  group_id = (length(split("/", each.value.group)) == 1
+    ? gitlab_group.this[each.value.group].id
+  : gitlab_group.sub[each.value.group].id)
+  user_id      = data.gitlab_user.maintainer[each.value.user].id
+  access_level = "maintainer"
+}
