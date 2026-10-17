@@ -62,37 +62,41 @@ variable "kubeconfig" {
 }
 
 variable "projects" {
-  description = "Projects managed here, keyed by <group>/<project>. Each gets a GitLab project with a protected main branch; while vault_access is true it also gets a Vault JWT role bound to that project id, and while aws_access is true an IAM role gitlab_<group>_<project> that only its main-branch ID tokens can assume. ci_file (optional) is committed once to main as .gitlab-ci.yml. import_url (optional) starts the project as a copy of that public repository (all branches and tags) instead of an empty main with a README; such a project merges fast-forward only (its commits keep their signatures) and only when the merge-request pipeline succeeded. Offboarding = vault_access and aws_access false (first apply), then archived true (second apply); entries are never simply removed."
+  description = "Projects managed here, keyed by <group>/<project> or <group>/<subgroup>/<project>. Each gets a GitLab project with a protected main branch (and its group or subgroup), and while aws_access is true an IAM role gitlab_<path with _> that only its protected-main ID tokens can assume. Vault needs no entry: every project's protected main reads its own kv/ci/production/project-<id>/ through the ci role. ci_file (optional) is committed once to main as .gitlab-ci.yml. import_url (optional) starts the project as a copy of that public repository (all branches and tags; a template repository for a new module) instead of an empty main with a README; such a project merges fast-forward only (its commits keep their signatures) and only when the merge-request pipeline succeeded. Offboarding = aws_access false (first apply), then archived true (second apply); entries are never simply removed."
   type = map(object({
-    ci_file      = optional(string)
-    import_url   = optional(string)
-    vault_access = optional(bool, true)
-    aws_access   = optional(bool, false)
-    archived     = optional(bool, false)
+    ci_file    = optional(string)
+    import_url = optional(string)
+    aws_access = optional(bool, false)
+    archived   = optional(bool, false)
   }))
   default = {
     "poc/vault-gitlab-poc" = {
       ci_file = "../../examples/vault-gitlab-poc/.gitlab-ci.yml"
     }
     "poc/aws-oidc-poc" = {
-      ci_file      = "../../examples/aws-oidc-poc/.gitlab-ci.yml"
-      vault_access = false
-      aws_access   = true
+      ci_file    = "../../examples/aws-oidc-poc/.gitlab-ci.yml"
+      aws_access = true
     }
     # This repository; the merge-request checks are its own .gitlab-ci.yml.
     "platform/talos-cluster" = {
-      import_url   = "https://github.com/nwarila-platform/talos-cluster.git"
-      vault_access = false
+      import_url = "https://github.com/nwarila-platform/talos-cluster.git"
+    }
+    # The Windows certificate authority (CA-TRUST-PLAN K5), one subgroup: the deploy repo here, and
+    # one repo per PowerShell module its role runs, each imported from
+    # https://github.com/NWarila/powershell-template.git.
+    "products/windows-ca/windows-ca-stack" = {
+      import_url = "https://github.com/nwarila-platform/windows-ca-stack.git"
+      aws_access = true
     }
   }
 
   validation {
-    condition     = alltrue([for key in keys(var.projects) : can(regex("^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$", key))])
-    error_message = "Project keys must be <group>/<project> using only a-z, 0-9 and -."
+    condition     = alltrue([for key in keys(var.projects) : can(regex("^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*){1,2}$", key))])
+    error_message = "Project keys must be <group>/<project> or <group>/<subgroup>/<project> using only a-z, 0-9 and -."
   }
   validation {
-    condition     = length(distinct([for key in keys(var.projects) : replace(key, "/", "-")])) == length(var.projects)
-    error_message = "Project keys must stay distinct after replacing / with - (that form names the Vault policy and role)."
+    condition     = length(distinct([for key in keys(var.projects) : replace(key, "/", "_")])) == length(var.projects)
+    error_message = "Project keys must stay distinct after replacing / with _ (that form names the IAM role)."
   }
   validation {
     condition     = alltrue([for key in keys(var.projects) : length(key) <= 56])

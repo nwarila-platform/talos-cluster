@@ -94,8 +94,9 @@ committed CI file, both tunnels and both DNS records. A plan that would destroy 
 offboarding a project are each a reviewed change:
 
 - **Offboarding a project** is two switches on its `var.projects` entry, never a removed key:
-  first `vault_access = false` (apply: only the Vault role and policy disappear, nothing in GitLab
-  changes), later `archived = true` (apply: the project is archived in place). The entry, its
+  first `aws_access = false` (apply: only the IAM role disappears, nothing in GitLab changes), later
+  `archived = true` (apply: the project is archived in place; its Vault access ends with it, since
+  an archived project runs no jobs). The entry, its
   protected branch and its CI file stay under management; permanent deletion is never configured.
 - **Replacing the runner:** remove its guard, apply (the chart re-seeds the new token), confirm the
   new runner is online; the old token cannot be recovered or imported, and an out-of-band token reset
@@ -333,21 +334,23 @@ serves the discovery document, because IAM reads it at creation.
 
 `gitlab-vault` sets two instance-level CI variables for every project: `VAULT_ADDR`
 (`var.vault_incluster_url`) and `VAULT_CACERT` (a file variable holding `.state/vault/tls/ca.crt`),
-and gives each project in `var.projects` a Vault JWT role `ci-<group>-<project>` (the key with `/`
-replaced by `-`; a job derives the same name from `CI_PROJECT_PATH`, and the name is known before the
-project exists so the preflight can probe it) bound to that project's numeric id, to `main`, and to
-protected refs, with read access to `kv/data/ci/production/project-<id>/aws` only.
+and one Vault JWT role for every project, `ci`, bound to `main` and to protected refs. Its user claim is
+the ID token's `project_id`, so each project logs in as its own Vault entity whose alias name is its
+numeric id, and the role's one policy, `ci-project`, is templated on that name: it reads
+`kv/data/ci/production/project-<id>/*` (and lists the matching metadata) for the project that logged
+in and nothing else. GitLab signs the token, so a job cannot claim another project's id. Every
+project, including one created outside `var.projects`, gets its own isolated secrets path without any
+per-project Vault configuration; a project's secrets are written there by an administrator.
 `main` is protected with **no direct push**, merges by maintainers, force-push off, and **unprotect by
 administrators only** (GitLab's default would let a maintainer unprotect, push and re-protect). The
 provider sends the `allowed_to_*` form; GitLab documents it as Premium/Ultimate, but on this EE Free
 instance the access-level-only entries were measured to be accepted, read back exactly, and
-enforced (an administrator's direct commit returns 403), and the Vault role is created only after the
-protection. So a job that carries `ref_protected=true` reached `main` through a merge request — with
+enforced (an administrator's direct commit returns 403). So a job that carries `ref_protected=true` reached `main` through a merge request — with
 one bootstrap exception: the optional `.gitlab-ci.yml` is committed by the `platform-terraform` administrator
 once, at project creation, under GitLab's initial protection, before this policy replaces it. From
 then on the file belongs to the repository (edit it through merge requests; Terraform ignores its
 content and never deletes it) — which also means Terraform no longer verifies what the job does. A job requests an ID token with
-`aud: <vault_incluster_url>` and logs in at `auth/gitlab/login`;
+`aud: <vault_incluster_url>` and logs in at `auth/gitlab/login` with `role=ci`;
 [examples/vault-gitlab-poc/.gitlab-ci.yml](examples/vault-gitlab-poc/.gitlab-ci.yml) is the complete
 example. Onboarding another repository is one more entry in `var.projects`; the preflight below refuses
 the plan if any object it would create already exists.
@@ -394,7 +397,7 @@ a short-lived child token for the run.
 | Group, project | `/groups/<path>`, `/projects/<path>` | `terraform import 'gitlab_group.this["<group>"]' <id>`, `terraform import 'gitlab_project.this["<group>/<project>"]' <id>` |
 | `.gitlab-ci.yml` on `main` | containment in a planned project, else `/projects/<id>/repository/files/` | `terraform import 'gitlab_repository_file.ci["<key>"]' '<id>:main:.gitlab-ci.yml'`, or set `ci_file = null` and land it through a merge request (`overwrite_on_create = false` means an unimported file conflicts) |
 | Protection of `main` | containment in a planned project (GitLab's own default protection on the new project is then taken over, see above), else `/projects/<id>/protected_branches/main` | `terraform import 'gitlab_branch_protection.main["<key>"]' <id>:main` — settle the file row first: with the no-push rule in force the bootstrap commit is impossible |
-| Per-project Vault policy and role | `sys/policies/acl/<name>` directly (a policy is global; nothing contains it); the role by containment in a planned auth backend, else `auth/gitlab/role/<name>`. Both names come from the project key and are known at plan time | `terraform import 'vault_policy.project_aws_read["<key>"]' ci-<group>-<project>-aws-read`, `terraform import 'vault_jwt_auth_backend_role.project["<key>"]' auth/gitlab/role/ci-<group>-<project>` |
+| The `ci` Vault policy and role | `sys/policies/acl/ci-project` directly (a policy is global; nothing contains it); the role by containment in a planned auth backend, else `auth/gitlab/role/ci` | `terraform import vault_policy.ci_project ci-project`, `terraform import vault_jwt_auth_backend_role.ci auth/gitlab/role/ci` |
 | Instance runner `talos-cluster` | the paginated instance-runner list | cannot be imported with its token: replace deliberately (jobs wait until the new runner is online) |
 | Vault auth `kubernetes`, its configuration, policy `cert-manager-tcn-server`, role `vault-issuer` | `sys/auth`; the configuration only by containment in a planned auth backend (writing it onto an existing backend is refused); the policy under `sys/policies/acl/`; the role by containment, else `auth/kubernetes/role/vault-issuer` | `terraform import vault_auth_backend.kubernetes kubernetes`, `terraform import vault_kubernetes_auth_backend_config.kubernetes auth/kubernetes/config`, `terraform import vault_policy.cert_manager_tcn_server cert-manager-tcn-server`, `terraform import vault_kubernetes_auth_backend_role.vault_issuer auth/kubernetes/role/vault-issuer` |
 | Namespace `gitlab-runner` | `kubectl get namespace` (NotFound only) | `terraform import kubernetes_namespace_v1.gitlab_runner gitlab-runner` |
