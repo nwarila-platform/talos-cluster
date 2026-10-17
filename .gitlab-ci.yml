@@ -1,0 +1,13 @@
+# Every merge request runs the same checks as the workstation: generate the six Talos configs from
+# throwaway secrets, validate them with the tracked files, then run the self-tests (which build their
+# own scratch copies, so they run without the generated state). Nothing here touches the cluster.
+validate:
+  image: docker.io/library/ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  timeout: 30m
+  script:
+    - bash scripts/ci-tools.sh
+    - STATE_DIR_OVERRIDE=/tmp/ci-state bash scripts/generate.sh
+    - STATE_DIR_OVERRIDE=/tmp/ci-state make validate
+    - make selftest

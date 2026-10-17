@@ -6,6 +6,7 @@
 !LICENSE
 !Makefile
 !README.md
+!.gitlab-ci.yml
 
 !.github/
 !.github/CODEOWNERS
@@ -84,6 +85,7 @@
 !scripts/
 !scripts/apply.sh
 !scripts/bootstrap.sh
+!scripts/ci-tools.sh
 !scripts/cloudflare.sh
 !scripts/configure-vault-gitlab.sh
 !scripts/generate.sh
