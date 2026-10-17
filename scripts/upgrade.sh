@@ -59,8 +59,18 @@ for name in "${TARGETS[@]}"; do
     longhorn_ok || { echo "STOP: a Longhorn volume is not healthy; a reboot now could leave it without a replica" >&2; exit 1; }
     if [[ "${NODE_ROLE[${name}]}" == controlplane ]]; then
         etcd_ok "${ip}" || { echo "STOP: etcd is not healthy with all ${#CP_LIST[@]} members" >&2; exit 1; }
+        # Before the first control plane of a run: an etcd snapshot. A new Talos version can bring a
+        # new etcd whose data an older one cannot read back, so a rollback past that point needs it.
+        if [[ -z "${ETCD_SNAPSHOT:-}" ]]; then
+            ETCD_SNAPSHOT="${STATE_ROOT}/etcd/etcd-$(date -u +%Y%m%dT%H%M%SZ).db"
+            ( umask 077; mkdir -p "${STATE_ROOT}/etcd"; t "${ip}" etcd snapshot "${ETCD_SNAPSHOT}" )
+            [[ -s "${ETCD_SNAPSHOT}" ]] || { echo "STOP: the etcd snapshot is empty" >&2; exit 1; }
+            echo "etcd snapshot: ${ETCD_SNAPSHOT}"
+        fi
     fi
-    echo "before: ${current} schematic ${schematic:0:12}; checks passed"
+    # The key Sidero signs each boot's PCR policy with; the disks unlock only while it stays the same.
+    pcr_key="$(t "${ip}" get securitystate -o json | jq -r .spec.pcrSigningKeyFingerprint)"
+    echo "before: ${current} schematic ${schematic:0:12}, PCR signing key ${pcr_key:0:23}; checks passed"
 
     # The upgrade: Talos cordons and drains the node, installs the image, reboots and waits.
     t "${ip}" upgrade --image "${TALOS_INSTALL_IMAGE}" --wait --timeout 25m
@@ -71,6 +81,8 @@ for name in "${TARGETS[@]}"; do
     after="$(t "${ip}" version 2>/dev/null | awk '/^Server/ {s=1} s && /Tag:/ {print $2; exit}')"
     [[ "${after}" == "${TALOS_VERSION}" ]] || { echo "STOP: ${name} runs ${after:-unknown}, not ${TALOS_VERSION}" >&2; exit 1; }
     [[ "$(t "${ip}" get securitystate -o json | jq -r .spec.secureBoot)" == true ]] || { echo "STOP: ${name} lost Secure Boot" >&2; exit 1; }
+    [[ "$(t "${ip}" get securitystate -o json | jq -r .spec.pcrSigningKeyFingerprint)" == "${pcr_key}" ]] \
+        || { echo "STOP: ${name} boots with a different PCR signing key; do not upgrade another node" >&2; exit 1; }
     [[ "$(t "${ip}" get extensions -o json | jq -r 'select(.spec.metadata.name == "schematic") | .spec.metadata.version')" == "${TALOS_SCHEMATIC_ID}" ]] \
         || { echo "STOP: ${name} is not on schematic ${TALOS_SCHEMATIC_ID}" >&2; exit 1; }
     for _ in $(seq 1 24); do volumes_ok "${ip}" && break; sleep 5; done
@@ -85,6 +97,7 @@ for name in "${TARGETS[@]}"; do
     fi
     for _ in $(seq 1 60); do longhorn_ok && break; sleep 10; done
     longhorn_ok || { echo "STOP: Longhorn volumes did not return to healthy" >&2; exit 1; }
-    echo "after: ${after}, Secure Boot on, schematic ${TALOS_SCHEMATIC_ID:0:12}, encrypted volumes ready; ${name} done $(date -u +%H:%M:%SZ)"
+    lockdown="$(t "${ip}" read /sys/kernel/security/lockdown 2>/dev/null | grep -oE '\[[a-z]+\]' || true)"
+    echo "after: ${after}, Secure Boot on, same PCR signing key, kernel lockdown ${lockdown:-unknown}, schematic ${TALOS_SCHEMATIC_ID:0:12}, encrypted volumes ready; ${name} done $(date -u +%H:%M:%SZ)"
 done
 echo; echo "Upgrade complete: ${TARGETS[*]} on ${TALOS_VERSION}. Then: make health"

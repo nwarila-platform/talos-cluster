@@ -30,6 +30,7 @@ fi
 talosctl gen config "${CLUSTER_NAME}" "${CLUSTER_ENDPOINT}" \
     --with-secrets "${STATE_ROOT}/secrets/talos-secrets.yaml" \
     --kubernetes-version "${KUBERNETES_VERSION}" \
+    --talos-version "${TALOS_CONFIG_VERSION}" \
     --install-image "${TALOS_INSTALL_IMAGE}" \
     --config-patch @"${ROOT_DIR}/cluster/patches/common.yaml" \
     --config-patch-control-plane @"${ROOT_DIR}/cluster/patches/controlplane.yaml" \
