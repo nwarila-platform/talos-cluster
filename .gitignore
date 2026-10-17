@@ -97,6 +97,7 @@
 !scripts/seed-aws-poc.sh
 !scripts/validate.sh
 !scripts/vault-init.sh
+!scripts/upgrade.sh
 !scripts/vault-tls.sh
 !scripts/tests/
 !scripts/tests/check-crs.py

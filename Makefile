@@ -6,7 +6,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -p -c
 .DEFAULT_GOAL := help
 
-.PHONY: help init generate validate apply apply-insecure bootstrap platform \
+.PHONY: help init generate validate apply apply-insecure upgrade bootstrap platform \
 	vault-init cloudflare-plan cloudflare cloudflare-verify gitlab-vault-plan gitlab-vault vault-configure \
 	vault-seed-aws keycloak dc-ldaps selftest health kubeconfig
 
@@ -44,6 +44,9 @@ apply: validate ## Apply configs; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 
 apply-insecure: validate ## Initial apply; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/apply.sh --insecure $(NODES)
+
+upgrade: ## Upgrade nodes one at a time to TALOS_VERSION and TALOS_SCHEMATIC_ID (NODES="w3" for one, default all, Vault leader last); requires CONFIRM_REBUILD=TDNHQ-TALCL01
+	@NODES="$(NODES)" bash scripts/upgrade.sh
 
 bootstrap: ## Bootstrap etcd once; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/bootstrap.sh
