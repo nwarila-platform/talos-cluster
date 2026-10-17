@@ -44,8 +44,11 @@ if [[ -n "${node_failures}" ]]; then
 fi
 
 pods_json="$(kubectl get pods -A -o json)"
+# Pods that belong to a Job (CronJob runs) are judged by their Job below, not by readiness: they are
+# Pending or Running for a moment by design.
 pod_failures="$(jq -r '
     .items[]
+    | select([.metadata.ownerReferences[]? | select(.kind == "Job")] | length == 0)
     | (.status.phase // "Unknown") as $phase
     | [.status.containerStatuses[]? | select(.ready != true) | .name] as $not_ready
     | [.status.conditions[]? | select(.type == "Ready")] as $ready
@@ -73,6 +76,10 @@ pod_failures="$(jq -r '
       + "Ready=\($ready_status) reason=\($ready_reason) "
       + "not-ready-app-containers=\($not_ready | if length == 0 then "none" else join(",") end)"
 ' <<<"${pods_json}")"
+job_failures="$(kubectl get jobs -A -o json | jq -r '
+    .items[] | select(any(.status.conditions[]?; .type == "Failed" and .status == "True"))
+    | "ERROR: job \(.metadata.namespace)/\(.metadata.name) failed: \([.status.conditions[]? | select(.type == "Failed") | .message] | join("; "))"')"
+pod_failures="${pod_failures}${job_failures:+${pod_failures:+$'\n'}${job_failures}}"
 if [[ -n "${pod_failures}" ]]; then
     printf '%s\n' "${pod_failures}" >&2
     failed=true

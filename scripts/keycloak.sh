@@ -143,7 +143,7 @@ Keycloak is configured.
   Admin console (master realm): https://keycloak.trinitytechnicalservices.com/admin/ as temp-admin; the password is in the
     keycloak/keycloak-initial-admin Secret (kubectl -n keycloak get secret keycloak-initial-admin -o jsonpath='{.data.password}' | base64 -d).
   Realm tcn administrator: tcn-admin, password in ${KC_DIR}/admin.password (change it at first login).
-  GitLab: install the Vault CA and the OmniAuth block from platform/gitlab-host/gitlab.rb.keycloak (README: Keycloak);
+  GitLab: install the PKI root (configmap keycloak/root-ca) and the OmniAuth block from platform/gitlab-host/gitlab.rb.keycloak (README: Keycloak);
     the client secret is ${KC_DIR}/gitlab-client.secret.
   Site resolver: host override keycloak.trinitytechnicalservices.com -> ${CLUSTER_VIP} (README: Keycloak).
 EOT

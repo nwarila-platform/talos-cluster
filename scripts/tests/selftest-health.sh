@@ -23,6 +23,7 @@ kubectl() {
     case "${all}" in
         "get nodes -o json") cat "${CASE_DIR}/nodes.json"; return 0 ;;
         "get pods -A -o json") cat "${CASE_DIR}/pods.json"; return 0 ;;
+        "get jobs -A -o json") if [[ -f "${CASE_DIR}/jobs.json" ]]; then cat "${CASE_DIR}/jobs.json"; else echo '{"items":[]}'; fi; return 0 ;;
         "get nodes -o wide" | "get pods -A") echo "(listing)"; return 0 ;;
     esac
     # Operand reads: [-n NS] get KIND NAME -o jsonpath=...
