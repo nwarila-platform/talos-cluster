@@ -60,7 +60,7 @@ resource "helm_release" "gitlab_runner" {
   name       = "gitlab-runner"
   repository = "https://charts.gitlab.io"
   chart      = "gitlab-runner"
-  version    = "0.93.0"
+  version    = "0.94.0"
   namespace  = kubernetes_namespace_v1.gitlab_runner.metadata[0].name
   atomic     = true
   timeout    = 300
