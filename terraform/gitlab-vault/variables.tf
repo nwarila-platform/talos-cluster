@@ -62,9 +62,10 @@ variable "kubeconfig" {
 }
 
 variable "projects" {
-  description = "Projects managed here, keyed by <group>/<project>. Each gets a GitLab project with a protected main branch; while vault_access is true it also gets a Vault JWT role bound to that project id, and while aws_access is true an IAM role gitlab_<group>_<project> that only its main-branch ID tokens can assume. ci_file (optional) is committed once to main as .gitlab-ci.yml. Offboarding = vault_access and aws_access false (first apply), then archived true (second apply); entries are never simply removed."
+  description = "Projects managed here, keyed by <group>/<project>. Each gets a GitLab project with a protected main branch; while vault_access is true it also gets a Vault JWT role bound to that project id, and while aws_access is true an IAM role gitlab_<group>_<project> that only its main-branch ID tokens can assume. ci_file (optional) is committed once to main as .gitlab-ci.yml. import_url (optional) starts the project as a copy of that public repository (all branches and tags) instead of an empty main with a README; such a project merges fast-forward only (its commits keep their signatures) and only when the merge-request pipeline succeeded. Offboarding = vault_access and aws_access false (first apply), then archived true (second apply); entries are never simply removed."
   type = map(object({
     ci_file      = optional(string)
+    import_url   = optional(string)
     vault_access = optional(bool, true)
     aws_access   = optional(bool, false)
     archived     = optional(bool, false)
@@ -77,6 +78,11 @@ variable "projects" {
       ci_file      = "../../examples/aws-oidc-poc/.gitlab-ci.yml"
       vault_access = false
       aws_access   = true
+    }
+    # This repository; the merge-request checks are its own .gitlab-ci.yml.
+    "platform/talos-cluster" = {
+      import_url   = "https://github.com/nwarila-platform/talos-cluster.git"
+      vault_access = false
     }
   }
 

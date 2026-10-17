@@ -29,9 +29,14 @@ resource "gitlab_project" "this" {
   path                   = split("/", each.key)[1]
   namespace_id           = gitlab_group.this[split("/", each.key)[0]].id
   visibility_level       = "private"
-  initialize_with_readme = true
+  initialize_with_readme = each.value.import_url == null
+  import_url             = each.value.import_url
   default_branch         = "main"
-  archived               = each.value.archived
+  # An imported repository keeps its own history: merge requests fast-forward
+  # (no merge commits, signatures intact) and need a green pipeline.
+  merge_method                          = each.value.import_url == null ? "merge" : "ff"
+  only_allow_merge_if_pipeline_succeeds = each.value.import_url != null
+  archived                              = each.value.archived
   # Projects that assume an IAM role carry ref_protected in their ID-token
   # subject (GitLab 18.7+; measured on 19.4: the project setting exists and
   # defaults to project_path, ref_type, ref), so the trust policy can pin it.
