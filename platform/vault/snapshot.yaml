@@ -1,0 +1,123 @@
+# Nightly raft snapshot. At 07:30 UTC a Job logs in to Vault with its own short-lived service-account
+# token (Kubernetes auth role vault-snapshot, terraform/gitlab-vault/vault-k8s-auth.tf: it may only
+# read a snapshot and revoke itself), saves a snapshot, checks it with `snapshot inspect`, keeps the
+# newest 14 and revokes its token. The snapshots live on a Longhorn volume (two replicas) that
+# Longhorn's default daily backup copies to the Synology at 08:17, so a copy leaves the cluster every
+# day. A snapshot is encrypted by Vault's barrier: restoring one needs the unseal keys (README, Vault).
+# Restricted Pod Security compliant.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-snapshot
+  namespace: vault
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-snapshots
+  namespace: vault
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-snapshot
+  namespace: vault
+spec:
+  schedule: "30 7 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          serviceAccountName: vault-snapshot
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: snapshot
+              image: hashicorp/vault:2.2.0@sha256:e0acd3c681bdf57f002d7214e5d050b876e1704678005c6b0406dd96a65be919
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  VAULT_TOKEN="$(vault write -field=token auth/kubernetes/login role=vault-snapshot jwt=@/var/run/secrets/vault/token)"
+                  export VAULT_TOKEN
+                  file="/snapshots/vault-$(date -u +%Y%m%dT%H%M%SZ).snap"
+                  vault operator raft snapshot save "${file}"
+                  vault operator raft snapshot inspect "${file}" > /dev/null
+                  vault token revoke -self > /dev/null
+                  ls -1t /snapshots/vault-*.snap | tail -n +15 | xargs -r rm -f
+                  echo "saved ${file} ($(wc -c < "${file}") bytes); kept $(ls -1 /snapshots/vault-*.snap | wc -l)"
+              env:
+                # A standby answers a snapshot request with a redirect to the active pod's IP, which
+                # the certificate does not cover; vault-external selects only the active pod
+                # (vault-active=true), and the certificate is checked by its service name.
+                - name: VAULT_ADDR
+                  value: https://vault-external.vault.svc:8200
+                - name: VAULT_TLS_SERVER_NAME
+                  value: vault.vault.svc
+                - name: VAULT_CACERT
+                  value: /vault/tls/ca.crt
+                - name: HOME
+                  value: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+              volumeMounts:
+                - name: snapshots
+                  mountPath: /snapshots
+                - name: token
+                  mountPath: /var/run/secrets/vault
+                  readOnly: true
+                - name: vault-ca
+                  mountPath: /vault/tls
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: snapshots
+              persistentVolumeClaim:
+                claimName: vault-snapshots
+            # A token minted for Vault only, valid ten minutes.
+            - name: token
+              projected:
+                sources:
+                  - serviceAccountToken:
+                      audience: vault
+                      expirationSeconds: 600
+                      path: token
+            - name: vault-ca
+              secret:
+                secretName: vault-server-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            - name: tmp
+              emptyDir: {}

@@ -80,6 +80,7 @@
 !platform/vault/storage.yaml
 !platform/vault/unsealer.sh
 !platform/vault/unsealer.yaml
+!platform/vault/snapshot.yaml
 !platform/vault/values.yaml
 
 !scripts/

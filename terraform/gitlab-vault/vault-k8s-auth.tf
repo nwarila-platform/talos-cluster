@@ -42,3 +42,30 @@ resource "vault_kubernetes_auth_backend_role" "vault_issuer" {
   token_policies          = [vault_policy.cert_manager_tcn_server.name]
   token_no_default_policy = true
 }
+
+# The nightly raft snapshot (platform/vault/snapshot.yaml): one service account in vault, presenting
+# a token minted for the "vault" audience, gets a five-minute token that can only take a snapshot and
+# revoke itself.
+resource "vault_policy" "raft_snapshot" {
+  name   = "raft-snapshot"
+  policy = <<-EOT
+    path "sys/storage/raft/snapshot" {
+      capabilities = ["read"]
+    }
+    path "auth/token/revoke-self" {
+      capabilities = ["update"]
+    }
+  EOT
+}
+
+resource "vault_kubernetes_auth_backend_role" "vault_snapshot" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "vault-snapshot"
+  bound_service_account_names      = ["vault-snapshot"]
+  bound_service_account_namespaces = ["vault"]
+  audience                         = "vault"
+  token_ttl                        = 300
+  token_max_ttl                    = 300
+  token_policies                   = [vault_policy.raft_snapshot.name]
+  token_no_default_policy          = true
+}

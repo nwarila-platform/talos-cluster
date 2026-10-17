@@ -5,6 +5,7 @@ resources:
   - service.yaml
   - storage.yaml
   - unsealer.yaml
+  - snapshot.yaml
 configMapGenerator:
   - name: vault-unsealer
     namespace: vault

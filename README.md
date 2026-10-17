@@ -163,6 +163,21 @@ is created on a cluster initialized before the unsealer existed — prove it by 
 follower pod (it restarts sealed; a standby cannot be sealed in place, Vault answers "cannot seal
 when in standby mode") and watching the next Job open it. Create the Secret before the CronJob
 exists: a Job that finds Vault initialized and no shares exits 1 by design.
+
+## Vault snapshots
+
+`platform/vault/snapshot.yaml` takes a raft snapshot every day at 07:30 UTC: the Job logs in with
+its own ten-minute service-account token (Kubernetes auth role `vault-snapshot`, which may only read
+a snapshot and revoke itself), saves `vault-<UTC time>.snap` on the Longhorn volume
+`vault/vault-snapshots`, checks it with `snapshot inspect`, keeps the newest 14 and revokes its
+token. It talks to `vault-external`, which selects only the active pod: a standby answers a
+snapshot request with a redirect to the active pod's IP, which the server certificate does not
+cover. Longhorn's default daily backup (08:17) copies that volume to the Synology, so a copy
+leaves the cluster every day. A snapshot is encrypted by Vault's barrier and restores only with the
+unseal keys: `vault operator raft snapshot restore -force <file>` with a root token against the
+active node (one generated with the unseal keys if the old root token is gone). To take one now:
+`kubectl -n vault create job --from=cronjob/vault-snapshot vault-snapshot-now`.
+
 ## Runner token
 
 GitLab 19.4 reports no per-runner expiry through the API; `runner_token_expiration_interval`
@@ -449,6 +464,9 @@ symlink in a single rename, so an in-service bundle is never half-replaced:
 - Keycloak's database has no PostgreSQL-native backup: only Longhorn's daily volume backup of its
   two volumes (the default recurring-job group), with no WAL archiving, no point-in-time recovery
   and no restore test yet (KC1-BK).
+- No backup has been restored yet (neither a Vault snapshot nor a Longhorn backup), and etcd has no
+  backup at all: losing all three control planes means a rebuild, with Vault restored from its
+  latest snapshot.
 - The domain controllers' LDAPS certificates come from the Vault PKI (90 days; first issued
   2026-10-17, valid to 2027-01-15) and are renewed by running `make dc-ldaps` from the workstation
   before they expire: nothing renews them automatically yet. The AD certificate authority, once it
