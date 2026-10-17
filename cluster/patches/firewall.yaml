@@ -82,3 +82,14 @@ portSelector:
 ingress:
   - subnet: 10.69.12.0/24
   - subnet: 10.69.112.0/24
+---
+# Keycloak's LAN entry point: the cluster VIP on 443 (platform/keycloak/service-external.yaml).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: ingress-keycloak
+portSelector:
+  ports: [443]
+  protocol: tcp
+ingress:
+  - subnet: 10.69.12.0/24
+  - subnet: 10.69.112.0/24

@@ -1,0 +1,14 @@
+# CloudNativePG operator 1.30.1 (chart cloudnative-pg 0.29.1, installed by digest from
+# oci://ghcr.io/cloudnative-pg/charts — the same bytes as the Helm repository's 0.29.1), NAMESPACE-SCOPED:
+# installed into the keycloak namespace and watching only it (WATCH_NAMESPACE), so its Secret,
+# ConfigMap and Service rights are a Role in that namespace, not a ClusterRole over every Secret. Its
+# one ClusterRoleBinding (nodes read, webhook configurations get/patch, cluster image catalogs read; no
+# Secrets) is accepted exactly by scripts/tests/check-rbac.py.
+# The operator image is pinned by digest through the tag field (repository:tag@digest).
+image:
+  repository: ghcr.io/cloudnative-pg/cloudnative-pg
+  tag: "1.30.1@sha256:923c267ec29636db3bee20f993d0ec4973fa22998e1adad37da79e4d32b5bc07"
+crds:
+  create: true
+config:
+  clusterWide: false

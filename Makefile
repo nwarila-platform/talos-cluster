@@ -8,7 +8,7 @@ SHELL := /bin/bash
 
 .PHONY: help init generate validate apply apply-insecure bootstrap platform \
 	vault-init cloudflare-plan cloudflare cloudflare-verify gitlab-vault-plan gitlab-vault vault-configure \
-	vault-seed-aws selftest health kubeconfig
+	vault-seed-aws keycloak selftest health kubeconfig
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -32,9 +32,12 @@ generate: ## Generate six machine configs and local Talos credentials
 validate: ## Validate scripts, manifests, Terraform, and generated configs when present
 	@bash scripts/validate.sh
 
-selftest: ## Run the self-tests: vault-init against a stubbed kubectl, the unsealer against local Vault servers
+selftest: ## Run the self-tests: vault-init, keycloak and health against stubs, the unsealer against local Vault servers, validate against mutants
 	@bash scripts/tests/selftest-vault-init.sh
 	@bash scripts/tests/selftest-vault-unsealer.sh
+	@bash scripts/tests/selftest-keycloak.sh
+	@bash scripts/tests/selftest-health.sh
+	@bash scripts/tests/selftest-validate.sh
 
 apply: validate ## Apply configs; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/apply.sh $(NODES)
@@ -45,7 +48,7 @@ apply-insecure: validate ## Initial apply; requires CONFIRM_REBUILD=TDNHQ-TALCL0
 bootstrap: ## Bootstrap etcd once; requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/bootstrap.sh
 
-platform: ## Install pinned Calico, Longhorn, Argo CD, and Vault charts
+platform: ## Install the pinned Calico, Longhorn, Argo CD, Vault, cert-manager, CloudNativePG and Keycloak operator charts and the Keycloak manifests
 	@bash scripts/install-platform.sh
 
 vault-init: ## Initialize and unseal the new Vault raft cluster
@@ -65,6 +68,9 @@ gitlab-vault-plan: ## Preflight, then save a reviewed plan for GitLab, Vault, AW
 
 gitlab-vault: ## Apply the saved plan, then prove convergence, non-expiring runner tokens and an online runner; needs the same three plus CONFIRM_REBUILD=TDNHQ-TALCL01
 	@/bin/bash -p scripts/gitlab-vault.sh apply
+
+keycloak: ## Create the realm Secret from .state/keycloak, wait for Keycloak, import the tcn realm (AD federation, GitLab client); requires CONFIRM_REBUILD=TDNHQ-TALCL01
+	@bash scripts/keycloak.sh
 
 vault-configure: ## (superseded by gitlab-vault) Configure one project's GitLab JWT auth in Vault by hand
 	@bash scripts/configure-vault-gitlab.sh

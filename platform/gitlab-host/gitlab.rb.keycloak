@@ -1,0 +1,34 @@
+# GitLab sign-in through Keycloak (realm tcn, confidential client gitlab). Owner step on the
+# GitLab host, as an administrator: append this block to /etc/gitlab/gitlab.rb, replace the
+# secret placeholder with the content of .state/keycloak/gitlab-client.secret (the same value
+# make keycloak put into the realm), install the Vault CA so GitLab trusts Keycloak's certificate
+# on the LAN path, then reconfigure:
+#   install -o root -g root -m 0644 ca.crt /etc/gitlab/trusted-certs/vault-ca.crt   # from .state/vault/tls/
+#   gitlab-ctl reconfigure
+# Users signing in through Keycloak are created in GitLab blocked until an administrator
+# approves them, and an existing GitLab user with the same username is linked automatically.
+gitlab_rails['omniauth_enabled'] = true
+gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+gitlab_rails['omniauth_block_auto_created_users'] = true
+gitlab_rails['omniauth_auto_link_user'] = ['openid_connect']
+gitlab_rails['omniauth_providers'] = [
+  {
+    name: 'openid_connect',
+    label: 'Keycloak',
+    args: {
+      name: 'openid_connect',
+      scope: ['openid', 'profile', 'email'],
+      response_type: 'code',
+      issuer: 'https://keycloak.trinitytechnicalservices.com/realms/tcn',
+      discovery: true,
+      client_auth_method: 'basic',
+      uid_field: 'preferred_username',
+      pkce: true,
+      client_options: {
+        identifier: 'gitlab',
+        secret: '<the content of .state/keycloak/gitlab-client.secret>',
+        redirect_uri: 'https://gitlab.trinitytechnicalservices.com/users/auth/openid_connect/callback'
+      }
+    }
+  }
+]

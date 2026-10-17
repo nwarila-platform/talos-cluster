@@ -1,0 +1,2561 @@
+{
+ "cert-manager": [
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-cainjector",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "get",
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "admissionregistration.k8s.io"
+     ],
+     "resources": [
+      "mutatingwebhookconfigurations",
+      "validatingwebhookconfigurations"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "apiextensions.k8s.io"
+     ],
+     "resources": [
+      "customresourcedefinitions"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "apiregistration.k8s.io"
+     ],
+     "resources": [
+      "apiservices"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificates"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-cluster-view",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "clusterissuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-approve:cert-manager-io",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resourceNames": [
+      "clusterissuers.cert-manager.io/*",
+      "issuers.cert-manager.io/*"
+     ],
+     "resources": [
+      "signers"
+     ],
+     "verbs": [
+      "approve"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-certificates",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "orders"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests",
+      "certificaterequests/status",
+      "certificates",
+      "certificates/status"
+     ],
+     "verbs": [
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests",
+      "certificates",
+      "clusterissuers",
+      "issuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests/finalizers",
+      "certificates/finalizers"
+     ],
+     "verbs": [
+      "update"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-certificatesigningrequests",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "authorization.k8s.io"
+     ],
+     "resources": [
+      "subjectaccessreviews"
+     ],
+     "verbs": [
+      "create"
+     ]
+    },
+    {
+     "apiGroups": [
+      "certificates.k8s.io"
+     ],
+     "resourceNames": [
+      "clusterissuers.cert-manager.io/*",
+      "issuers.cert-manager.io/*"
+     ],
+     "resources": [
+      "signers"
+     ],
+     "verbs": [
+      "sign"
+     ]
+    },
+    {
+     "apiGroups": [
+      "certificates.k8s.io"
+     ],
+     "resources": [
+      "certificatesigningrequests"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "certificates.k8s.io"
+     ],
+     "resources": [
+      "certificatesigningrequests/status"
+     ],
+     "verbs": [
+      "patch",
+      "update"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-challenges",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "pods",
+      "services"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "challenges",
+      "challenges/status"
+     ],
+     "verbs": [
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "challenges"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "challenges/finalizers"
+     ],
+     "verbs": [
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "clusterissuers",
+      "issuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "gateway.networking.k8s.io"
+     ],
+     "resources": [
+      "httproutes"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "networking.k8s.io"
+     ],
+     "resources": [
+      "ingresses"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "route.openshift.io"
+     ],
+     "resources": [
+      "routes/custom-host"
+     ],
+     "verbs": [
+      "create"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-clusterissuers",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "clusterissuers",
+      "clusterissuers/status"
+     ],
+     "verbs": [
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "clusterissuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-ingress-shim",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests",
+      "certificates",
+      "clusterissuers",
+      "issuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests",
+      "certificates"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "gateway.networking.k8s.io"
+     ],
+     "resources": [
+      "gateways",
+      "httproutes",
+      "listenersets"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "gateway.networking.k8s.io"
+     ],
+     "resources": [
+      "gateways/finalizers",
+      "httproutes/finalizers",
+      "listenersets/finalizers"
+     ],
+     "verbs": [
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "networking.k8s.io"
+     ],
+     "resources": [
+      "ingresses"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "networking.k8s.io"
+     ],
+     "resources": [
+      "ingresses/finalizers"
+     ],
+     "verbs": [
+      "update"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-issuers",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "issuers",
+      "issuers/status"
+     ],
+     "verbs": [
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "issuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-controller-orders",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "challenges",
+      "orders"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "challenges"
+     ],
+     "verbs": [
+      "create",
+      "delete"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "orders",
+      "orders/status"
+     ],
+     "verbs": [
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "orders/finalizers"
+     ],
+     "verbs": [
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "clusterissuers",
+      "issuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "clusterissuers/finalizers",
+      "issuers/finalizers"
+     ],
+     "verbs": [
+      "update"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-edit",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "challenges"
+     ],
+     "verbs": [
+      "delete",
+      "deletecollection",
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "orders"
+     ],
+     "verbs": [
+      "delete",
+      "deletecollection"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests",
+      "certificates",
+      "issuers"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "deletecollection",
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificates/status"
+     ],
+     "verbs": [
+      "update"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-view",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "acme.cert-manager.io"
+     ],
+     "resources": [
+      "challenges",
+      "orders"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests",
+      "certificates",
+      "issuers"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cert-manager-webhook:subjectaccessreviews",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "authorization.k8s.io"
+     ],
+     "resources": [
+      "subjectaccessreviews"
+     ],
+     "verbs": [
+      "create"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-cainjector",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-cainjector"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager-cainjector",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-approve:cert-manager-io",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-approve:cert-manager-io"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-certificates",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-certificates"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-certificatesigningrequests",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-certificatesigningrequests"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-challenges",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-challenges"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-clusterissuers",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-clusterissuers"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-ingress-shim",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-ingress-shim"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-issuers",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-issuers"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-controller-orders",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-controller-orders"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cert-manager-webhook:subjectaccessreviews",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cert-manager-webhook:subjectaccessreviews"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager-webhook",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "MutatingWebhookConfiguration",
+   "name": "cert-manager-webhook",
+   "namespace": null,
+   "webhooks": [
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": "Equivalent",
+     "name": "webhook.cert-manager.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "cert-manager.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE"
+       ],
+       "resources": [
+        "certificaterequests"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cert-manager-webhook",
+      "namespace": "cert-manager",
+      "path": "/mutate",
+      "port": null
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": 30,
+     "url": null
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "Role",
+   "name": "cert-manager-startupapicheck:create-cert",
+   "namespace": "cert-manager",
+   "rules": [
+    {
+     "apiGroups": [
+      "cert-manager.io"
+     ],
+     "resources": [
+      "certificaterequests"
+     ],
+     "verbs": [
+      "create"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "Role",
+   "name": "cert-manager-webhook:dynamic-serving",
+   "namespace": "cert-manager",
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resourceNames": [
+      "cert-manager-webhook-ca"
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "create"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "Role",
+   "name": "cert-manager-cainjector:leaderelection",
+   "namespace": "kube-system",
+   "rules": [
+    {
+     "apiGroups": [
+      "coordination.k8s.io"
+     ],
+     "resourceNames": [
+      "cert-manager-cainjector-leader-election",
+      "cert-manager-cainjector-leader-election-core"
+     ],
+     "resources": [
+      "leases"
+     ],
+     "verbs": [
+      "get",
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "coordination.k8s.io"
+     ],
+     "resources": [
+      "leases"
+     ],
+     "verbs": [
+      "create"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "Role",
+   "name": "cert-manager:leaderelection",
+   "namespace": "kube-system",
+   "rules": [
+    {
+     "apiGroups": [
+      "coordination.k8s.io"
+     ],
+     "resourceNames": [
+      "cert-manager-controller"
+     ],
+     "resources": [
+      "leases"
+     ],
+     "verbs": [
+      "get",
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "coordination.k8s.io"
+     ],
+     "resources": [
+      "leases"
+     ],
+     "verbs": [
+      "create"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "cert-manager-startupapicheck:create-cert",
+   "namespace": "cert-manager",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "cert-manager-startupapicheck:create-cert"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager-startupapicheck",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "cert-manager-webhook:dynamic-serving",
+   "namespace": "cert-manager",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "cert-manager-webhook:dynamic-serving"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager-webhook",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "cert-manager-cainjector:leaderelection",
+   "namespace": "kube-system",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "cert-manager-cainjector:leaderelection"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager-cainjector",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "cert-manager:leaderelection",
+   "namespace": "kube-system",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "cert-manager:leaderelection"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cert-manager",
+     "namespace": "cert-manager"
+    }
+   ]
+  },
+  {
+   "kind": "ValidatingWebhookConfiguration",
+   "name": "cert-manager-webhook",
+   "namespace": null,
+   "webhooks": [
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": "Equivalent",
+     "name": "webhook.cert-manager.io",
+     "namespaceSelector": {
+      "matchExpressions": [
+       {
+        "key": "cert-manager.io/disable-validation",
+        "operator": "NotIn",
+        "values": [
+         "true"
+        ]
+       }
+      ]
+     },
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "acme.cert-manager.io",
+        "cert-manager.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "*/*"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cert-manager-webhook",
+      "namespace": "cert-manager",
+      "path": "/validate",
+      "port": null
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": 30,
+     "url": null
+    }
+   ]
+  }
+ ],
+ "cnpg": [
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cnpg-cloudnative-pg",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "nodes"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "admissionregistration.k8s.io"
+     ],
+     "resources": [
+      "mutatingwebhookconfigurations",
+      "validatingwebhookconfigurations"
+     ],
+     "verbs": [
+      "get",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "clusterimagecatalogs"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cnpg-cloudnative-pg-edit",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "backups",
+      "clusterimagecatalogs",
+      "clusters",
+      "clusters/status",
+      "databaseroles",
+      "databases",
+      "failoverquorums",
+      "imagecatalogs",
+      "poolers",
+      "publications",
+      "scheduledbackups",
+      "subscriptions"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "deletecollection",
+      "patch",
+      "update"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "cnpg-cloudnative-pg-view",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "backups",
+      "clusterimagecatalogs",
+      "clusters",
+      "clusters/status",
+      "databaseroles",
+      "databases",
+      "failoverquorums",
+      "imagecatalogs",
+      "poolers",
+      "publications",
+      "scheduledbackups",
+      "subscriptions"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "ClusterRoleBinding",
+   "name": "cnpg-cloudnative-pg",
+   "namespace": null,
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "cnpg-cloudnative-pg"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cnpg-cloudnative-pg",
+     "namespace": "keycloak"
+    }
+   ]
+  },
+  {
+   "kind": "MutatingWebhookConfiguration",
+   "name": "cnpg-mutating-webhook-configuration",
+   "namespace": null,
+   "webhooks": [
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "mbackup.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "backups"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/mutate-postgresql-cnpg-io-v1-backup",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    },
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "mcluster.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "clusters"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/mutate-postgresql-cnpg-io-v1-cluster",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    },
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "mdatabase.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "databases"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/mutate-postgresql-cnpg-io-v1-database",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    },
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "mscheduledbackup.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "scheduledbackups"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/mutate-postgresql-cnpg-io-v1-scheduledbackup",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "Role",
+   "name": "cnpg-cloudnative-pg",
+   "namespace": "keycloak",
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "configmaps",
+      "secrets",
+      "services"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "configmaps/status",
+      "secrets/status"
+     ],
+     "verbs": [
+      "get",
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "events"
+     ],
+     "verbs": [
+      "create",
+      "patch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "persistentvolumeclaims",
+      "pods",
+      "pods/exec"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "pods/status"
+     ],
+     "verbs": [
+      "get"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "serviceaccounts"
+     ],
+     "verbs": [
+      "create",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "apps"
+     ],
+     "resources": [
+      "deployments"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "batch"
+     ],
+     "resources": [
+      "jobs"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "coordination.k8s.io"
+     ],
+     "resources": [
+      "leases"
+     ],
+     "verbs": [
+      "create",
+      "get",
+      "list",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "discovery.k8s.io"
+     ],
+     "resources": [
+      "endpointslices"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "monitoring.coreos.com"
+     ],
+     "resources": [
+      "podmonitors"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "policy"
+     ],
+     "resources": [
+      "poddisruptionbudgets"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "backups",
+      "clusters",
+      "databaseroles",
+      "databases",
+      "poolers",
+      "publications",
+      "scheduledbackups",
+      "subscriptions"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "backups/status",
+      "databases/status",
+      "publications/status",
+      "scheduledbackups/status",
+      "subscriptions/status"
+     ],
+     "verbs": [
+      "get",
+      "patch",
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "clusters/finalizers",
+      "databaseroles/finalizers",
+      "poolers/finalizers"
+     ],
+     "verbs": [
+      "update"
+     ]
+    },
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "clusters/status",
+      "databaseroles/status",
+      "failoverquorums/status",
+      "poolers/status"
+     ],
+     "verbs": [
+      "get",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "failoverquorums"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "postgresql.cnpg.io"
+     ],
+     "resources": [
+      "imagecatalogs"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "rbac.authorization.k8s.io"
+     ],
+     "resources": [
+      "rolebindings",
+      "roles"
+     ],
+     "verbs": [
+      "create",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "snapshot.storage.k8s.io"
+     ],
+     "resources": [
+      "volumesnapshots"
+     ],
+     "verbs": [
+      "create",
+      "get",
+      "list",
+      "patch",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "cnpg-cloudnative-pg",
+   "namespace": "keycloak",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "cnpg-cloudnative-pg"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "cnpg-cloudnative-pg",
+     "namespace": "keycloak"
+    }
+   ]
+  },
+  {
+   "kind": "ValidatingWebhookConfiguration",
+   "name": "cnpg-validating-webhook-configuration",
+   "namespace": null,
+   "webhooks": [
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "vbackup.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "backups"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/validate-postgresql-cnpg-io-v1-backup",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    },
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "vcluster.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "clusters"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/validate-postgresql-cnpg-io-v1-cluster",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    },
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "vdatabase.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "databases"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/validate-postgresql-cnpg-io-v1-database",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    },
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "vpooler.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "poolers"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/validate-postgresql-cnpg-io-v1-pooler",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    },
+    {
+     "admissionReviewVersions": [
+      "v1"
+     ],
+     "failurePolicy": "Fail",
+     "matchConditions": null,
+     "matchPolicy": null,
+     "name": "vscheduledbackup.cnpg.io",
+     "namespaceSelector": null,
+     "objectSelector": null,
+     "reinvocationPolicy": null,
+     "rules": [
+      {
+       "apiGroups": [
+        "postgresql.cnpg.io"
+       ],
+       "apiVersions": [
+        "v1"
+       ],
+       "operations": [
+        "CREATE",
+        "UPDATE"
+       ],
+       "resources": [
+        "scheduledbackups"
+       ]
+      }
+     ],
+     "service": {
+      "name": "cnpg-webhook-service",
+      "namespace": "keycloak",
+      "path": "/validate-postgresql-cnpg-io-v1-scheduledbackup",
+      "port": 443
+     },
+     "sideEffects": "None",
+     "timeoutSeconds": null,
+     "url": null
+    }
+   ]
+  }
+ ],
+ "keycloak-operator": [
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "keycloakcontroller-cluster-role",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "configmaps"
+     ],
+     "verbs": [
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "pods"
+     ],
+     "verbs": [
+      "list"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "pods/log"
+     ],
+     "verbs": [
+      "get"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "services"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "apps"
+     ],
+     "resources": [
+      "statefulsets"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "k8s.keycloak.org"
+     ],
+     "resources": [
+      "keycloaks",
+      "keycloaks/finalizers",
+      "keycloaks/status"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "monitoring.coreos.com"
+     ],
+     "resources": [
+      "servicemonitors"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "networking.k8s.io"
+     ],
+     "resources": [
+      "ingresses"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "networking.k8s.io"
+     ],
+     "resources": [
+      "networkpolicies"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "keycloakoidcclientcontroller-cluster-role",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "k8s.keycloak.org"
+     ],
+     "resources": [
+      "keycloakoidcclients",
+      "keycloakoidcclients/finalizers",
+      "keycloakoidcclients/status"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "keycloakrealmimportcontroller-cluster-role",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      ""
+     ],
+     "resources": [
+      "secrets"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "batch"
+     ],
+     "resources": [
+      "jobs"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "watch"
+     ]
+    },
+    {
+     "apiGroups": [
+      "k8s.keycloak.org"
+     ],
+     "resources": [
+      "keycloakrealmimports",
+      "keycloakrealmimports/finalizers",
+      "keycloakrealmimports/status"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "aggregationRule": null,
+   "kind": "ClusterRole",
+   "name": "keycloaksamlclientcontroller-cluster-role",
+   "namespace": null,
+   "rules": [
+    {
+     "apiGroups": [
+      "k8s.keycloak.org"
+     ],
+     "resources": [
+      "keycloaksamlclients",
+      "keycloaksamlclients/finalizers",
+      "keycloaksamlclients/status"
+     ],
+     "verbs": [
+      "create",
+      "delete",
+      "get",
+      "list",
+      "patch",
+      "update",
+      "watch"
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "keycloak-operator-view",
+   "namespace": "keycloak",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "view"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "keycloak-operator",
+     "namespace": "keycloak"
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "keycloakcontroller-role-binding",
+   "namespace": "keycloak",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "keycloakcontroller-cluster-role"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "keycloak-operator",
+     "namespace": "keycloak"
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "keycloakoidcclientcontroller-role-binding",
+   "namespace": "keycloak",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "keycloakoidcclientcontroller-cluster-role"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "keycloak-operator",
+     "namespace": "keycloak"
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "keycloakrealmimportcontroller-role-binding",
+   "namespace": "keycloak",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "keycloakrealmimportcontroller-cluster-role"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "keycloak-operator",
+     "namespace": "keycloak"
+    }
+   ]
+  },
+  {
+   "kind": "RoleBinding",
+   "name": "keycloaksamlclientcontroller-role-binding",
+   "namespace": "keycloak",
+   "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "ClusterRole",
+    "name": "keycloaksamlclientcontroller-cluster-role"
+   },
+   "subjects": [
+    {
+     "kind": "ServiceAccount",
+     "name": "keycloak-operator",
+     "namespace": "keycloak"
+    }
+   ]
+  }
+ ]
+}

@@ -109,7 +109,31 @@ tigera-operator calico
 longhorn-system longhorn
 argocd argocd
 vault vault
+cert-manager cert-manager
+keycloak cnpg
 EOF
+
+# The Keycloak platform is healthy only when its operands are: the operator Deployments available,
+# the issuer and certificate Ready, the database cluster healthy with both instances, the server
+# Ready, the realm imported without errors, the tunnel connector rolled out. Each read must succeed
+# (a failed read is an error, never "absent and fine"); a missing object is an error too — this gate
+# is meaningful only after the full rebuild order, which is when it runs.
+operand() {  # operand DESCRIPTION KUBECTL-ARGS... : the value must be non-empty and equal to the last argument
+    local description="$1" want="${*: -1}" got; shift
+    set -- "${@:1:$#-1}"
+    if ! got="$(kubectl "$@" 2>&1)"; then echo "ERROR: ${description}: cannot read (${got})" >&2; failed=true; return 0; fi
+    [[ "${got}" == "${want}" ]] || { echo "ERROR: ${description}: ${got:-missing} (want ${want})" >&2; failed=true; }
+}
+operand "keycloak-operator Deployment available" -n keycloak get deployment keycloak-operator -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' True
+operand "cnpg operator Deployment available" -n keycloak get deployment cnpg-cloudnative-pg -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' True
+operand "ClusterIssuer vault-tcn-server Ready" get clusterissuer vault-tcn-server -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' True
+operand "Certificate keycloak-tls Ready" -n keycloak get certificate keycloak-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' True
+operand "database cluster keycloak-db healthy" -n keycloak get cluster keycloak-db -o jsonpath='{.status.phase}' "Cluster in healthy state"
+operand "database cluster keycloak-db instances ready" -n keycloak get cluster keycloak-db -o jsonpath='{.status.readyInstances}' 2
+operand "Keycloak keycloak Ready" -n keycloak get keycloak keycloak -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' True
+operand "realm import tcn Done" -n keycloak get keycloakrealmimport tcn -o jsonpath='{.status.conditions[?(@.type=="Done")].status}' True
+operand "realm import tcn without errors" -n keycloak get keycloakrealmimport tcn -o jsonpath='{.status.conditions[?(@.type=="HasErrors")].status}' False
+operand "cloudflared Deployment available" -n keycloak get deployment cloudflared -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' True
 
 if [[ "${failed}" == true ]]; then
     exit 1

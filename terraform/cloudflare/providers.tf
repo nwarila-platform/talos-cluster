@@ -2,3 +2,8 @@
 # Scopes it needs: Account > Cloudflare Tunnel: Edit, Zone > DNS: Edit on the
 # zone, Zone > Zone: Read.
 provider "cloudflare" {}
+
+# The cluster, for the Keycloak connector's token Secret only.
+provider "kubernetes" {
+  config_path = var.kubeconfig
+}

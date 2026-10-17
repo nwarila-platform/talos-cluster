@@ -1,0 +1,35 @@
+# Keycloak's database: a two-instance PostgreSQL 18 cluster managed by CloudNativePG, each
+# instance on its own Longhorn volume (the default StorageClass) and on its own node (required
+# anti-affinity), with automatic failover on node loss. Backups: only Longhorn's daily volume backup
+# (no PostgreSQL base backup, WAL archiving or point-in-time recovery yet — README, Known shortcuts). The
+# operator creates the keycloak database and owner and publishes the credentials in the
+# keycloak-db-app Secret; the primary is always reachable as keycloak-db-rw. The image is the
+# operator's own default for this release, pinned by digest.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: keycloak-db
+  namespace: keycloak
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5efb66993894055f0aa50bd94337c6c4ff2e2129f4d433c527151aebbf283fb0
+  primaryUpdateStrategy: unsupervised
+  # A hard failure domain: the two instances may never share a node (the operator's default anti-affinity
+  # is only preferred). With six nodes this is always satisfiable; a Cluster that cannot place its second
+  # instance stays degraded visibly rather than silently co-located.
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+  storage:
+    size: 10Gi
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi

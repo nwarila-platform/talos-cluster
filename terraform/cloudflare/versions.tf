@@ -6,5 +6,9 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "5.28.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "3.3.0"
+    }
   }
 }

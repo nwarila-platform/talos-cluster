@@ -62,7 +62,7 @@ root_is_reviewed() {  # root_is_reviewed DIR NAME...   (DIR relative to the repo
             || { echo "ERROR: ${dir}/${name} is not a regular file" >&2; exit 1; }
     done
 }
-root_is_reviewed terraform/gitlab-vault .terraform.lock.hcl aws.tf backend.tf outputs.tf pki.tf projects.tf providers.tf runner.tf variables.tf vault-auth.tf versions.tf
+root_is_reviewed terraform/gitlab-vault .terraform.lock.hcl aws.tf backend.tf outputs.tf pki.tf projects.tf providers.tf runner.tf variables.tf vault-auth.tf vault-k8s-auth.tf versions.tf
 
 STATE_ROOT="$(readlink -f "${STATE_DIR_OVERRIDE:-${ROOT_DIR}/${STATE_DIR}}")"  # absolute: Terraform receives these paths
 TF_DIR="${ROOT_DIR}/terraform/gitlab-vault"
@@ -371,9 +371,19 @@ preflight_creates() {
             vault_mount)
                 name="$(need .after.path)"
                 decide "sys/mounts" --arg k "${name}/" 'has($k)' <<<"${MOUNTS}" && conflict "Vault mount ${name}/ (import: ${address} ${name})" ;;
-            vault_jwt_auth_backend)
+            vault_jwt_auth_backend|vault_auth_backend)
                 name="$(need .after.path)"
                 decide "sys/auth" --arg k "${name}/" 'has($k)' <<<"${AUTHS}" && conflict "Vault auth ${name}/ (import: ${address} ${name})" ;;
+            vault_kubernetes_auth_backend_config)
+                # A setting of its auth backend, not an object: writing it onto a backend this
+                # plan does not create would overwrite a live configuration.
+                backend="$(need .after.backend)"
+                planned vault_auth_backend '.after.path == $v' "${backend}" || {
+                    echo "ERROR: ${address}: auth backend ${backend} already exists but its configuration is planned as a create; import the backend and its config first (README: Preflight)" >&2; exit 1; } ;;
+            vault_kubernetes_auth_backend_role)
+                name="$(need .after.role_name)"; backend="$(need .after.backend)"
+                planned vault_auth_backend '.after.path == $v' "${backend}" && continue
+                vault_absent "/auth/${backend}/role/${name}" || conflict "Vault role auth/${backend}/role/${name} (import: ${address} auth/${backend}/role/${name})" ;;
             vault_policy)
                 # Policies are global in Vault: nothing contains them, so the name
                 # must be known now (it is derived from the project key, not its id).

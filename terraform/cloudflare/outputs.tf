@@ -18,3 +18,18 @@ output "gitlab_tunnel_env" {
   value       = "TUNNEL_TOKEN=${data.cloudflare_zero_trust_tunnel_cloudflared_token.gitlab.token}\n"
   sensitive   = true
 }
+
+output "keycloak_tunnel_id" {
+  description = "UUID of the dedicated Keycloak tunnel."
+  value       = cloudflare_zero_trust_tunnel_cloudflared.keycloak.id
+}
+
+output "keycloak_tunnel_status" {
+  description = "Tunnel status as last read by Terraform: inactive until the in-cluster connector first runs, then healthy."
+  value       = cloudflare_zero_trust_tunnel_cloudflared.keycloak.status
+}
+
+output "keycloak_host" {
+  description = "Public hostname that now resolves, through Cloudflare, to the Keycloak tunnel."
+  value       = var.keycloak_host
+}

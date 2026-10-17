@@ -1,0 +1,24 @@
+# The LAN entry point: the cluster's virtual IP answers https://keycloak.trinitytechnicalservices.com
+# on 443 and kube-proxy forwards to the Keycloak pod's HTTPS port, so the site resolver can point
+# the name at 10.69.112.62 and LAN clients (GitLab included) reach Keycloak without the Internet.
+# The selector is the one the operator puts on the server pods. Port 443 is opened on the nodes by
+# cluster/patches/firewall.yaml (ingress-keycloak). externalIPs is a deprecated API that the
+# cluster's kube-proxy still implements (measured 2026-10-16); the replacement is a load balancer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-external
+  namespace: keycloak
+spec:
+  type: ClusterIP
+  externalIPs:
+    - 10.69.112.62
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8443
+      protocol: TCP
+  selector:
+    app: keycloak
+    app.kubernetes.io/managed-by: keycloak-operator
+    app.kubernetes.io/instance: keycloak

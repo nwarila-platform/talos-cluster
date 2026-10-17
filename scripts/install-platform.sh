@@ -57,4 +57,32 @@ helm upgrade --install vault hashicorp/vault \
 kubectl -n vault wait --for=create pod/vault-0 --timeout=5m
 kubectl -n vault wait --for=condition=PodScheduled pod/vault-0 --timeout=5m
 
+# Certificates: cert-manager from its OCI chart, fetched by digest (CRDs installed and kept), the
+# Vault CA as the issuer's trust anchor, and the cluster issuer that signs through Vault (its Vault
+# role is created by make gitlab-vault; until then the issuer reports not ready).
+helm upgrade --install cert-manager "${CERT_MANAGER_CHART}" \
+    --namespace cert-manager --create-namespace \
+    --values "${ROOT_DIR}/platform/cert-manager/values.yaml" --atomic --timeout 10m
+kubectl -n cert-manager create secret generic vault-ca \
+    --from-file=ca.crt="${STATE_ROOT}/vault/tls/ca.crt" \
+    --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f "${ROOT_DIR}/platform/cert-manager/issuer.yaml"
+
+# Keycloak: the namespace first (both operators live in it, namespace-scoped), then CloudNativePG
+# (chart by digest, watching only this namespace), the vendored Keycloak operator (server-side
+# apply: its CRDs exceed the client-side annotation limit), the Vault CA for the connector, and the
+# workload: database, certificate, server, LAN Service, tunnel connector. Keycloak waits for its
+# certificate (gitlab-vault) and the connector for its token Secret (cloudflare); the realm is
+# imported by make keycloak.
+kubectl apply -f "${ROOT_DIR}/platform/keycloak/namespace.yaml"
+helm upgrade --install cnpg "${CNPG_CHART}" \
+    --namespace keycloak \
+    --values "${ROOT_DIR}/platform/cnpg/values.yaml" --atomic --timeout 10m
+kubectl apply --server-side --force-conflicts -k "${ROOT_DIR}/platform/keycloak-operator"
+kubectl -n keycloak rollout status deployment/keycloak-operator --timeout=5m
+kubectl -n keycloak create configmap vault-ca \
+    --from-file=vault-ca.crt="${STATE_ROOT}/vault/tls/ca.crt" \
+    --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -k "${ROOT_DIR}/platform/keycloak"
+
 echo "Platform installed. Initialize and unseal Vault with: make vault-init"

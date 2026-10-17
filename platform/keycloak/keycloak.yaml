@@ -1,0 +1,59 @@
+# The Keycloak server. Its public identity is fixed to https://keycloak.trinitytechnicalservices.com
+# (every generated URL carries that scheme and host on port 443, whichever path a request took),
+# it serves HTTPS only, with the cert-manager certificate, and trusts X-Forwarded-* headers from
+# the pod network only, which is where the Cloudflare connector runs. The database is the CNPG
+# cluster's primary with the operator-generated credentials. The operator creates the Service
+# keycloak-service (8443) and the bootstrap admin Secret keycloak-initial-admin (user temp-admin); it
+# creates no Ingress (ingress.enabled false).
+# The operator sets no security context on the pod; the template below adds the Restricted
+# profile's requirements (the container is named keycloak by the operator).
+apiVersion: k8s.keycloak.org/v2beta1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  instances: 1
+  db:
+    vendor: postgres
+    host: keycloak-db-rw
+    port: 5432
+    database: keycloak
+    usernameSecret:
+      name: keycloak-db-app
+      key: username
+    passwordSecret:
+      name: keycloak-db-app
+      key: password
+  hostname:
+    hostname: https://keycloak.trinitytechnicalservices.com
+    strict: true
+  ingress:
+    enabled: false  # the operator would otherwise create an Ingress (its default); the two entry points below are the only ones
+  http:
+    httpEnabled: false
+    tlsSecret: keycloak-tls
+  proxy:
+    headers: xforwarded
+  additionalOptions:
+    - name: proxy-trusted-addresses
+      value: 10.244.0.0/16
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1700Mi
+    limits:
+      memory: 2Gi
+  unsupported:
+    podTemplate:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: keycloak
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]

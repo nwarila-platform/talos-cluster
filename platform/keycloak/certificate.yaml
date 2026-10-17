@@ -1,0 +1,24 @@
+# Keycloak's serving certificate, issued by Vault's Linux issuing CA through cert-manager and
+# renewed automatically: 90 days (the tcn-server role's maximum), renewed 30 days before expiry,
+# a fresh P-384 key on every renewal. Both paths present this one name: LAN clients reach it at
+# the cluster address, Cloudflare's connector verifies it by this name over the in-cluster Service.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keycloak-tls
+  namespace: keycloak
+spec:
+  secretName: keycloak-tls
+  commonName: keycloak.trinitytechnicalservices.com
+  dnsNames:
+    - keycloak.trinitytechnicalservices.com
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: vault-tcn-server
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+    rotationPolicy: Always
+  duration: 2160h
+  renewBefore: 720h

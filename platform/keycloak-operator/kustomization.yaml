@@ -1,0 +1,48 @@
+# Keycloak Operator 26.8.1, NAMESPACE-SCOPED: the upstream kustomize base of keycloak-k8s-resources
+# (tag 26.8.1, vendored byte-exact under upstream/ — SHA256SUMS is checked by make validate) installs
+# the operator into the keycloak namespace watching that namespace only (JOSDK_WATCH_CURRENT): its
+# Secret, ConfigMap, StatefulSet and Job rights are RoleBindings in keycloak (the four ClusterRoles
+# are definitions bound only there), and the upstream base's one ClusterRoleBinding, for OpenShift
+# ingresses, is deleted below (scripts/tests/check-rbac.py keeps it so). The Helm chart was not used: it is cluster-wide
+# only (every controller watches all namespaces, with ClusterRoleBindings that can read every Secret).
+# The operator image and the server image it deploys are pinned by digest (tag 26.8.1 of both).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: keycloak
+resources:
+  - upstream
+images:
+  - name: quay.io/keycloak/keycloak-operator
+    newName: quay.io/keycloak/keycloak-operator
+    digest: sha256:60996d513b9e9945657b348655c98071c366bb0212deefa1508785941b1651dc
+patches:
+  - target:
+      kind: Deployment
+      name: keycloak-operator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/value
+        value: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+  # The upstream base carries one cluster-scoped grant, for OpenShift's config.openshift.io/ingresses;
+  # this cluster has no such API and the operator needs no cluster-wide right here.
+  - target:
+      kind: ClusterRoleBinding
+      name: keycloak-operator-clusterrole-binding
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: keycloak-operator-clusterrole-binding
+  - target:
+      kind: ClusterRole
+      name: keycloak-operator-clusterrole
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: keycloak-operator-clusterrole

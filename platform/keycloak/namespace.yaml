@@ -1,0 +1,12 @@
+# Baseline is enforced; Restricted is audited and warned. The CloudNativePG pods and the
+# cloudflared Deployment below satisfy Restricted; the Keycloak operator sets no security context
+# of its own on the server pod, so the Keycloak resource adds one through its pod template, and
+# the namespace moves to enforce Restricted once a live run shows no warning for those pods.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

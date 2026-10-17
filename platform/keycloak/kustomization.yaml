@@ -1,0 +1,12 @@
+# Keycloak on the cluster: its database, its certificate, the server, the LAN entry point and the
+# tunnel connector. Applied by scripts/install-platform.sh. The realm import is not listed here:
+# scripts/keycloak.sh applies realm-import.yaml once Keycloak is ready and its Secret exists.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - database.yaml
+  - certificate.yaml
+  - keycloak.yaml
+  - service-external.yaml
+  - cloudflared.yaml

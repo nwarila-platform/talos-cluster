@@ -1,0 +1,161 @@
+# The tcn realm, imported once by the operator (an existing realm is never overwritten; later
+# changes are made in the admin console or by a reviewed re-creation). Applied by
+# scripts/keycloak.sh after Keycloak is ready, never by the kustomization. Every secret value is a
+# ${PLACEHOLDER} resolved by the import job from the keycloak-realm-secrets Secret, which that
+# script creates from .state/keycloak/. Contents: a realm-local administrator (tcn-admin, must
+# change the password at first login); user federation to Active Directory over plain LDAP to both
+# domain controllers (cleartext bind, accepted by the owner until the AD certificate authority
+# exists; read-only, users imported on first login, sAMAccountName as the username, objectGUID as
+# the identity, the whole domain searched); and the confidential gitlab client for OpenID Connect
+# with GitLab's callback as its only redirect.
+apiVersion: k8s.keycloak.org/v2beta1
+kind: KeycloakRealmImport
+metadata:
+  name: tcn
+  namespace: keycloak
+spec:
+  keycloakCRName: keycloak
+  placeholders:
+    ADMIN_PASSWORD:
+      secret:
+        name: keycloak-realm-secrets
+        key: ADMIN_PASSWORD
+    LDAP_BIND_PASSWORD:
+      secret:
+        name: keycloak-realm-secrets
+        key: LDAP_BIND_PASSWORD
+    GITLAB_CLIENT_SECRET:
+      secret:
+        name: keycloak-realm-secrets
+        key: GITLAB_CLIENT_SECRET
+  realm:
+    realm: tcn
+    displayName: Trinity Technical Services
+    enabled: true
+    sslRequired: external
+    registrationAllowed: false
+    loginWithEmailAllowed: true
+    duplicateEmailsAllowed: false
+    bruteForceProtected: true
+    users:
+      - username: tcn-admin
+        enabled: true
+        credentials:
+          - type: password
+            value: ${ADMIN_PASSWORD}
+        requiredActions:
+          - UPDATE_PASSWORD
+        clientRoles:
+          realm-management:
+            - realm-admin
+    components:
+      org.keycloak.storage.UserStorageProvider:
+        - name: active-directory
+          providerId: ldap
+          config:
+            enabled: ["true"]
+            priority: ["0"]
+            vendor: ["ad"]
+            connectionUrl: ["ldap://10.69.112.4:389 ldap://10.69.112.5:389"]
+            authType: ["simple"]
+            bindDn: ["CN=svc-keycloak,OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com"]
+            bindCredential: ["${LDAP_BIND_PASSWORD}"]
+            usersDn: ["DC=tcn,DC=trinitytechnicalservices,DC=com"]
+            searchScope: ["2"]
+            editMode: ["READ_ONLY"]
+            usernameLDAPAttribute: ["sAMAccountName"]
+            rdnLDAPAttribute: ["cn"]
+            uuidLDAPAttribute: ["objectGUID"]
+            userObjectClasses: ["person, organizationalPerson, user"]
+            customUserSearchFilter: ["(!(userAccountControl:1.2.840.113556.1.4.803:=2))"]
+            importEnabled: ["true"]
+            syncRegistrations: ["false"]
+            fullSyncPeriod: ["-1"]
+            changedSyncPeriod: ["-1"]
+            batchSizeForSync: ["1000"]
+            useTruststoreSpi: ["always"]
+            connectionPooling: ["true"]
+            pagination: ["true"]
+            trustEmail: ["true"]
+            validatePasswordPolicy: ["false"]
+          # The provider's mappers. Keycloak creates these itself only when a provider is created through
+          # the admin API/console (LDAPStorageProviderFactory.onCreate); a realm import through
+          # `components` does not run that hook, so the seven non-Kerberos mappers onCreate creates for
+          # vendor=ad, editMode=READ_ONLY, usernameLDAPAttribute=sAMAccountName, rdnLDAPAttribute=cn are
+          # declared here byte-exact (scripts/tests/check-realm.py compares them; Kerberos stays off, which
+          # would add an eighth): read-only, values re-read from AD where onCreate sets that (first/last
+          # name from cn via the full-name mapper, since sAMAccountName is the username).
+          subComponents:
+            org.keycloak.storage.ldap.mappers.LDAPStorageMapper:
+              - name: username
+                providerId: user-attribute-ldap-mapper
+                config:
+                  user.model.attribute: ["username"]
+                  ldap.attribute: ["sAMAccountName"]
+                  read.only: ["true"]
+                  always.read.value.from.ldap: ["false"]
+                  is.mandatory.in.ldap: ["true"]
+              - name: full name
+                providerId: full-name-ldap-mapper
+                config:
+                  ldap.full.name.attribute: ["cn"]
+                  read.only: ["true"]
+                  write.only: ["false"]
+              - name: last name
+                providerId: user-attribute-ldap-mapper
+                config:
+                  user.model.attribute: ["lastName"]
+                  ldap.attribute: ["sn"]
+                  read.only: ["true"]
+                  always.read.value.from.ldap: ["true"]
+                  is.mandatory.in.ldap: ["true"]
+              - name: email
+                providerId: user-attribute-ldap-mapper
+                config:
+                  user.model.attribute: ["email"]
+                  ldap.attribute: ["mail"]
+                  read.only: ["true"]
+                  always.read.value.from.ldap: ["false"]
+                  is.mandatory.in.ldap: ["false"]
+              - name: creation date
+                providerId: user-attribute-ldap-mapper
+                config:
+                  user.model.attribute: ["createTimestamp"]
+                  ldap.attribute: ["whenCreated"]
+                  read.only: ["true"]
+                  always.read.value.from.ldap: ["true"]
+                  is.mandatory.in.ldap: ["false"]
+              - name: modify date
+                providerId: user-attribute-ldap-mapper
+                config:
+                  user.model.attribute: ["modifyTimestamp"]
+                  ldap.attribute: ["whenChanged"]
+                  read.only: ["true"]
+                  always.read.value.from.ldap: ["true"]
+                  is.mandatory.in.ldap: ["false"]
+              - name: MSAD account controls
+                providerId: msad-user-account-control-mapper
+                config:
+                  always.read.enabled.value.from.ldap: ["true"]
+    clients:
+      - clientId: gitlab
+        name: GitLab
+        enabled: true
+        protocol: openid-connect
+        publicClient: false
+        clientAuthenticatorType: client-secret
+        secret: ${GITLAB_CLIENT_SECRET}
+        redirectUris:
+          - https://gitlab.trinitytechnicalservices.com/users/auth/openid_connect/callback
+        webOrigins: []
+        standardFlowEnabled: true
+        implicitFlowEnabled: false
+        directAccessGrantsEnabled: false
+        serviceAccountsEnabled: false
+        defaultClientScopes:
+          - profile
+          - email
+          - roles
+          - web-origins
+          - basic
+          - acr
