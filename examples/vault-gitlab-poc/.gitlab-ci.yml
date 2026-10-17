@@ -11,7 +11,7 @@ stages: [verify]
 
 read-vault-secret:
   stage: verify
-  image: docker.io/hashicorp/vault:2.0.4@sha256:5be49781ecf78bfe775c5309c6a4d9f4e9e040b6c885c99eb2b12fb69855e1a2
+  image: docker.io/hashicorp/vault:2.2.0@sha256:e0acd3c681bdf57f002d7214e5d050b876e1704678005c6b0406dd96a65be919
   id_tokens:
     VAULT_ID_TOKEN:
       aud: https://vault.vault.svc.cluster.local:8200
