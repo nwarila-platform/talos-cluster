@@ -2,9 +2,9 @@
 # runs in the cluster (platform/cloudflared/), one ingress rule for the GitLab
 # hostname to GitLab's LAN address, and the proxied DNS record that sends
 # the public name to the tunnel. LAN clients are unaffected: the site resolver
-# answers the same name with GitLab's LAN address. Public reachability exists
-# so AWS IAM can read GitLab's OpenID discovery document and JWKS
-# (terraform/gitlab-vault/aws.tf).
+# answers the same name with GitLab's LAN address. Off the LAN, mtls.tf requires
+# a client certificate for everything except GitLab's OpenID discovery document
+# and JWKS, which AWS IAM reads to verify CI ID tokens (terraform/gitlab-vault/aws.tf).
 data "cloudflare_zone" "this" {
   filter = {
     name = var.zone

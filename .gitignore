@@ -115,6 +115,7 @@
 !terraform/cloudflare/backend.tf
 !terraform/cloudflare/keycloak.tf
 !terraform/cloudflare/main.tf
+!terraform/cloudflare/mtls.tf
 !terraform/cloudflare/outputs.tf
 !terraform/cloudflare/providers.tf
 !terraform/cloudflare/variables.tf

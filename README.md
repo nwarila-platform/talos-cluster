@@ -20,9 +20,9 @@ identity federation and every onboarded project in `terraform/gitlab-vault/`. A 
 | `bootstrap` | bootstraps etcd once and writes the kubeconfig | `CONFIRM_REBUILD` |
 | `platform` | installs Calico, Longhorn, Argo CD and Vault from the pinned charts, cert-manager (with the Vault cluster issuer) and CloudNativePG from their OCI charts **by digest**, the Keycloak operator from the vendored upstream manifests, and applies `platform/keycloak/` (Keycloak waits for its certificate until `gitlab-vault` has run, the connector for its token until `cloudflare` has) | `CONFIRM_REBUILD` |
 | `vault-init` | initializes and unseals Vault; writes `.state/vault/init.json`; stores shares 0–2 in the `vault-unseal` Secret for the in-cluster unsealer | `CONFIRM_REBUILD` |
-| `cloudflare-plan` | writes a reviewed plan for the GitLab and Keycloak edges after proving every planned object targets the probed account, zone and the two reviewed names, each tunnel configuration and record is bound to the planned tunnel that serves its hostname, and the tunnels, the records and the connector Secret are absent | `CLOUDFLARE_API_TOKEN`, `AWS_PROFILE` |
-| `cloudflare` | applies exactly that plan, proves convergence, writes the GitLab connector's token file to `.state/cloudflare/` and proves the in-cluster Keycloak connector rolled out from its Secret; then install the connector on the GitLab host (below) | the same plus `CONFIRM_REBUILD` |
-| `cloudflare-verify` | proves both public paths: tunnels healthy, GitLab's OpenID discovery document and JWKS and Keycloak's realm discovery document served through Cloudflare with the expected issuers (run after `keycloak`) | `CLOUDFLARE_API_TOKEN`, `AWS_PROFILE` |
+| `cloudflare-plan` | writes a reviewed plan for the GitLab and Keycloak edges after proving every planned object targets the probed account, zone and the two reviewed names, each tunnel configuration and record is bound to the planned tunnel that serves its hostname, and the tunnels, the records, the connector Secrets, the mTLS hostnames and the custom firewall rules are absent | `CLOUDFLARE_API_TOKEN`, `AWS_PROFILE` |
+| `cloudflare` | refuses unless the site resolver answers Keycloak's name with the cluster VIP only, then applies exactly that plan, proves convergence, and restarts and waits for both in-cluster connectors | the same plus `CONFIRM_REBUILD` |
+| `cloudflare-verify` | proves the edge: tunnels healthy; GitLab's OpenID discovery document and JWKS served through Cloudflare to anyone; GitLab's sign-in page and Keycloak refused there without a client certificate; Keycloak's realm discovery document served on the LAN at the VIP with the expected issuer (run after `keycloak`) | `CLOUDFLARE_API_TOKEN`, `AWS_PROFILE` |
 | `gitlab-vault-plan` | discards any earlier accepted plan, writes a candidate plan and prints it for review, proves that every object it would create is absent remotely (directly, or because the same plan creates its container; every lookup fails closed), and only then publishes it as `.state/terraform/gitlab-vault.tfplan` (0600) | `GITLAB_TOKEN`, `VAULT_TOKEN`, `AWS_PROFILE=mgmt-admin` |
 | `gitlab-vault` | applies exactly that saved plan (after re-proving absence and that instance runner tokens do not expire), then proves convergence (an empty second plan), the runner-token setting again, and that the runner is online (bounded wait) | the same three, plus `CONFIRM_REBUILD` |
 | `keycloak` | creates the realm Secret from `.state/keycloak/` (fail-closed), waits for Keycloak to be ready, imports the `tcn` realm once (Active Directory federation, the `gitlab` client, a realm administrator) and prints the owner steps | `CONFIRM_REBUILD`; `.state/keycloak/svc-keycloak.password` |
@@ -39,7 +39,7 @@ superseded by `gitlab-vault`.
 | Variable | Used by | Value |
 |---|---|---|
 | `CONFIRM_REBUILD` | `apply*`, `bootstrap`, `platform`, `vault-init`, `cloudflare`, `gitlab-vault`, `keycloak` (not `vault-seed-aws`, which writes one KV secret) | the literal `TDNHQ-TALCL01` |
-| `CLOUDFLARE_API_TOKEN` | `cloudflare*` | an API token with Cloudflare Tunnel: Edit on the account, DNS: Edit and Zone: Read on the zone |
+| `CLOUDFLARE_API_TOKEN` | `cloudflare*` | an API token with Cloudflare Tunnel: Edit on the account; DNS: Edit, SSL and Certificates: Edit, Zone WAF: Edit and Zone: Read on the zone |
 | `GITLAB_TOKEN` | `gitlab-vault-plan`, `gitlab-vault` | the `platform-terraform` administrator bot's personal access token (`api`, `create_runner`; 7-day; rotate with `POST /api/v4/personal_access_tokens/self/rotate`) — environment only: this root never writes it to a file (curl receives it through a pipe) and the providers' file fallbacks are pre-empted by the constructed environment |
 | `VAULT_TOKEN` | `gitlab-vault*`, `vault-seed-aws` | an administrative Vault token (the bootstrap root token from `.state/vault/init.json` today) |
 | `AWS_PROFILE` | `cloudflare*`, `gitlab-vault*` | must be `mgmt-admin`; the S3 backend and the AWS provider additionally refuse any account other than 793496711039. `scripts/gitlab-vault.sh` runs every terraform command under a constructed environment, so ambient `AWS_*` keys, `TF_VAR_*`, `TF_CLI_ARGS*`, Vault overrides and `TF_LOG*` cannot change what is planned or applied |
@@ -83,8 +83,8 @@ layer, not the proof that the configuration is the reviewed one.
 temporary two-tier PKI, the `kubernetes` auth method with the cert-manager issuer's role and
 sign-only policy, and for each entry in `var.projects` the group, project, protected `main`,
 Vault policy and JWT role, and (once) the `.gitlab-ci.yml`. `cloudflare` manages the two tunnels
-(GitLab, Keycloak), their ingress rules and proxied records, and the in-cluster Keycloak connector's
-token Secret.
+(GitLab, Keycloak), their ingress rules and proxied records, the two connectors' token Secrets, and
+the client-certificate tier in front of both hostnames (`terraform/cloudflare/mtls.tf`).
 
 Every durable object carries `prevent_destroy`: the KV mount, the JWT and Kubernetes auth methods,
 both PKI mounts, the root certificate, the issuing issuer, the runner, every group, project and
@@ -184,14 +184,18 @@ owns the tunnel, its single ingress rule (the GitLab hostname to GitLab's LAN ad
 `https://10.69.12.11:443`, origin certificate verified against GitLab's own certificate, nothing
 else routed), the proxied CNAME, and the `cloudflared/cloudflared-gitlab` Secret holding the
 connector's token and that certificate.
-The public path exists so AWS IAM can read `/.well-known/openid-configuration` and
-`/oauth/discovery/keys`; it also exposes the GitLab sign-in page to the Internet behind nothing but
-GitLab's own authentication (Known shortcuts). `make platform` creates the connector (it waits for
-its Secret); `make cloudflare` writes the Secret and waits for the connector to come up.
+Off the LAN, Cloudflare serves two paths to anyone, `/.well-known/openid-configuration` and
+`/oauth/discovery/keys` (AWS IAM reads them to verify CI ID tokens and cannot present a
+certificate); every other request needs a client certificate from the account's
+Cloudflare-managed CA (`terraform/cloudflare/mtls.tf`: the hostname association that makes the
+edge ask for one, and a custom firewall rule that blocks requests without a valid, unrevoked
+certificate). `make platform` creates the connector (it waits for its Secret); `make cloudflare`
+writes the Secret and waits for the connector to come up.
 
-`make cloudflare-verify` then proves the tunnel is healthy and that the discovery document names
-`https://gitlab.trinitytechnicalservices.com` as issuer on the public path, resolved over
-DNS-over-HTTPS so the site resolver's LAN answer cannot mask a broken edge.
+`make cloudflare-verify` then proves the tunnel is healthy, that the discovery document names
+`https://gitlab.trinitytechnicalservices.com` as issuer on the public path, and that the sign-in page
+is refused there without a certificate, resolved over DNS-over-HTTPS so the site resolver's LAN
+answer cannot mask a broken edge.
 
 ## Keycloak
 
@@ -204,7 +208,10 @@ to Keycloak's HTTPS port (`platform/keycloak/service-external.yaml`; the nodes' 
 to the two LAN subnets), so GitLab and browsers on site need no Internet. From the Internet a
 second dedicated tunnel, `tcnhq-talcl01-keycloak`, whose connector runs as a Deployment in the
 `keycloak` namespace, reaches the operator's Service over HTTPS and verifies Keycloak's
-certificate against the Vault PKI root by the public name. Keycloak trusts `X-Forwarded-*` headers from
+certificate against the Vault PKI root by the public name; Cloudflare admits only clients with a
+client certificate on that path (the same rule as GitLab's, with no public exception), so GitLab's
+own server-side calls to Keycloak must take the LAN path, which is why `make cloudflare` checks the
+resolver first. Keycloak trusts `X-Forwarded-*` headers from
 the pod network only, and the operator creates no Ingress. Ownership, object by object: the
 kustomization `platform/keycloak/` holds the namespace, the database cluster, the certificate, the
 Keycloak resource, the LAN Service and the connector Deployment (applied by `platform`); the
@@ -430,9 +437,10 @@ symlink in a single rename, so an in-service bundle is never half-replaced:
   `terraform apply` should run from a GitLab pipeline using a Vault role of its own.
 - The GitLab server certificate is self-signed and trusted by file (trust on first use) on the LAN
   and by the tunnel connector; Cloudflare issues the public certificate.
-- The public GitLab hostname reaches the sign-in page with GitLab's own authentication only; a
-  Cloudflare Access policy in front of everything but the OpenID discovery paths is the next edge
-  change, and GitLab's `real_ip` trust for Cloudflare's ranges is not yet set on the host.
+- Off-LAN access accepts any valid client certificate issued by this Cloudflare account's managed
+  CA (the Free plan allows no other issuer and validates certificates account-wide), not a list of
+  named devices; revoking a certificate in Cloudflare is the off-boarding step. GitLab's `real_ip`
+  trust for Cloudflare's ranges is not yet set on the host.
 - The `vault-unseal` Secret is readable by every identity with Secret access in `vault` (and by
   anyone who can run or exec a pod there); the Secrets lockdown piece reduces, not removes, that.
   cert-manager adds cluster-wide Secret readers and writers of its own (its controller, cainjector

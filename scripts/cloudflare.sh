@@ -8,11 +8,13 @@
 #           plan (CONFIRM_REBUILD required), proves convergence (an empty second
 #           plan) and waits for both in-cluster connectors (cloudflared/
 #           cloudflared-gitlab, keycloak/cloudflared) to roll out.
-#   verify  proves both public paths work end to end: each hostname resolves
-#           through DNS-over-HTTPS to Cloudflare, each tunnel is healthy, and
-#           GitLab's OpenID discovery document and JWKS (what AWS IAM needs) and
-#           Keycloak's realm discovery document are served through them with
-#           the expected issuers.
+#   verify  proves the edge end to end: each hostname resolves through
+#           DNS-over-HTTPS to Cloudflare and each tunnel is healthy; GitLab's
+#           OpenID discovery document and JWKS (what AWS IAM needs) are served
+#           to anyone, while GitLab's sign-in page and Keycloak are refused
+#           without a client certificate; and Keycloak's realm discovery
+#           document is served on the LAN at the cluster VIP with the expected
+#           issuer.
 # Credentials travel only in the environment and through a pipe into curl's
 # configuration; this script never writes a token to an argument or a log.
 # Every terraform and curl command runs under a constructed environment.
@@ -174,7 +176,7 @@ preflight_access() {
 # and its single hostname rule names that tunnel's hostname; a record's content
 # must be unknown and reference its hostname's tunnel; anything else aborts.
 preflight_creates() {
-    local creates n i type address name conflicts=() tunnel_addr refs tunnel_name host ns
+    local creates n i type address name conflicts=() tunnel_addr refs tunnel_name host ns code
     creates="$(tf show -json "$1" | jq -c '
         .resource_changes
         | if type != "array" then error("resource_changes is not an array") else . end
@@ -248,6 +250,18 @@ preflight_creates() {
                 name="$(known 'metadata[0].name')"; ns="$(known 'metadata[0].namespace')"
                 [[ "${ns}/${name}" == "keycloak/cloudflared-keycloak" || "${ns}/${name}" == "cloudflared/cloudflared-gitlab" ]] || { echo "ERROR: ${address}: the only Secrets this root may create are keycloak/cloudflared-keycloak and cloudflared/cloudflared-gitlab (planned ${ns}/${name})" >&2; exit 1; }
                 k8s_absent secret "${name}" "${ns}" || conflicts+=("Kubernetes Secret ${ns}/${name} (import: ${address} ${ns}/${name})") ;;
+            cloudflare_certificate_authorities_hostname_associations)
+                [[ "$(known zone_id)" == "${ZONE_ID}" ]] || { echo "ERROR: ${address}: planned zone is not ${ZONE_TF} (${ZONE_ID})" >&2; exit 1; }
+                [[ "$(cf "/zones/${ZONE_ID}/certificate_authorities/hostname_associations")" == "200" ]] || { echo "ERROR: cannot read the zone's mTLS hostname associations" >&2; exit 1; }
+                decide "no mTLS hostnames yet" '.success == true and ((.result.hostnames // []) | length) == 0' < "${BODY}" \
+                    || conflicts+=("mTLS hostname associations in ${ZONE_TF} (import: ${address} ${ZONE_ID})") ;;
+            cloudflare_ruleset)
+                [[ "$(known zone_id)" == "${ZONE_ID}" ]] || { echo "ERROR: ${address}: planned zone is not ${ZONE_TF} (${ZONE_ID})" >&2; exit 1; }
+                [[ "$(known phase)" == "http_request_firewall_custom" ]] || { echo "ERROR: ${address}: the only ruleset this root may create is the zone's custom firewall rules" >&2; exit 1; }
+                # A zone has one entrypoint per phase; 404 means none exists yet.
+                code="$(cf "/zones/${ZONE_ID}/rulesets/phases/http_request_firewall_custom/entrypoint")"
+                [[ "${code}" == "404" ]] || [[ "${code}" == "200" ]] || { echo "ERROR: cannot read the zone's custom firewall rules (HTTP ${code})" >&2; exit 1; }
+                [[ "${code}" == "404" ]] || conflicts+=("custom firewall rules in ${ZONE_TF} (import: ${address} zones/${ZONE_ID}/<ruleset id>)") ;;
             *)
                 echo "ERROR: the preflight has no rule for resource type ${type} (${address}); add one to scripts/cloudflare.sh before planning this change" >&2; exit 1 ;;
         esac
@@ -284,6 +298,11 @@ case "${1:-}" in
         tf init -input=false -lockfile=readonly >/dev/null
         preflight_access
         preflight_creates "${PLAN_FILE}"
+        # Off the LAN Keycloak demands a client certificate, which GitLab's server-side calls to
+        # it cannot present: they must stay on the LAN. The site resolver (GitLab's host uses the
+        # same one) must answer Keycloak's name with the cluster VIP and nothing else.
+        lan="$(getent ahosts "${KC_HOST_TF}" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+        [[ "${lan}" == "${CLUSTER_VIP} " ]] || { echo "ERROR: ${KC_HOST_TF} resolves to '${lan:-nothing}' here, not only the cluster VIP ${CLUSTER_VIP}; add the site DNS override first (README, Keycloak), or GitLab's Keycloak sign-in breaks behind the client-certificate rule" >&2; exit 1; }
         tf apply -input=false "${PLAN_FILE}"
         rm -f "${PLAN_FILE}"
         if ! tf plan -input=false -detailed-exitcode >/dev/null; then
@@ -329,15 +348,27 @@ case "${1:-}" in
             -o "${BODY}" "https://${HOST_TF}/oauth/discovery/keys" < /dev/null || { echo "ERROR: JWKS unreachable through Cloudflare" >&2; exit 1; }
         decide "JWKS" '(.keys | type) == "array" and (.keys | length) > 0 and all(.keys[]; .kty == "RSA" and (.kid | type) == "string")' < "${BODY}" \
             || { echo "ERROR: JWKS has an unexpected shape" >&2; exit 1; }
-        echo "Public path verified: ${HOST_TF} -> Cloudflare ${edge} -> tunnel ${TUNNEL_TF} (healthy); issuer and JWKS served. AWS IAM can read them."
+        # Everything else on GitLab needs a client certificate off the LAN (terraform/cloudflare/mtls.tf).
+        code="$(clean curl --disable -sS --connect-timeout 10 --max-time 30 --resolve "${HOST_TF}:443:${edge}" \
+            -o /dev/null -w '%{http_code}' "https://${HOST_TF}/users/sign_in" < /dev/null || true)"
+        [[ "${code}" == "403" ]] || { echo "ERROR: GitLab's sign-in page answered ${code} through Cloudflare without a client certificate; expected 403 (is the mTLS rule applied?)" >&2; exit 1; }
+        echo "Public path verified: ${HOST_TF} -> Cloudflare ${edge} -> tunnel ${TUNNEL_TF} (healthy); issuer and JWKS served to anyone, everything else refused without a client certificate."
         status="$(tunnel_status "${KC_TUNNEL_TF}")"
         [[ "${status}" == "healthy" ]] || { echo "ERROR: tunnel ${KC_TUNNEL_TF} is '${status}', not healthy (is the cloudflared Deployment in keycloak running?)" >&2; exit 1; }
         edge="$(public_edge "${KC_HOST_TF}")"
-        clean curl --disable -sS --connect-timeout 10 --max-time 30 --resolve "${KC_HOST_TF}:443:${edge}" \
-            -o "${BODY}" "https://${KC_HOST_TF}/realms/tcn/.well-known/openid-configuration" < /dev/null || { echo "ERROR: Keycloak realm discovery unreachable through Cloudflare (${edge}); run make keycloak first" >&2; exit 1; }
+        code="$(clean curl --disable -sS --connect-timeout 10 --max-time 30 --resolve "${KC_HOST_TF}:443:${edge}" \
+            -o /dev/null -w '%{http_code}' "https://${KC_HOST_TF}/realms/tcn/.well-known/openid-configuration" < /dev/null || true)"
+        [[ "${code}" == "403" ]] || { echo "ERROR: Keycloak answered ${code} through Cloudflare without a client certificate; expected 403 (is the mTLS rule applied?)" >&2; exit 1; }
+        echo "Public path verified: ${KC_HOST_TF} -> Cloudflare ${edge} -> tunnel ${KC_TUNNEL_TF} (healthy); refused without a client certificate."
+        # The LAN path: the cluster VIP, Keycloak's certificate checked against the Vault PKI root.
+        ROOT_CA="$(mktemp)"
+        kc -n keycloak get configmap root-ca -o jsonpath='{.data.ca\.crt}' > "${ROOT_CA}" || { echo "ERROR: cannot read the PKI root (ConfigMap keycloak/root-ca)" >&2; exit 1; }
+        clean curl --disable -sS --connect-timeout 10 --max-time 30 --cacert "${ROOT_CA}" --resolve "${KC_HOST_TF}:443:${CLUSTER_VIP}" \
+            -o "${BODY}" "https://${KC_HOST_TF}/realms/tcn/.well-known/openid-configuration" < /dev/null || { rm -f "${ROOT_CA}"; echo "ERROR: Keycloak realm discovery unreachable on the LAN at ${CLUSTER_VIP}; run make keycloak first" >&2; exit 1; }
+        rm -f "${ROOT_CA}"
         decide "Keycloak discovery document" --arg i "https://${KC_HOST_TF}/realms/tcn" '.issuer == $i and (.jwks_uri | type) == "string" and (.jwks_uri | startswith($i + "/"))' < "${BODY}" \
             || { echo "ERROR: Keycloak discovery document does not name https://${KC_HOST_TF}/realms/tcn as issuer (hostname fixed to port 443?)" >&2; exit 1; }
-        echo "Public path verified: ${KC_HOST_TF} -> Cloudflare ${edge} -> tunnel ${KC_TUNNEL_TF} (healthy); realm tcn discovery served with the expected issuer."
+        echo "LAN path verified: ${KC_HOST_TF} -> ${CLUSTER_VIP} (certificate valid under the PKI root); realm tcn discovery served with the expected issuer."
         ;;
     *)
         echo "usage: $0 plan|apply|verify" >&2

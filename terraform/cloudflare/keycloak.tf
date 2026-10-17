@@ -1,9 +1,10 @@
 # The Keycloak edge: a second dedicated tunnel whose connector runs inside the
 # cluster (platform/keycloak/cloudflared.yaml), one ingress rule for the
-# Keycloak hostname to the operator's Service, verified against the Vault CA
-# by Keycloak's public name, and the proxied DNS record. The connector's token
-# goes straight into the Secret the Deployment reads. LAN clients never use
-# this path: the site resolver answers the same name with the cluster address.
+# Keycloak hostname to the operator's Service, verified against the Vault PKI
+# root by Keycloak's public name, and the proxied DNS record. The connector's
+# token goes straight into the Secret the Deployment reads. LAN clients never
+# use this path: the site resolver answers the same name with the cluster VIP.
+# Off the LAN, mtls.tf requires a client certificate.
 resource "cloudflare_zero_trust_tunnel_cloudflared" "keycloak" {
   account_id = var.cloudflare_account_id
   name       = var.keycloak_tunnel_name
