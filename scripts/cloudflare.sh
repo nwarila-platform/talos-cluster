@@ -291,11 +291,13 @@ case "${1:-}" in
             exit 1
         fi
         echo "Converged: a second plan proposes no changes."
-        # Both connectors run in the cluster from the Secrets this apply wrote; they must come up.
+        # Both connectors run in the cluster from the Secrets this apply wrote. Pods created before a
+        # Secret existed sit in the kubelet's mount back-off, so restart them, then they must come up.
+        kc -n cloudflared rollout restart deployment/cloudflared-gitlab >/dev/null
+        kc -n keycloak rollout restart deployment/cloudflared >/dev/null
         kc -n cloudflared rollout status deployment/cloudflared-gitlab --timeout=180s \
             || { echo "ERROR: the in-cluster GitLab connector did not become available (is platform/cloudflared applied?)" >&2; exit 1; }
         echo "GitLab connector rolled out. Tunnel status: $(tunnel_status "${TUNNEL_TF}")."
-        # The Keycloak connector runs in the cluster from the Secret this apply wrote; it must come up.
         kc -n keycloak rollout status deployment/cloudflared --timeout=180s \
             || { echo "ERROR: the in-cluster Keycloak connector did not become available (is platform/keycloak applied?)" >&2; exit 1; }
         echo "Keycloak connector rolled out. Tunnel status: $(tunnel_status "${KC_TUNNEL_TF}")."
