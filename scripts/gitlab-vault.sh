@@ -424,8 +424,8 @@ preflight_creates() {
             kubernetes_namespace_v1)
                 name="$(need '.after.metadata[0].name')"
                 k8s_absent namespace "${name}" || conflict "Kubernetes namespace ${name} (import: ${address} ${name})" ;;
-            kubernetes_secret_v1|helm_release)
-                if [[ "${type}" == kubernetes_secret_v1 ]]; then
+            kubernetes_secret_v1|kubernetes_config_map_v1|helm_release)
+                if [[ "${type}" != helm_release ]]; then
                     name="$(need '.after.metadata[0].name')"; ns="$(need '.after.metadata[0].namespace')"
                 else
                     name="$(need .after.name)"; ns="$(need .after.namespace)"
@@ -433,6 +433,8 @@ preflight_creates() {
                 planned kubernetes_namespace_v1 '.after.metadata[0].name == $v' "${ns}" && continue
                 if [[ "${type}" == kubernetes_secret_v1 ]]; then
                     k8s_absent secret "${name}" "${ns}" || conflict "Kubernetes Secret ${ns}/${name} (import: ${address} ${ns}/${name})"
+                elif [[ "${type}" == kubernetes_config_map_v1 ]]; then
+                    k8s_absent configmap "${name}" "${ns}" || conflict "Kubernetes ConfigMap ${ns}/${name} (import: ${address} ${ns}/${name})"
                 else
                     helm_absent "${name}" "${ns}" || conflict "Helm release ${ns}/${name} (import: ${address} ${ns}/${name})"
                 fi ;;

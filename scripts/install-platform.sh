@@ -70,7 +70,7 @@ kubectl apply -f "${ROOT_DIR}/platform/cert-manager/issuer.yaml"
 
 # Keycloak: the namespace first (both operators live in it, namespace-scoped), then CloudNativePG
 # (chart by digest, watching only this namespace), the vendored Keycloak operator (server-side
-# apply: its CRDs exceed the client-side annotation limit), the Vault CA for the connector, and the
+# apply: its CRDs exceed the client-side annotation limit), and the
 # workload: database, certificate, server, LAN Service, tunnel connector. Keycloak waits for its
 # certificate (gitlab-vault) and the connector for its token Secret (cloudflare); the realm is
 # imported by make keycloak.
@@ -82,9 +82,6 @@ helm upgrade --install cnpg "${CNPG_CHART}" \
     --values "${ROOT_DIR}/platform/cnpg/values.yaml" --atomic --timeout 10m
 kubectl apply --server-side --force-conflicts -k "${ROOT_DIR}/platform/keycloak-operator"
 kubectl -n keycloak rollout status deployment/keycloak-operator --timeout=5m
-kubectl -n keycloak create configmap vault-ca \
-    --from-file=vault-ca.crt="${STATE_ROOT}/vault/tls/ca.crt" \
-    --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -k "${ROOT_DIR}/platform/keycloak"
 
 echo "Platform installed. Initialize and unseal Vault with: make vault-init"

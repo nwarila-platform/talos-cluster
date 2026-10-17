@@ -80,9 +80,9 @@ variable "keycloak_tunnel_name" {
 }
 
 variable "keycloak_origin_ca_path" {
-  description = "Path, inside the connector pod, of the PEM CA the connector trusts for Keycloak's certificate (the Vault CA, mounted by platform/keycloak/cloudflared.yaml)."
+  description = "Path, inside the connector pod, of the PEM CA the connector trusts for Keycloak's certificate (the Vault PKI root from the root-ca ConfigMap, mounted by platform/keycloak/cloudflared.yaml)."
   type        = string
-  default     = "/etc/cloudflared/vault-ca.crt"
+  default     = "/etc/cloudflared/root-ca.crt"
 
   validation {
     condition     = can(regex("^/[A-Za-z0-9._/-]+$", var.keycloak_origin_ca_path))

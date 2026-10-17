@@ -111,3 +111,17 @@ resource "vault_pki_secret_backend_role" "tcn_server" {
   require_cn                  = true
   no_store                    = false
 }
+
+# Keycloak's certificate chains to this root (leaf <- Linux issuing CA <- root).
+# The Keycloak tunnel connector verifies its origin against it, so the root is
+# published where the connector mounts it.
+resource "kubernetes_config_map_v1" "keycloak_root_ca" {
+  metadata {
+    name      = "root-ca"
+    namespace = "keycloak"
+  }
+
+  data = {
+    "ca.crt" = vault_pki_secret_backend_root_cert.root.certificate
+  }
+}

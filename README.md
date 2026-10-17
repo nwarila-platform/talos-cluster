@@ -204,13 +204,14 @@ to Keycloak's HTTPS port (`platform/keycloak/service-external.yaml`; the nodes' 
 to the two LAN subnets), so GitLab and browsers on site need no Internet. From the Internet a
 second dedicated tunnel, `tcnhq-talcl01-keycloak`, whose connector runs as a Deployment in the
 `keycloak` namespace, reaches the operator's Service over HTTPS and verifies Keycloak's
-certificate against the Vault CA by the public name. Keycloak trusts `X-Forwarded-*` headers from
+certificate against the Vault PKI root by the public name. Keycloak trusts `X-Forwarded-*` headers from
 the pod network only, and the operator creates no Ingress. Ownership, object by object: the
 kustomization `platform/keycloak/` holds the namespace, the database cluster, the certificate, the
 Keycloak resource, the LAN Service and the connector Deployment (applied by `platform`); the
 realm import is a one-shot resource applied by `make keycloak`; the connector's token Secret
-belongs to Terraform (`terraform/cloudflare/`); the Vault CA ConfigMap and the issuer's Vault CA
-Secret are written imperatively by `platform` from `.state/vault/tls/ca.crt`; the ClusterIssuer and
+belongs to Terraform (`terraform/cloudflare/`); the `root-ca` ConfigMap (the PKI root the connector
+trusts) belongs to `terraform/gitlab-vault/` (`pki.tf`); the issuer's `vault-ca` Secret (Vault's own
+serving CA) is written by `platform` from `.state/vault/tls/ca.crt`; the ClusterIssuer and
 cert-manager live in `cert-manager`; both operators are installed into `keycloak` **namespace-scoped**
 — CloudNativePG from its chart with `config.clusterWide: false`, the Keycloak operator from the
 upstream kustomize manifests vendored byte-exact under `platform/keycloak-operator/upstream/`
@@ -266,8 +267,8 @@ the master-realm bootstrap administrator is `temp-admin`, password in the
 Two owner steps remain outside the repository, and the script prints them: the site resolver's
 host override `keycloak.trinitytechnicalservices.com → 10.69.112.62` (OPNsense Unbound, a UI
 step until the resolver is under Terraform), and GitLab's OmniAuth block from
-`platform/gitlab-host/gitlab.rb.keycloak` with the client secret and the Vault CA in
-`/etc/gitlab/trusted-certs/` (GitLab talks to Keycloak over HTTPS on the LAN path). Users who
+`platform/gitlab-host/gitlab.rb.keycloak` with the client secret and the PKI root (the `root-ca`
+ConfigMap) in `/etc/gitlab/trusted-certs/` (GitLab talks to Keycloak over HTTPS on the LAN path). Users who
 sign in through Keycloak are created in GitLab blocked until an administrator approves them; an
 existing GitLab user with the same username is linked automatically.
 
@@ -395,7 +396,8 @@ is `pki-int-linux/sign/tcn-server`. Vault's own serving certificate is trusted t
 `vault-ca` Secret in `cert-manager` (written by `platform` from `.state/vault/tls/ca.crt`).
 Keycloak's certificate (`platform/keycloak/certificate.yaml`) is a 90-day P-384 certificate for
 its public name, renewed 30 days before expiry with a fresh key; the Cloudflare connector and
-GitLab verify it against the same Vault CA. The issuer reports not ready until `gitlab-vault` has
+GitLab verify it against the PKI root it chains to (`Temporary Root CA`, published as the `root-ca`
+ConfigMap in `keycloak`) — not Vault's serving CA, which is a different CA. The issuer reports not ready until `gitlab-vault` has
 created its Vault role; the Keycloak pod waits for the certificate Secret until then.
 
 Issuing a certificate returns the **private key in the response**, so never run a bare

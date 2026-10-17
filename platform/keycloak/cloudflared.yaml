@@ -2,8 +2,8 @@
 # only; there is no load balancing) run the remotely managed keycloak tunnel from the token in the
 # cloudflared-keycloak Secret, which terraform/cloudflare writes. The tunnel's ingress rule (also
 # in Terraform) sends the public name to https://keycloak-service.keycloak.svc.cluster.local:8443
-# and verifies Keycloak's certificate against the Vault CA mounted here from the vault-ca ConfigMap
-# (scripts/install-platform.sh). Until the Secret exists the pods wait in ContainerCreating.
+# and verifies Keycloak's certificate against the Vault PKI root mounted here from the root-ca
+# ConfigMap (terraform/gitlab-vault/pki.tf). Until the Secret exists the pods wait in ContainerCreating.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -74,14 +74,14 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
-            - name: vault-ca
-              mountPath: /etc/cloudflared/vault-ca.crt
-              subPath: vault-ca.crt
+            - name: root-ca
+              mountPath: /etc/cloudflared/root-ca.crt
+              subPath: ca.crt
               readOnly: true
       volumes:
-        - name: vault-ca
+        - name: root-ca
           configMap:
-            name: vault-ca
+            name: root-ca
             items:
-              - key: vault-ca.crt
-                path: vault-ca.crt
+              - key: ca.crt
+                path: ca.crt

@@ -1,9 +1,9 @@
 # GitLab sign-in through Keycloak (realm tcn, confidential client gitlab). Owner step on the
 # GitLab host, as an administrator: append this block to /etc/gitlab/gitlab.rb, replace the
 # secret placeholder with the content of .state/keycloak/gitlab-client.secret (the same value
-# make keycloak put into the realm), install the Vault CA so GitLab trusts Keycloak's certificate
-# on the LAN path, then reconfigure:
-#   install -o root -g root -m 0644 ca.crt /etc/gitlab/trusted-certs/vault-ca.crt   # from .state/vault/tls/
+# make keycloak put into the realm), install the Vault PKI root so GitLab trusts Keycloak's
+# certificate, then reconfigure:
+#   install -o root -g root -m 0644 root-ca.crt /etc/gitlab/trusted-certs/tcn-root-ca.crt   # kubectl -n keycloak get configmap root-ca
 #   gitlab-ctl reconfigure
 # Users signing in through Keycloak are created in GitLab blocked until an administrator
 # approves them, and an existing GitLab user with the same username is linked automatically.
