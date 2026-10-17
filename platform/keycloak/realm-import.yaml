@@ -3,10 +3,11 @@
 # scripts/keycloak.sh after Keycloak is ready, never by the kustomization. Every secret value is a
 # ${PLACEHOLDER} resolved by the import job from the keycloak-realm-secrets Secret, which that
 # script creates from .state/keycloak/. Contents: a realm-local administrator (tcn-admin, must
-# change the password at first login); user federation to Active Directory over plain LDAP to both
-# domain controllers (cleartext bind, accepted by the owner until the AD certificate authority
-# exists; read-only, users imported on first login, sAMAccountName as the username, objectGUID as
-# the identity, the whole domain searched); and the confidential gitlab client for OpenID Connect
+# change the password at first login); user federation to Active Directory over LDAPS to both
+# domain controllers by name (their certificates come from the Vault PKI, make dc-ldaps; Keycloak
+# trusts the PKI root through its truststore; read-only, users imported on first login,
+# sAMAccountName as the username, objectGUID as the identity, the whole domain searched); and the
+# confidential gitlab client for OpenID Connect
 # with GitLab's callback as its only redirect.
 apiVersion: k8s.keycloak.org/v2beta1
 kind: KeycloakRealmImport
@@ -56,7 +57,7 @@ spec:
             enabled: ["true"]
             priority: ["0"]
             vendor: ["ad"]
-            connectionUrl: ["ldap://10.69.112.4:389 ldap://10.69.112.5:389"]
+            connectionUrl: ["ldaps://tcnhq-dc01.tcn.trinitytechnicalservices.com:636 ldaps://tcnhq-dc02.tcn.trinitytechnicalservices.com:636"]
             authType: ["simple"]
             bindDn: ["CN=svc-keycloak,OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com"]
             bindCredential: ["${LDAP_BIND_PASSWORD}"]

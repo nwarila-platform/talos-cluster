@@ -88,6 +88,7 @@
 !scripts/ci-tools.sh
 !scripts/cloudflare.sh
 !scripts/configure-vault-gitlab.sh
+!scripts/dc-ldaps.sh
 !scripts/generate.sh
 !scripts/gitlab-vault.sh
 !scripts/health.sh

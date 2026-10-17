@@ -8,7 +8,7 @@ SHELL := /bin/bash
 
 .PHONY: help init generate validate apply apply-insecure bootstrap platform \
 	vault-init cloudflare-plan cloudflare cloudflare-verify gitlab-vault-plan gitlab-vault vault-configure \
-	vault-seed-aws keycloak selftest health kubeconfig
+	vault-seed-aws keycloak dc-ldaps selftest health kubeconfig
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -71,6 +71,9 @@ gitlab-vault: ## Apply the saved plan, then prove convergence, non-expiring runn
 
 keycloak: ## Create the realm Secret from .state/keycloak, wait for Keycloak, import the tcn realm (AD federation, GitLab client); requires CONFIRM_REBUILD=TDNHQ-TALCL01
 	@bash scripts/keycloak.sh
+
+dc-ldaps: ## Issue (or renew, within 90 days) both domain controllers' LDAPS certificates from the Vault PKI and prove an LDAPS bind
+	@/bin/bash -p scripts/dc-ldaps.sh
 
 vault-configure: ## (superseded by gitlab-vault) Configure one project's GitLab JWT auth in Vault by hand
 	@bash scripts/configure-vault-gitlab.sh

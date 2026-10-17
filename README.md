@@ -26,6 +26,7 @@ identity federation and every onboarded project in `terraform/gitlab-vault/`. A 
 | `gitlab-vault-plan` | discards any earlier accepted plan, writes a candidate plan and prints it for review, proves that every object it would create is absent remotely (directly, or because the same plan creates its container; every lookup fails closed), and only then publishes it as `.state/terraform/gitlab-vault.tfplan` (0600) | `GITLAB_TOKEN`, `VAULT_TOKEN`, `AWS_PROFILE=mgmt-admin` |
 | `gitlab-vault` | applies exactly that saved plan (after re-proving absence and that instance runner tokens do not expire), then proves convergence (an empty second plan), the runner-token setting again, and that the runner is online (bounded wait) | the same three, plus `CONFIRM_REBUILD` |
 | `keycloak` | creates the realm Secret from `.state/keycloak/` (fail-closed), waits for Keycloak to be ready, imports the `tcn` realm once (Active Directory federation, the `gitlab` client, a realm administrator) and prints the owner steps | `CONFIRM_REBUILD`; `.state/keycloak/svc-keycloak.password` |
+| `dc-ldaps` | gives both domain controllers an LDAPS certificate from the Vault PKI (key generated on the DC, 90 days, PKI root and issuing CA trusted there) and proves an LDAPS bind as `svc-keycloak`; run again to renew | SSH as Administrator to both DCs; `.state/keycloak/svc-keycloak.password` |
 | `vault-seed-aws` | seeds one project's static AWS credential | `VAULT_TOKEN`, `GITLAB_PROJECT_ID`, `AWS_*` |
 | `health` | checks Talos, nodes, pods, the six expected Helm releases and every Keycloak operand (operators available, issuer and certificate Ready, database healthy with both instances, Keycloak Ready, realm imported without errors, connector rolled out); green only after the whole order has run | — |
 
@@ -250,8 +251,8 @@ Secret.
 
 `make keycloak` then imports the `tcn` realm once (`platform/keycloak/realm-import.yaml`): a
 realm-local administrator `tcn-admin` (password in `.state/keycloak/admin.password`, must be
-changed at first login), user federation to Active Directory over plain LDAP to both domain
-controllers (read-only, users imported on first login, `sAMAccountName` as the username,
+changed at first login), user federation to Active Directory over LDAPS to both domain
+controllers by name (`make dc-ldaps` gives them certificates from the Vault PKI; read-only, users imported on first login, `sAMAccountName` as the username,
 disabled accounts filtered out) with the bind account `svc-keycloak` and the seven attribute
 mappers Keycloak would otherwise create itself (username, full name from `cn`, last name, email,
 creation and modification dates, the AD account-control mapper — an import through `components`
@@ -447,10 +448,10 @@ symlink in a single rename, so an in-service bundle is never half-replaced:
 - Keycloak's database has no PostgreSQL-native backup: only Longhorn's daily volume backup of its
   two volumes (the default recurring-job group), with no WAL archiving, no point-in-time recovery
   and no restore test yet (KC1-BK).
-- Keycloak binds to Active Directory over plain LDAP (`ldap://`, port 389): the domain controllers
-  present no certificate yet. Accepted by the owner until the directory's certificate authority
-  exists; the bind password travels in clear on the node network, so the account is read-only and
-  the switch to LDAPS (and X.509 login) follows that CA.
+- The domain controllers' LDAPS certificates come from the Vault PKI (90 days; first issued
+  2026-10-17, valid to 2027-01-15) and are renewed by running `make dc-ldaps` from the workstation
+  before they expire: nothing renews them automatically yet. The AD certificate authority, once it
+  exists, takes over (DC auto-enrollment, then X.509 login).
 - Keycloak's LAN entry point uses `Service.spec.externalIPs`, a deprecated API this cluster's
   kube-proxy still implements; a load balancer replaces it. The resolver's host override and the
   GitLab `gitlab.rb` block are owner steps until the resolver and the GitLab host are under
