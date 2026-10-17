@@ -21,6 +21,20 @@ installation:
       key: nwarila.io/management
       operator: Exists
 
+# The operator's own pod. The chart default tolerates every taint, including the
+# node.kubernetes.io/unschedulable taint a drain adds, so during a node upgrade the scheduler kept
+# placing replacement operator pods on the draining node, whose kubelet rejected each one (143 Failed
+# pods from one worker reboot, 2026-10-16). It needs only to start before pod networking exists.
+tolerations:
+  - key: node.kubernetes.io/not-ready
+    operator: Exists
+  - key: node.kubernetes.io/network-unavailable
+    operator: Exists
+    effect: NoSchedule
+  - key: nwarila.io/management
+    operator: Exists
+    effect: NoSchedule
+
 # Keep only the networking and NetworkPolicy data plane.
 apiServer:
   enabled: false
