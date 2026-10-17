@@ -56,8 +56,9 @@ disable_mlock = true
 EOF
 vault server -config="${TEST_ROOT}/raw.hcl" > "${TEST_ROOT}/raw.log" 2>&1 &
 RAW_PID=$!
+# The dev server answers status before it prints its unseal key, so wait for both.
 for _ in $(seq 1 60); do
-    VAULT_ADDR="${DEV_ADDR}" vault status > /dev/null 2>&1 && break
+    VAULT_ADDR="${DEV_ADDR}" vault status > /dev/null 2>&1 && grep -q 'Unseal Key: ' "${TEST_ROOT}/dev.log" && break
     sleep 0.5
 done
 VAULT_ADDR="${DEV_ADDR}" vault status > /dev/null 2>&1 || {
@@ -71,7 +72,7 @@ for _ in $(seq 1 60); do
 done
 [[ "${raw_state}" -eq 2 ]] || {
     echo "ERROR: raw server did not start uninitialized: $(grep -iE 'error|address' "${TEST_ROOT}/raw.log" | head -n 1)" >&2; exit 1; }
-dev_key="$(grep -o 'Unseal Key: .*' "${TEST_ROOT}/dev.log" | awk '{print $3}')"
+dev_key="$(grep -o 'Unseal Key: .*' "${TEST_ROOT}/dev.log" | awk '{print $3}' || true)"
 [[ -n "${dev_key}" ]] || { echo "ERROR: dev server printed no unseal key" >&2; exit 1; }
 
 # Logging wrapper in front of the real vault binary, proven to be in effect.
