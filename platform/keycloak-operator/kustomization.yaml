@@ -26,6 +26,11 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/2/value
         value: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+      # The JVM needs ~35 s to start under its 700m CPU limit; upstream's startup probe allows only
+      # 35 s, so the pod is killed before it is ever ready. Allow up to 5 minutes to start.
+      - op: replace
+        path: /spec/template/spec/containers/0/startupProbe/failureThreshold
+        value: 30
   # The upstream base carries one cluster-scoped grant, for OpenShift's config.openshift.io/ingresses;
   # this cluster has no such API and the operator needs no cluster-wide right here.
   - target:
